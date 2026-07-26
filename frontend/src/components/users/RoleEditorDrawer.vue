@@ -8,6 +8,7 @@ const roles = ref<Role[]>([])
 const adminRoles: Array<{ value: Role; label: string; description: string }> = [
   { value: 'knowledge_admin', label: '知识管理员', description: '管理制度、文档权限和 Agent 配置' },
   { value: 'notification_admin', label: '通知管理员', description: '起草、审批和发送飞书通知' },
+  { value: 'image_admin', label: '生图管理员', description: '管理生图中转站、模型、项目和功能按键' },
   { value: 'auditor', label: '审计员', description: '查看审计记录与质量指标，不自动获得受限文档正文' },
   { value: 'super_admin', label: '超级管理员', description: '管理用户角色并拥有紧急文档访问权限' },
 ]

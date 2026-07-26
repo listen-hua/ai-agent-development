@@ -16,8 +16,15 @@ function renderInline(value: string) {
     .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>')
 }
 
+export function normalizeFeishuCardMarkdown(markdown: string) {
+  return markdown.replace(/^#{1,6}\s+(.+)$/gm, (line, title: string) => {
+    const marker = line.startsWith('# ') ? '▌ ' : '• '
+    return `**${marker}${title.trim()}**`
+  })
+}
+
 export function renderNotificationMarkdown(markdown: string) {
-  const lines = escapeHTML(markdown).split(/\r?\n/)
+  const lines = escapeHTML(normalizeFeishuCardMarkdown(markdown)).split(/\r?\n/)
   const output: string[] = []
   let listType: 'ul' | 'ol' | undefined
   const closeList = () => {
@@ -40,12 +47,6 @@ export function renderNotificationMarkdown(markdown: string) {
     closeList()
     if (!line.trim()) {
       output.push('<br>')
-    } else if (line.startsWith('### ')) {
-      output.push(`<h4>${renderInline(line.slice(4))}</h4>`)
-    } else if (line.startsWith('## ')) {
-      output.push(`<h3>${renderInline(line.slice(3))}</h3>`)
-    } else if (line.startsWith('# ')) {
-      output.push(`<h2>${renderInline(line.slice(2))}</h2>`)
     } else {
       output.push(`<p>${renderInline(line)}</p>`)
     }

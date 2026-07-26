@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { AlarmClock, Calendar, ChatDotRound, Collection, DataAnalysis, Fold, MagicStick, Message, Operation, Picture, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
+import { AlarmClock, Calendar, ChatDotRound, Collection, DataAnalysis, Fold, MagicStick, Message, OfficeBuilding, Operation, Picture, Setting, SwitchButton, User, UserFilled } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -14,8 +14,10 @@ const navItems = computed(() => [
 	{ path: '/reminders', label: '我的提醒', icon: AlarmClock, show: true },
   { path: '/admin/knowledge', label: '制度知识库', icon: Collection, show: auth.hasRole('knowledge_admin') },
   { path: '/admin/agent', label: 'Agent 配置', icon: MagicStick, show: auth.hasRole('knowledge_admin') },
+  { path: '/admin/image-agent', label: '生图管理', icon: Setting, show: auth.hasRole('image_admin') },
   { path: '/admin/notifications', label: '通知中心', icon: Message, show: auth.hasRole('notification_admin') },
 	{ path: '/admin/work-calendar', label: '工作日历', icon: Calendar, show: auth.hasRole('notification_admin') },
+  { path: '/admin/meeting-rooms', label: '会议室管理', icon: OfficeBuilding, show: auth.hasRole('notification_admin') },
   { path: '/admin/audit', label: '质量与审计', icon: DataAnalysis, show: auth.hasRole('auditor', 'knowledge_admin', 'notification_admin') },
   { path: '/admin/users', label: '用户与权限', icon: UserFilled, show: auth.hasRole('super_admin') },
 ].filter((item) => item.show))

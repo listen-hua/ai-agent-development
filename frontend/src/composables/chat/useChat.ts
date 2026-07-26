@@ -2,6 +2,7 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { chatService } from '@/services/chat'
 import { reminderService } from '@/services/reminder'
+import { meetingService } from '@/services/meeting'
 import type { Citation, Conversation, Message, RunEvent } from '@/types/domain'
 import { createTextStreamController, type TextStreamController } from '@/utils/textStream'
 
@@ -70,7 +71,14 @@ export function useChat() {
 
   function handleEvent(event: RunEvent, assistant: Message) {
     if (event.type === 'status') {
-	  stage.value = event.metadata?.stage === 'retrieving' ? '正在检索已授权制度' : event.metadata?.stage === 'interpreting_reminder' ? '正在核对提醒时间' : '正在生成有依据的回答'
+      const labels: Record<string, string> = {
+        contextualizing: '正在结合上下文理解问题',
+        retrieving: '正在检索已授权制度',
+        interpreting_reminder: '正在核对提醒时间',
+        interpreting_meeting: '正在校验会议室与参会人忙闲',
+        generating: '正在生成有依据的回答',
+      }
+      stage.value = labels[event.metadata?.stage || ''] || '正在处理'
       return
     }
     if (event.type === 'delta') {
@@ -101,6 +109,7 @@ export function useChat() {
       assistant.citations = message.citations
       assistant.model = message.model
 	  assistant.reminder_action = message.reminder_action
+	  assistant.meeting_booking_action = message.meeting_booking_action
       assistant.created_at = message.created_at
     }
     assistant.pending = false
@@ -166,6 +175,32 @@ export function useChat() {
     ElMessage.info('已取消')
   }
 
+  async function confirmMeeting(message: Message, optionId?: string) {
+    const action = message.meeting_booking_action
+    if (!action || action.status !== 'pending') return
+    action.status = 'processing'
+    try {
+      const result = await meetingService.confirmAction(action.id, optionId)
+      message.meeting_booking_action = result.action
+      if (action.intent === 'cancel') message.content = '会议室预约已取消，飞书日程和会后提醒已同步取消。'
+      else if (action.intent === 'reschedule') message.content = `改期成功：${result.booking?.room_name || '会议室'}。原预约已释放。`
+      else message.content = `预约成功：${result.booking?.room_name || '会议室'}。会后会通过飞书提醒你归还会议室。`
+      ElMessage.success(action.intent === 'cancel' ? '预约已取消' : '会议室预约成功')
+    } catch (error) {
+      action.status = 'pending'
+      const reason = error instanceof Error ? error.message : '会议室操作失败'
+      ElMessage.error(reason)
+    }
+  }
+
+  async function cancelMeeting(message: Message) {
+    const action = message.meeting_booking_action
+    if (!action || action.status !== 'pending') return
+    message.meeting_booking_action = await meetingService.cancelAction(action.id)
+    message.content = '已取消本次会议室操作，未创建或修改任何飞书日程。'
+    ElMessage.info('已取消')
+  }
+
   onBeforeUnmount(() => {
     stopStream?.()
     textStream?.cancel()
@@ -173,7 +208,7 @@ export function useChat() {
 
   return {
     conversations, activeId, activeConversation, messages, sending, stage,
-    loadConversations, newConversation, selectConversation, removeConversation, send, stop, retry, feedback, confirmReminder, cancelReminder,
+    loadConversations, newConversation, selectConversation, removeConversation, send, stop, retry, feedback, confirmReminder, cancelReminder, confirmMeeting, cancelMeeting,
   }
 }
 

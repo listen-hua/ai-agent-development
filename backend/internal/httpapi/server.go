@@ -30,8 +30,10 @@ type Server struct {
 	knowledge     *service.Knowledge
 	notifications *service.Notification
 	reminders     *service.Reminder
+	meetings      *service.Meeting
 	directory     *service.Directory
 	agents        *service.AgentRegistry
+	imageAgent    *service.ImageAgent
 	feishu        *feishu.Client
 	mux           *http.ServeMux
 }
@@ -39,8 +41,16 @@ type contextKey string
 
 const userKey contextKey = "user"
 
-func New(cfg config.Config, repo store.Repository, sessions *security.Sessions, chat *service.Chat, knowledge *service.Knowledge, notifications *service.Notification, reminders *service.Reminder, feishuClient *feishu.Client, directory *service.Directory, agents *service.AgentRegistry) *Server {
+func New(cfg config.Config, repo store.Repository, sessions *security.Sessions, chat *service.Chat, knowledge *service.Knowledge, notifications *service.Notification, reminders *service.Reminder, feishuClient *feishu.Client, directory *service.Directory, agents *service.AgentRegistry, features ...any) *Server {
 	s := &Server{cfg: cfg, repo: repo, sessions: sessions, chat: chat, knowledge: knowledge, notifications: notifications, reminders: reminders, directory: directory, agents: agents, feishu: feishuClient, mux: http.NewServeMux()}
+	for _, feature := range features {
+		switch value := feature.(type) {
+		case *service.Meeting:
+			s.meetings = value
+		case *service.ImageAgent:
+			s.imageAgent = value
+		}
+	}
 	s.routes()
 	return s
 }
@@ -60,6 +70,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/conversations", s.auth(http.HandlerFunc(s.createConversation)))
 	s.mux.Handle("GET /api/v1/conversations/{id}/messages", s.auth(http.HandlerFunc(s.listMessages)))
 	s.mux.Handle("DELETE /api/v1/conversations/{id}", s.auth(http.HandlerFunc(s.deleteConversation)))
+	s.mux.Handle("POST /api/v1/conversations/{id}/context/reset", s.auth(http.HandlerFunc(s.resetConversationContext)))
 	s.mux.Handle("POST /api/v1/conversations/{id}/messages", s.auth(http.HandlerFunc(s.startMessage)))
 	s.mux.Handle("GET /api/v1/runs/{id}/events", s.auth(http.HandlerFunc(s.runEvents)))
 	s.mux.Handle("GET /api/v1/reminders", s.auth(http.HandlerFunc(s.listReminders)))
@@ -69,8 +80,24 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/reminders/{id}/actions", s.auth(http.HandlerFunc(s.createReminderAction)))
 	s.mux.Handle("POST /api/v1/reminder-actions/{id}/confirm", s.auth(http.HandlerFunc(s.confirmReminderAction)))
 	s.mux.Handle("POST /api/v1/reminder-actions/{id}/cancel", s.auth(http.HandlerFunc(s.cancelReminderAction)))
+	if s.meetings != nil {
+		s.mux.Handle("POST /api/v1/meeting-booking-actions/{id}/confirm", s.auth(http.HandlerFunc(s.confirmMeetingBookingAction)))
+		s.mux.Handle("POST /api/v1/meeting-booking-actions/{id}/cancel", s.auth(http.HandlerFunc(s.cancelMeetingBookingAction)))
+		s.mux.Handle("GET /api/v1/meeting-bookings", s.auth(http.HandlerFunc(s.listMeetingBookings)))
+	}
+	if s.imageAgent != nil {
+		s.mux.Handle("GET /api/v1/image-agent/options", s.auth(http.HandlerFunc(s.imageAgentOptions)))
+		s.mux.Handle("GET /api/v1/image-agent/projects/{id}/canvas", s.auth(http.HandlerFunc(s.imageCanvas)))
+		s.mux.Handle("PATCH /api/v1/image-agent/projects/{id}/canvas", s.auth(http.HandlerFunc(s.updateImageCanvas)))
+		s.mux.Handle("POST /api/v1/image-agent/assets", s.auth(http.HandlerFunc(s.uploadImageAsset)))
+		s.mux.Handle("GET /api/v1/image-agent/assets/{id}/content", s.auth(http.HandlerFunc(s.imageAssetContent)))
+		s.mux.Handle("POST /api/v1/image-agent/jobs", s.auth(http.HandlerFunc(s.createImageJob)))
+		s.mux.Handle("GET /api/v1/image-agent/jobs", s.auth(http.HandlerFunc(s.listImageJobs)))
+		s.mux.Handle("GET /api/v1/image-agent/jobs/{id}", s.auth(http.HandlerFunc(s.getImageJob)))
+	}
 
 	knowledgeAdmin := s.roles(domain.RoleKnowledgeAdmin)
+	directoryAdmin := s.roles(domain.RoleKnowledgeAdmin, domain.RoleImageAdmin)
 	notificationAdmin := s.roles(domain.RoleNotificationAdmin)
 	auditor := s.roles(domain.RoleAuditor, domain.RoleKnowledgeAdmin, domain.RoleNotificationAdmin)
 	superAdmin := s.roles(domain.RoleSuperAdmin)
@@ -81,7 +108,7 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/admin/knowledge/documents/upload", s.auth(knowledgeAdmin(http.HandlerFunc(s.uploadDocument))))
 	s.mux.Handle("POST /api/v1/admin/knowledge/documents/{id}/publish", s.auth(knowledgeAdmin(http.HandlerFunc(s.publishDocument))))
 	s.mux.Handle("PUT /api/v1/admin/knowledge/documents/{id}/acl", s.auth(knowledgeAdmin(http.HandlerFunc(s.updateDocumentACL))))
-	s.mux.Handle("GET /api/v1/admin/directory/options", s.auth(knowledgeAdmin(http.HandlerFunc(s.directoryOptions))))
+	s.mux.Handle("GET /api/v1/admin/directory/options", s.auth(directoryAdmin(http.HandlerFunc(s.directoryOptions))))
 	s.mux.Handle("GET /api/v1/admin/agent/configs", s.auth(knowledgeAdmin(http.HandlerFunc(s.listConfigs))))
 	s.mux.Handle("POST /api/v1/admin/agent/configs", s.auth(knowledgeAdmin(http.HandlerFunc(s.createConfig))))
 	s.mux.Handle("POST /api/v1/admin/agent/configs/{id}/publish", s.auth(knowledgeAdmin(http.HandlerFunc(s.publishConfig))))
@@ -105,6 +132,28 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/admin/users", s.auth(superAdmin(http.HandlerFunc(s.listUsers))))
 	s.mux.Handle("PUT /api/v1/admin/users/{id}/roles", s.auth(superAdmin(http.HandlerFunc(s.updateUserRoles))))
 	s.mux.Handle("POST /api/v1/admin/users/sync", s.auth(superAdmin(http.HandlerFunc(s.syncUsers))))
+	if s.meetings != nil {
+		s.mux.Handle("GET /api/v1/admin/meeting-rooms", s.auth(notificationAdmin(http.HandlerFunc(s.listMeetingRooms))))
+		s.mux.Handle("POST /api/v1/admin/meeting-rooms/sync", s.auth(notificationAdmin(http.HandlerFunc(s.syncMeetingRooms))))
+		s.mux.Handle("POST /api/v1/admin/meeting-rooms/calendar", s.auth(notificationAdmin(http.HandlerFunc(s.initializeMeetingCalendar))))
+	}
+	if s.imageAgent != nil {
+		imageAdmin := s.roles(domain.RoleImageAdmin)
+		s.mux.Handle("GET /api/v1/admin/image-agent/relays", s.auth(imageAdmin(http.HandlerFunc(s.listImageRelays))))
+		s.mux.Handle("POST /api/v1/admin/image-agent/relays", s.auth(imageAdmin(http.HandlerFunc(s.createImageRelay))))
+		s.mux.Handle("PUT /api/v1/admin/image-agent/relays/{id}", s.auth(imageAdmin(http.HandlerFunc(s.updateImageRelay))))
+		s.mux.Handle("POST /api/v1/admin/image-agent/relays/{id}/test", s.auth(imageAdmin(http.HandlerFunc(s.testImageRelay))))
+		s.mux.Handle("POST /api/v1/admin/image-agent/relays/{id}/models/sync", s.auth(imageAdmin(http.HandlerFunc(s.syncImageModels))))
+		s.mux.Handle("GET /api/v1/admin/image-agent/models", s.auth(imageAdmin(http.HandlerFunc(s.listImageModels))))
+		s.mux.Handle("PUT /api/v1/admin/image-agent/models/{id}", s.auth(imageAdmin(http.HandlerFunc(s.updateImageModel))))
+		s.mux.Handle("GET /api/v1/admin/image-agent/projects", s.auth(imageAdmin(http.HandlerFunc(s.listImageProjects))))
+		s.mux.Handle("POST /api/v1/admin/image-agent/projects", s.auth(imageAdmin(http.HandlerFunc(s.createImageProject))))
+		s.mux.Handle("PUT /api/v1/admin/image-agent/projects/{id}", s.auth(imageAdmin(http.HandlerFunc(s.updateImageProject))))
+		s.mux.Handle("GET /api/v1/admin/image-agent/prompt-actions", s.auth(imageAdmin(http.HandlerFunc(s.listImagePromptActions))))
+		s.mux.Handle("POST /api/v1/admin/image-agent/prompt-actions", s.auth(imageAdmin(http.HandlerFunc(s.createImagePromptAction))))
+		s.mux.Handle("PUT /api/v1/admin/image-agent/prompt-actions/{id}", s.auth(imageAdmin(http.HandlerFunc(s.updateImagePromptAction))))
+		s.mux.Handle("DELETE /api/v1/admin/image-agent/prompt-actions/{id}", s.auth(imageAdmin(http.HandlerFunc(s.deleteImagePromptAction))))
+	}
 }
 
 func (s *Server) feishuAuthConfig(w http.ResponseWriter, _ *http.Request) {
@@ -265,6 +314,18 @@ func (s *Server) deleteConversation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(204)
+}
+func (s *Server) resetConversationContext(w http.ResponseWriter, r *http.Request) {
+	err := s.chat.ResetContext(r.Context(), currentUser(r), r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "会话不存在", err)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "清除上下文失败", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) startMessage(w http.ResponseWriter, r *http.Request) {
 	var input struct {
@@ -430,45 +491,109 @@ func (s *Server) directoryOptions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "读取组织信息失败", err)
 		return
 	}
-	type option struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	}
 	type userOption struct {
 		ID            string   `json:"id"`
 		Name          string   `json:"name"`
 		DepartmentIDs []string `json:"department_ids"`
 		JobTitle      string   `json:"job_title"`
 	}
-	departments := map[string]bool{}
+	if s.directory == nil || s.feishu == nil || !s.feishu.Configured() {
+		writeError(w, http.StatusServiceUnavailable, "飞书通讯录未配置，无法读取公司组织架构", nil)
+		return
+	}
+	departments, err := s.directory.Departments(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "读取飞书公司组织架构失败，请检查应用通讯录权限及可见范围", err)
+		return
+	}
+	if len(departments) == 0 {
+		writeError(w, http.StatusBadGateway, "飞书未返回任何可见部门，请在开放平台配置部门读取权限，并将应用通讯录可见范围覆盖公司组织架构", nil)
+		return
+	}
 	jobTitles := map[string]bool{}
 	userOptions := []userOption{}
 	for _, user := range users {
 		if user.Status != "active" {
 			continue
 		}
-		for _, id := range user.DepartmentIDs {
-			if id != "" {
-				departments[id] = true
-			}
-		}
 		if user.JobTitle != "" {
 			jobTitles[user.JobTitle] = true
 		}
 		userOptions = append(userOptions, userOption{ID: user.ID, Name: user.Name, DepartmentIDs: user.DepartmentIDs, JobTitle: user.JobTitle})
 	}
-	departmentOptions := make([]option, 0, len(departments))
-	for id := range departments {
-		departmentOptions = append(departmentOptions, option{ID: id, Name: id})
-	}
+	departmentOptions := buildDirectoryDepartmentOptions(departments)
 	titles := make([]string, 0, len(jobTitles))
 	for title := range jobTitles {
 		titles = append(titles, title)
 	}
-	sort.Slice(departmentOptions, func(i, j int) bool { return departmentOptions[i].Name < departmentOptions[j].Name })
 	sort.Strings(titles)
 	sort.Slice(userOptions, func(i, j int) bool { return userOptions[i].Name < userOptions[j].Name })
 	writeJSON(w, http.StatusOK, map[string]any{"departments": departmentOptions, "job_titles": titles, "users": userOptions})
+}
+
+type directoryDepartmentOption struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	ParentID string `json:"parent_id,omitempty"`
+	Path     string `json:"path"`
+	Depth    int    `json:"depth"`
+}
+
+func buildDirectoryDepartmentOptions(departments []feishu.ContactDepartment) []directoryDepartmentOption {
+	byID := make(map[string]feishu.ContactDepartment, len(departments))
+	for _, department := range departments {
+		if department.OpenDepartmentID != "" {
+			byID[department.OpenDepartmentID] = department
+		}
+	}
+	pathCache := make(map[string]string, len(byID))
+	depthCache := make(map[string]int, len(byID))
+	var resolvePath func(string, map[string]bool) (string, int)
+	resolvePath = func(id string, visiting map[string]bool) (string, int) {
+		if path, ok := pathCache[id]; ok {
+			return path, depthCache[id]
+		}
+		department, ok := byID[id]
+		if !ok {
+			return "", 0
+		}
+		name := strings.TrimSpace(department.Name)
+		if name == "" {
+			name = department.OpenDepartmentID
+		}
+		if visiting[id] {
+			return name, 0
+		}
+		visiting[id] = true
+		path, depth := name, 0
+		if parentID := department.ParentDepartmentID; parentID != "" && parentID != "0" {
+			if parentPath, parentDepth := resolvePath(parentID, visiting); parentPath != "" {
+				path = parentPath + " / " + name
+				depth = parentDepth + 1
+			}
+		}
+		delete(visiting, id)
+		pathCache[id], depthCache[id] = path, depth
+		return path, depth
+	}
+	options := make([]directoryDepartmentOption, 0, len(byID))
+	for id, department := range byID {
+		path, depth := resolvePath(id, map[string]bool{})
+		options = append(options, directoryDepartmentOption{
+			ID:       id,
+			Name:     strings.TrimSpace(department.Name),
+			ParentID: department.ParentDepartmentID,
+			Path:     path,
+			Depth:    depth,
+		})
+	}
+	sort.Slice(options, func(i, j int) bool {
+		if options[i].Path == options[j].Path {
+			return options[i].ID < options[j].ID
+		}
+		return options[i].Path < options[j].Path
+	})
+	return options
 }
 func (s *Server) listConfigs(w http.ResponseWriter, r *http.Request) {
 	v, e := s.repo.ListConfigs(r.Context())
@@ -674,7 +799,11 @@ func (s *Server) syncUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "飞书通讯录同步未配置", nil)
 		return
 	}
-	succeeded, failed := s.directory.SyncKnownUsers(r.Context(), currentUser(r))
+	succeeded, failed, err := s.directory.SyncAllUsers(r.Context(), currentUser(r))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "同步飞书通讯录失败", err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]int{"succeeded": succeeded, "failed": failed})
 }
 

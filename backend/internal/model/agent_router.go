@@ -32,7 +32,7 @@ func (p *AgentRoutedProvider) Generate(ctx context.Context, input GenerateReques
 	if err != nil {
 		return "", err
 	}
-	if modelName != "" {
+	if modelName != "" && !input.PreserveModel {
 		input.Model = modelName
 	}
 	return provider.Generate(ctx, input)
@@ -43,7 +43,7 @@ func (p *AgentRoutedProvider) StreamGenerate(ctx context.Context, input Generate
 	if err != nil {
 		return "", err
 	}
-	if modelName != "" {
+	if modelName != "" && !input.PreserveModel {
 		input.Model = modelName
 	}
 	return provider.StreamGenerate(ctx, input, onDelta)

@@ -8,11 +8,12 @@ type Message struct {
 }
 
 type GenerateRequest struct {
-	Model       string
-	Messages    []Message
-	Temperature float64
-	MaxTokens   int
-	JSONMode    bool
+	Model         string
+	Messages      []Message
+	Temperature   float64
+	MaxTokens     int
+	JSONMode      bool
+	PreserveModel bool
 }
 
 type Provider interface {

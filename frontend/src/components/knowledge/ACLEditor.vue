@@ -43,7 +43,7 @@ function commit() { emit('update:modelValue', normalizeACL(draft.value)) }
         <el-form label-position="top">
           <el-form-item label="所属部门（可多选）">
             <el-select v-model="rule.department_ids" multiple filterable collapse-tags placeholder="不限部门" style="width: 100%" @change="commit">
-              <el-option v-for="department in options.departments" :key="department.id" :label="department.name" :value="department.id" />
+              <el-option v-for="department in options.departments" :key="department.id" :label="department.path || department.name" :value="department.id" />
             </el-select>
           </el-form-item>
           <el-form-item label="飞书职务（可多选）">

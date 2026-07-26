@@ -59,3 +59,24 @@ func TestFeishuClientDiagnosticsAcceptsSanitizedClientError(t *testing.T) {
 		t.Fatalf("unexpected status: %d", recorder.Code)
 	}
 }
+
+func TestBuildDirectoryDepartmentOptionsUsesReadableHierarchyPaths(t *testing.T) {
+	options := buildDirectoryDepartmentOptions([]feishu.ContactDepartment{
+		{OpenDepartmentID: "od_engineering", Name: "研发部", ParentDepartmentID: "od_product"},
+		{OpenDepartmentID: "od_product", Name: "产品中心", ParentDepartmentID: "0"},
+		{OpenDepartmentID: "od_finance", Name: "财务部", ParentDepartmentID: "0"},
+	})
+	if len(options) != 3 {
+		t.Fatalf("unexpected options: %#v", options)
+	}
+	byID := make(map[string]directoryDepartmentOption, len(options))
+	for _, option := range options {
+		byID[option.ID] = option
+	}
+	if got := byID["od_engineering"]; got.Name != "研发部" || got.Path != "产品中心 / 研发部" || got.Depth != 1 {
+		t.Fatalf("unexpected nested department option: %#v", got)
+	}
+	if got := byID["od_finance"]; got.Path != "财务部" || got.Depth != 0 {
+		t.Fatalf("unexpected top-level department option: %#v", got)
+	}
+}

@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { renderNotificationMarkdown } from './notificationMarkdown'
+import { normalizeFeishuCardMarkdown, renderNotificationMarkdown } from './notificationMarkdown'
 
 describe('renderNotificationMarkdown', () => {
   it('renders supported rich text', () => {
     const html = renderNotificationMarkdown('## 标题\n**重点**\n- 第一项\n[链接](https://example.com)')
-    expect(html).toContain('<h3>标题</h3>')
+    expect(html).toContain('<p><strong>• 标题</strong></p>')
     expect(html).toContain('<strong>重点</strong>')
     expect(html).toContain('<ul><li>第一项</li></ul>')
     expect(html).toContain('href="https://example.com"')
+  })
+
+  it('converts unsupported headings to Feishu-compatible emphasis', () => {
+    expect(normalizeFeishuCardMarkdown('# 主标题\n## 小标题\n### 三级标题')).toBe('**▌ 主标题**\n**• 小标题**\n**• 三级标题**')
   })
 
   it('escapes raw HTML and unsafe links', () => {

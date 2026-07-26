@@ -39,8 +39,8 @@ function chooseImage(event: Event) {
 <template>
   <div class="rich-editor">
     <div class="rich-toolbar" aria-label="正文格式工具栏">
-      <el-button text title="一级标题" @click="insert('# ', '', '标题')">H1</el-button>
-      <el-button text title="二级标题" @click="insert('## ', '', '小标题')">H2</el-button>
+      <el-button text title="飞书兼容的主标题强调样式" @click="insert('**▌ ', '**', '主标题')">主标题</el-button>
+      <el-button text title="飞书兼容的小标题强调样式" @click="insert('**• ', '**', '小标题')">小标题</el-button>
       <el-button text title="加粗" @click="insert('**', '**')"><strong>B</strong></el-button>
       <el-button text title="项目列表" @click="insert('- ', '', '列表项')">• 列表</el-button>
       <el-button text title="链接" @click="insert('[', '](https://)', '链接文字')">链接</el-button>
@@ -56,7 +56,7 @@ function chooseImage(event: Event) {
       maxlength="4000"
       show-word-limit
       resize="vertical"
-      placeholder="输入通知正文。支持标题、加粗、列表和链接等 Markdown 富文本格式。"
+      placeholder="输入通知正文。支持飞书兼容的强调标题、加粗、列表和链接格式。"
       @update:model-value="emit('update:modelValue', $event)"
     />
     <div v-if="images.length" class="image-strip">

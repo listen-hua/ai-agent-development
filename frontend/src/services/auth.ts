@@ -44,6 +44,9 @@ function sdkError(error: unknown): Error {
   if (error instanceof Error) return error
   const code = sdkErrorCode(error)
   const suffix = code ? `（错误码 ${code}）` : ''
+  if (code === '2602002') {
+    return new Error(`飞书未能为当前网页应用签发授权码，请确认工作台中打开的应用与服务端 FEISHU_APP_ID 一致，并已发布最新应用版本${suffix}`)
+  }
   return new Error(`${sdkErrorMessage(error)}${suffix}`)
 }
 
@@ -75,14 +78,30 @@ export const authService = {
   requestFeishuCode(appID: string): Promise<FeishuLoginCode> {
     return new Promise((resolve, reject) => {
       let started = false
+      let accessStarted = false
       let legacyStarted = false
+      let settled = false
+
+      const succeed = (result: FeishuLoginCode) => {
+        if (settled) return
+        settled = true
+        resolve(result)
+      }
+
+      const fail = (error: unknown) => {
+        if (settled) return
+        settled = true
+        reject(sdkError(error))
+      }
 
       const requestLegacyCode = () => {
         if (legacyStarted) return
         legacyStarted = true
         if (!window.tt?.requestAuthCode) {
-          reportClientFailure('bridge_unavailable', new Error('requestAccess 和 requestAuthCode 均不可用'))
-          reject(new FeishuClientUnavailableError())
+          const error = new Error('requestAccess 和 requestAuthCode 均不可用')
+          reportClientFailure('bridge_unavailable', error)
+          if (!accessStarted) fail(new FeishuClientUnavailableError())
+          else fail(error)
           return
         }
         try {
@@ -92,36 +111,29 @@ export const authService = {
               if (!code) {
                 const error = new Error('飞书返回了空授权码')
                 reportClientFailure('request_auth_code_empty', error)
-                reject(error)
+                fail(error)
                 return
               }
-              resolve({ code, auth_method: 'request_auth_code' })
+              succeed({ code, auth_method: 'request_auth_code' })
             },
             fail: (error) => {
               reportClientFailure('request_auth_code_fail', error)
-              reject(sdkError(error))
+              fail(error)
             },
           })
         } catch (error) {
           reportClientFailure('request_auth_code_throw', error)
-          reject(sdkError(error))
+          fail(error)
         }
       }
 
-      const execute = () => {
-        if (started) return
-        started = true
-        if (window.tt?.requestAuthCode) {
+      const requestAccessCode = () => {
+        if (accessStarted) return
+        accessStarted = true
+        if (!window.tt?.requestAccess) {
           requestLegacyCode()
           return
         }
-
-        if (!window.tt?.requestAccess) {
-          reportClientFailure('bridge_unavailable', new Error('requestAccess 和 requestAuthCode 均不可用'))
-          reject(new FeishuClientUnavailableError())
-          return
-        }
-
         try {
           const state = createState()
           window.tt.requestAccess({
@@ -132,25 +144,24 @@ export const authService = {
               if (returnedState && returnedState !== state) {
                 const error = new Error('飞书授权状态校验失败')
                 reportClientFailure('request_access_state', error)
-                reject(error)
+                fail(error)
                 return
               }
               if (!code) {
                 const error = new Error('飞书返回了空授权码')
                 reportClientFailure('request_access_empty', error)
-                reject(error)
+                fail(error)
                 return
               }
-              resolve({ code, auth_method: 'request_access' })
+              succeed({ code, auth_method: 'request_access' })
             },
             fail: (error) => {
               reportClientFailure('request_access_fail', error)
-              const errno = sdkErrorCode(error)
-              if (errno !== '2700002' && window.tt?.requestAuthCode) {
+              if (window.tt?.requestAuthCode) {
                 requestLegacyCode()
                 return
               }
-              reject(sdkError(error))
+              fail(error)
             },
           })
         } catch (error) {
@@ -158,9 +169,21 @@ export const authService = {
           if (window.tt?.requestAuthCode) {
             requestLegacyCode()
           } else {
-            reject(sdkError(error))
+            fail(error)
           }
         }
+      }
+
+      const execute = () => {
+        if (started) return
+        started = true
+        if (!window.tt?.requestAccess && !window.tt?.requestAuthCode) {
+          const error = new Error('requestAccess 和 requestAuthCode 均不可用')
+          reportClientFailure('bridge_unavailable', error)
+          fail(new FeishuClientUnavailableError())
+          return
+        }
+        requestAccessCode()
       }
       if (window.h5sdk?.ready) window.h5sdk.ready(execute)
       else execute()

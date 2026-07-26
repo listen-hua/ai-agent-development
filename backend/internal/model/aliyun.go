@@ -35,7 +35,8 @@ func (a *Aliyun) Generate(ctx context.Context, input GenerateRequest) (string, e
 	if input.JSONMode {
 		payload["response_format"] = map[string]string{"type": "json_object"}
 		payload["enable_thinking"] = false
-	} else if input.MaxTokens > 0 {
+	}
+	if input.MaxTokens > 0 {
 		payload["max_tokens"] = input.MaxTokens
 	}
 	err := a.call(ctx, "/chat/completions", payload, &output)

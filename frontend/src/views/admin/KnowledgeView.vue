@@ -24,6 +24,7 @@ const connectingSource = ref(false)
 const publishingIds = ref<string[]>([])
 const batchPublishing = ref(false)
 const sourceError = ref('')
+const directoryError = ref('')
 const sourceOpen = ref(false)
 const uploadOpen = ref(false)
 const aclOpen = ref(false)
@@ -38,17 +39,28 @@ const pendingDocuments = computed(() => documents.value.filter((item) => item.st
 async function load() {
   loading.value = true
   try {
-    const [documentList, sourceList, directoryOptions] = await Promise.all([
+    const [documentList, sourceList] = await Promise.all([
       knowledgeService.listDocuments(),
       knowledgeService.listSources(),
-      directoryService.options(),
     ])
     documents.value = documentList
     sources.value = sourceList
-    options.value = directoryOptions
+    try {
+      options.value = await directoryService.options()
+      directoryError.value = ''
+    } catch (error) {
+      options.value = emptyOptions
+      directoryError.value = directoryErrorMessage(error)
+      ElMessage.warning(directoryError.value)
+    }
   } finally {
     loading.value = false
   }
+}
+
+function directoryErrorMessage(error: unknown) {
+  if (error instanceof ApiError) return error.detail?.trim() || error.message
+  return error instanceof Error ? error.message : '读取飞书公司组织架构失败'
 }
 
 async function refreshKnowledge() {
@@ -209,6 +221,15 @@ onBeforeUnmount(() => { disposed = true })
 	      <el-button :icon="Connection" @click="openSourceDialog">连接飞书</el-button>
       <el-button type="primary" :icon="Upload" @click="uploadOpen = true">上传制度</el-button>
     </PageHeader>
+    <el-alert
+      v-if="directoryError"
+      type="warning"
+      :closable="false"
+      show-icon
+      class="directory-error-alert"
+      title="未能读取飞书公司组织架构"
+      :description="directoryError"
+    />
     <div class="metric-grid">
       <MetricCard label="制度文件" :value="documents.length" note="全部版本" />
       <MetricCard label="已发布" :value="publishedCount" note="参与线上检索" tone="green" />
@@ -235,7 +256,7 @@ onBeforeUnmount(() => { disposed = true })
       </div>
     </div>
     <DocumentTable :documents="documents" :loading="loading" :publishing-ids="publishingIds" @publish="publish" @edit-acl="editACL" />
-	    <SourceDialog v-model="sourceOpen" :options="options" :saving="connectingSource" :error="sourceError" @save="createSource" />
+	    <SourceDialog v-model="sourceOpen" :options="options" :saving="connectingSource" :error="sourceError || directoryError" @save="createSource" />
     <UploadDialog v-model="uploadOpen" :uploading="uploading" :options="options" @upload="upload" />
     <ACLDialog v-model="aclOpen" :document="selectedDocument" :options="options" :saving="savingACL" @save="saveACL" />
   </section>
@@ -248,6 +269,10 @@ onBeforeUnmount(() => { disposed = true })
   justify-content: flex-end;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.directory-error-alert {
+  margin-bottom: 18px;
 }
 
 @media (max-width: 760px) {

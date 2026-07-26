@@ -16,6 +16,11 @@ services:
       - ./backend/migrations/005_reminders.sql:/docker-entrypoint-initdb.d/005_reminders.sql:ro
       - ./backend/migrations/006_notification_rich_targets.sql:/docker-entrypoint-initdb.d/006_notification_rich_targets.sql:ro
       - ./backend/migrations/007_agent_profiles.sql:/docker-entrypoint-initdb.d/007_agent_profiles.sql:ro
+      - ./backend/migrations/008_meeting_booking.sql:/docker-entrypoint-initdb.d/008_meeting_booking.sql:ro
+      - ./backend/migrations/009_conversation_context.sql:/docker-entrypoint-initdb.d/009_conversation_context.sql:ro
+      - ./backend/migrations/010_meeting_cleanup_delivery_fix.sql:/docker-entrypoint-initdb.d/010_meeting_cleanup_delivery_fix.sql:ro
+      - ./backend/migrations/011_image_agent.sql:/docker-entrypoint-initdb.d/011_image_agent.sql:ro
+      - ./backend/migrations/012_comfly_image_output_host.sql:/docker-entrypoint-initdb.d/012_comfly_image_output_host.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ai_agent -d ai_agent"]
       interval: 5s

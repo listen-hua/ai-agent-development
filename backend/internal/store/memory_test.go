@@ -52,3 +52,31 @@ func TestUpdateUserRolesKeepsLastSuperAdmin(t *testing.T) {
 		t.Fatalf("expected ErrConflict when removing the final super admin, got %v", err)
 	}
 }
+
+func TestBoundConversationIsIsolatedAndExpires(t *testing.T) {
+	ctx := context.Background()
+	repo := NewMemory(domain.AgentConfig{})
+	firstUser, _ := repo.GetUser(ctx, DemoEmployeeID)
+	secondUser, _ := repo.GetUser(ctx, DemoAdminID)
+	now := time.Now()
+	ttl := 30 * time.Minute
+
+	first, err := repo.GetOrCreateBoundConversation(ctx, firstUser, domain.AgentAdministrativeAssistant, domain.ConversationChannelFeishuBot, "chat-a", now, ttl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	same, _ := repo.GetOrCreateBoundConversation(ctx, firstUser, domain.AgentAdministrativeAssistant, domain.ConversationChannelFeishuBot, "chat-a", now.Add(time.Minute), ttl)
+	if same.ID != first.ID {
+		t.Fatal("same user, chat and agent should reuse the active conversation")
+	}
+	otherChat, _ := repo.GetOrCreateBoundConversation(ctx, firstUser, domain.AgentAdministrativeAssistant, domain.ConversationChannelFeishuBot, "chat-b", now, ttl)
+	otherUser, _ := repo.GetOrCreateBoundConversation(ctx, secondUser, domain.AgentAdministrativeAssistant, domain.ConversationChannelFeishuBot, "chat-a", now, ttl)
+	otherAgent, _ := repo.GetOrCreateBoundConversation(ctx, firstUser, "image_agent", domain.ConversationChannelFeishuBot, "chat-a", now, ttl)
+	if otherChat.ID == first.ID || otherUser.ID == first.ID || otherAgent.ID == first.ID {
+		t.Fatal("bindings must be isolated by user, chat and agent")
+	}
+	expired, _ := repo.GetOrCreateBoundConversation(ctx, firstUser, domain.AgentAdministrativeAssistant, domain.ConversationChannelFeishuBot, "chat-a", now.Add(32*time.Minute), ttl)
+	if expired.ID == first.ID {
+		t.Fatal("an inactive binding should start a new conversation")
+	}
+}

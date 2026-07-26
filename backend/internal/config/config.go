@@ -27,12 +27,14 @@ type Config struct {
 	FeishuAppSecret            string
 	FeishuRedirectURI          string
 	FeishuAppLink              string
+	FeishuMeetingCalendarID    string
 	BootstrapSuperAdminOpenIDs []string
 	DashScopeAPIKey            string
 	DashScopeBaseURL           string
 	GenerationModel            string
 	EmbeddingModel             string
 	RerankModel                string
+	ContextModel               string
 	GeminiAPIKey               string
 	GeminiImageModel           string
 	ReminderModel              string
@@ -63,12 +65,14 @@ func Load() Config {
 		FeishuAppSecret:            os.Getenv("FEISHU_APP_SECRET"),
 		FeishuRedirectURI:          os.Getenv("FEISHU_REDIRECT_URI"),
 		FeishuAppLink:              os.Getenv("FEISHU_APP_LINK"),
+		FeishuMeetingCalendarID:    os.Getenv("FEISHU_MEETING_CALENDAR_ID"),
 		BootstrapSuperAdminOpenIDs: csv(os.Getenv("BOOTSTRAP_SUPER_ADMIN_OPEN_IDS")),
 		DashScopeAPIKey:            os.Getenv("DASHSCOPE_API_KEY"),
 		DashScopeBaseURL:           env("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
 		GenerationModel:            env("DASHSCOPE_GENERATION_MODEL", "qwen-plus"),
 		EmbeddingModel:             env("DASHSCOPE_EMBEDDING_MODEL", "text-embedding-v4"),
 		RerankModel:                env("DASHSCOPE_RERANK_MODEL", "qwen3-rerank"),
+		ContextModel:               env("DASHSCOPE_CONTEXT_MODEL", "qwen-flash"),
 		GeminiAPIKey:               os.Getenv("GEMINI_API_KEY"),
 		GeminiImageModel:           env("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image"),
 		ReminderModel:              env("DASHSCOPE_REMINDER_MODEL", "qwen-flash"),

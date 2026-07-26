@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { installChunkLoadRecovery } from './chunkRecovery'
 
 const routes: RouteRecordRaw[] = [
   { path: '/login', name: 'login', component: () => import('@/views/LoginView.vue'), meta: { public: true } },
@@ -10,8 +11,10 @@ const routes: RouteRecordRaw[] = [
 	  { path: 'reminders', name: 'reminders', component: () => import('@/views/RemindersView.vue') },
       { path: 'admin/knowledge', name: 'knowledge', component: () => import('@/views/admin/KnowledgeView.vue'), meta: { roles: ['knowledge_admin', 'super_admin'] } },
       { path: 'admin/agent', name: 'agent-config', component: () => import('@/views/admin/AgentConfigView.vue'), meta: { roles: ['knowledge_admin', 'super_admin'] } },
+      { path: 'admin/image-agent', name: 'image-agent-admin', component: () => import('@/views/admin/ImageAgentAdminView.vue'), meta: { roles: ['image_admin', 'super_admin'] } },
       { path: 'admin/notifications', name: 'notifications', component: () => import('@/views/admin/NotificationsView.vue'), meta: { roles: ['notification_admin', 'super_admin'] } },
 	  { path: 'admin/work-calendar', name: 'work-calendar', component: () => import('@/views/admin/WorkCalendarView.vue'), meta: { roles: ['notification_admin', 'super_admin'] } },
+      { path: 'admin/meeting-rooms', name: 'meeting-rooms', component: () => import('@/views/admin/MeetingRoomsView.vue'), meta: { roles: ['notification_admin', 'super_admin'] } },
       { path: 'admin/audit', name: 'audit', component: () => import('@/views/admin/AuditView.vue'), meta: { roles: ['auditor', 'knowledge_admin', 'notification_admin', 'super_admin'] } },
       { path: 'admin/users', name: 'users', component: () => import('@/views/admin/UsersView.vue'), meta: { roles: ['super_admin'] } },
     ],
@@ -20,6 +23,7 @@ const routes: RouteRecordRaw[] = [
 ]
 
 const router = createRouter({ history: createWebHistory(), routes })
+installChunkLoadRecovery(router)
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
   await auth.initialize()

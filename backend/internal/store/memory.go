@@ -13,24 +13,38 @@ import (
 )
 
 type Memory struct {
-	mu                 sync.RWMutex
-	users              map[string]domain.User
-	openIDs            map[string]string
-	conversations      map[string]domain.Conversation
-	messages           map[string][]domain.Message
-	sources            map[string]domain.KnowledgeSource
-	documents          map[string]domain.Document
-	chunks             []domain.Chunk
-	configs            []domain.AgentConfigVersion
-	agentProfiles      map[string]domain.AgentProfile
-	notifications      map[string]domain.NotificationDraft
-	reminders          map[string]domain.Reminder
-	reminderActions    map[string]domain.ReminderActionDraft
-	reminderDeliveries map[string]domain.ReminderDelivery
-	workdayOverrides   map[string]domain.WorkdayOverride
-	reminderBotJobs    map[string]domain.ReminderBotJob
-	audits             []domain.AuditEvent
-	events             map[string]struct{}
+	mu                   sync.RWMutex
+	users                map[string]domain.User
+	openIDs              map[string]string
+	conversations        map[string]domain.Conversation
+	messages             map[string][]domain.Message
+	conversationContexts map[string]domain.ConversationContext
+	conversationBindings map[string]domain.ConversationBinding
+	sources              map[string]domain.KnowledgeSource
+	documents            map[string]domain.Document
+	chunks               []domain.Chunk
+	configs              []domain.AgentConfigVersion
+	agentProfiles        map[string]domain.AgentProfile
+	notifications        map[string]domain.NotificationDraft
+	reminders            map[string]domain.Reminder
+	reminderActions      map[string]domain.ReminderActionDraft
+	reminderDeliveries   map[string]domain.ReminderDelivery
+	workdayOverrides     map[string]domain.WorkdayOverride
+	reminderBotJobs      map[string]domain.ReminderBotJob
+	meetingRooms         map[string]domain.MeetingRoom
+	meetingSettings      domain.MeetingSettings
+	meetingActions       map[string]domain.MeetingBookingAction
+	meetingBookings      map[string]domain.MeetingBooking
+	meetingDeliveries    map[string]domain.MeetingBookingDelivery
+	imageRelays          map[string]domain.ImageRelay
+	imageModels          map[string]domain.ImageModel
+	imageProjects        map[string]domain.ImageProject
+	imagePromptActions   map[string]domain.ImagePromptAction
+	imageCanvases        map[string]domain.ImageCanvas
+	imageAssets          map[string]domain.ImageAsset
+	imageJobs            map[string]domain.ImageJob
+	audits               []domain.AuditEvent
+	events               map[string]struct{}
 }
 
 const DemoAdminID = "00000000-0000-4000-8000-000000000001"
@@ -43,10 +57,15 @@ func NewMemory(defaultConfig domain.AgentConfig) *Memory {
 	config := domain.AgentConfigVersion{ID: ids.New("cfg"), Version: 1, Status: "published", Config: defaultConfig, CreatedBy: admin.ID, CreatedAt: now, PublishedAt: &now}
 	return &Memory{
 		users: map[string]domain.User{admin.ID: admin, employee.ID: employee}, openIDs: map[string]string{admin.FeishuOpenID: admin.ID, employee.FeishuOpenID: employee.ID},
-		conversations: map[string]domain.Conversation{}, messages: map[string][]domain.Message{}, sources: map[string]domain.KnowledgeSource{}, documents: map[string]domain.Document{},
+		conversations: map[string]domain.Conversation{}, messages: map[string][]domain.Message{}, conversationContexts: map[string]domain.ConversationContext{}, conversationBindings: map[string]domain.ConversationBinding{}, sources: map[string]domain.KnowledgeSource{}, documents: map[string]domain.Document{},
 		configs: []domain.AgentConfigVersion{config}, agentProfiles: map[string]domain.AgentProfile{}, notifications: map[string]domain.NotificationDraft{},
 		reminders: map[string]domain.Reminder{}, reminderActions: map[string]domain.ReminderActionDraft{}, reminderDeliveries: map[string]domain.ReminderDelivery{},
 		workdayOverrides: map[string]domain.WorkdayOverride{}, reminderBotJobs: map[string]domain.ReminderBotJob{},
+		meetingRooms: map[string]domain.MeetingRoom{}, meetingSettings: domain.MeetingSettings{Timezone: "Asia/Shanghai", WorkdayStart: "09:00", WorkdayEnd: "18:00", SlotMinutes: 30, SyncIntervalMinute: 15, UpdatedAt: now},
+		meetingActions: map[string]domain.MeetingBookingAction{}, meetingBookings: map[string]domain.MeetingBooking{}, meetingDeliveries: map[string]domain.MeetingBookingDelivery{},
+		imageRelays: map[string]domain.ImageRelay{}, imageModels: map[string]domain.ImageModel{}, imageProjects: map[string]domain.ImageProject{},
+		imagePromptActions: map[string]domain.ImagePromptAction{}, imageCanvases: map[string]domain.ImageCanvas{},
+		imageAssets: map[string]domain.ImageAsset{}, imageJobs: map[string]domain.ImageJob{},
 		audits: []domain.AuditEvent{}, events: map[string]struct{}{},
 	}
 }
@@ -161,9 +180,215 @@ func (m *Memory) UpdateUserStatus(_ context.Context, openID, status string) erro
 	m.users[id] = user
 	return nil
 }
+
+func (m *Memory) UpsertMeetingRooms(_ context.Context, rooms []domain.MeetingRoom) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	seen := make(map[string]bool, len(rooms))
+	for _, room := range rooms {
+		seen[room.RoomID] = true
+		m.meetingRooms[room.RoomID] = room
+	}
+	for id, room := range m.meetingRooms {
+		if !seen[id] {
+			room.Enabled = false
+			room.ScheduleEnabled = false
+			room.LastError = "会议室已从飞书同步范围移除"
+			m.meetingRooms[id] = room
+		}
+	}
+	return nil
+}
+
+func (m *Memory) ListMeetingRooms(_ context.Context) ([]domain.MeetingRoom, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	values := make([]domain.MeetingRoom, 0, len(m.meetingRooms))
+	for _, room := range m.meetingRooms {
+		values = append(values, room)
+	}
+	sort.Slice(values, func(i, j int) bool {
+		if values[i].Capacity == values[j].Capacity {
+			return values[i].Name < values[j].Name
+		}
+		return values[i].Capacity < values[j].Capacity
+	})
+	return values, nil
+}
+
+func (m *Memory) GetMeetingRoom(_ context.Context, roomID string) (domain.MeetingRoom, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	value, ok := m.meetingRooms[roomID]
+	if !ok {
+		return value, ErrNotFound
+	}
+	return value, nil
+}
+
+func (m *Memory) GetMeetingSettings(_ context.Context) (domain.MeetingSettings, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.meetingSettings, nil
+}
+
+func (m *Memory) SaveMeetingSettings(_ context.Context, value domain.MeetingSettings) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.meetingSettings = value
+	return nil
+}
+
+func (m *Memory) CreateMeetingBookingAction(_ context.Context, value domain.MeetingBookingAction) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.meetingActions[value.ID]; exists {
+		return ErrConflict
+	}
+	m.meetingActions[value.ID] = value
+	return nil
+}
+
+func (m *Memory) GetMeetingBookingAction(_ context.Context, id string) (domain.MeetingBookingAction, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	value, ok := m.meetingActions[id]
+	if !ok {
+		return value, ErrNotFound
+	}
+	return value, nil
+}
+
+func (m *Memory) ClaimMeetingBookingAction(_ context.Context, id, userID, optionID string, now time.Time) (domain.MeetingBookingAction, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	value, ok := m.meetingActions[id]
+	if !ok {
+		return value, ErrNotFound
+	}
+	if value.UserID != userID {
+		return value, ErrForbidden
+	}
+	if value.Status != domain.MeetingActionPending || now.After(value.ExpiresAt) {
+		if value.Status == domain.MeetingActionPending {
+			value.Status = domain.MeetingActionExpired
+			m.meetingActions[id] = value
+		}
+		return value, ErrConflict
+	}
+	value.Status = domain.MeetingActionProcessing
+	value.SelectedOptionID = optionID
+	m.meetingActions[id] = value
+	return value, nil
+}
+
+func (m *Memory) UpdateMeetingBookingAction(_ context.Context, value domain.MeetingBookingAction) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.meetingActions[value.ID]; !exists {
+		return ErrNotFound
+	}
+	m.meetingActions[value.ID] = value
+	return nil
+}
+
+func (m *Memory) CreateMeetingBooking(_ context.Context, value domain.MeetingBooking) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.meetingBookings[value.ID]; exists {
+		return ErrConflict
+	}
+	m.meetingBookings[value.ID] = value
+	return nil
+}
+
+func (m *Memory) GetMeetingBooking(_ context.Context, id string) (domain.MeetingBooking, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	value, ok := m.meetingBookings[id]
+	if !ok {
+		return value, ErrNotFound
+	}
+	return value, nil
+}
+
+func (m *Memory) ListMeetingBookings(_ context.Context, userID string) ([]domain.MeetingBooking, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	values := []domain.MeetingBooking{}
+	for _, booking := range m.meetingBookings {
+		if userID == "" || booking.UserID == userID {
+			values = append(values, booking)
+		}
+	}
+	sort.Slice(values, func(i, j int) bool { return values[i].StartAt.After(values[j].StartAt) })
+	return values, nil
+}
+
+func (m *Memory) UpdateMeetingBooking(_ context.Context, value domain.MeetingBooking) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.meetingBookings[value.ID]; !exists {
+		return ErrNotFound
+	}
+	m.meetingBookings[value.ID] = value
+	for id, delivery := range m.meetingDeliveries {
+		if delivery.BookingID == value.ID && value.Status != "active" && delivery.Status != "sent" {
+			delivery.Status = "cancelled"
+			delivery.UpdatedAt = value.UpdatedAt
+			m.meetingDeliveries[id] = delivery
+		}
+	}
+	return nil
+}
+
+func (m *Memory) CreateMeetingBookingDelivery(_ context.Context, value domain.MeetingBookingDelivery) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, existing := range m.meetingDeliveries {
+		if existing.BookingID == value.BookingID && existing.ScheduledFor.Equal(value.ScheduledFor) {
+			return nil
+		}
+	}
+	m.meetingDeliveries[value.ID] = value
+	return nil
+}
+
+func (m *Memory) ClaimMeetingBookingDeliveries(_ context.Context, now time.Time, lease time.Duration, limit int) ([]domain.MeetingBookingDelivery, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 50
+	}
+	values := []domain.MeetingBookingDelivery{}
+	for id, delivery := range m.meetingDeliveries {
+		if len(values) >= limit || (delivery.Status != "pending" && delivery.Status != "retry" && delivery.Status != "sending") || delivery.NextAttemptAt.After(now) || delivery.LockedUntil != nil && delivery.LockedUntil.After(now) {
+			continue
+		}
+		lockedUntil := now.Add(lease)
+		delivery.Status = "sending"
+		delivery.Attempts++
+		delivery.LockedUntil = &lockedUntil
+		delivery.UpdatedAt = now
+		m.meetingDeliveries[id] = delivery
+		values = append(values, delivery)
+	}
+	return values, nil
+}
+
+func (m *Memory) UpdateMeetingBookingDelivery(_ context.Context, value domain.MeetingBookingDelivery) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.meetingDeliveries[value.ID]; !exists {
+		return ErrNotFound
+	}
+	m.meetingDeliveries[value.ID] = value
+	return nil
+}
 func (m *Memory) CreateConversation(_ context.Context, value domain.Conversation) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	normalizeConversation(&value)
 	m.conversations[value.ID] = value
 	return nil
 }
@@ -200,6 +425,12 @@ func (m *Memory) DeleteConversation(_ context.Context, id, userID string) error 
 	}
 	delete(m.conversations, id)
 	delete(m.messages, id)
+	delete(m.conversationContexts, id)
+	for key, binding := range m.conversationBindings {
+		if binding.ConversationID == id {
+			delete(m.conversationBindings, key)
+		}
+	}
 	return nil
 }
 func (m *Memory) AddMessage(_ context.Context, value domain.Message) error {
@@ -219,6 +450,139 @@ func (m *Memory) ListMessages(_ context.Context, conversationID string) ([]domai
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return append([]domain.Message(nil), m.messages[conversationID]...), nil
+}
+
+func (m *Memory) UpdateMessageAnalysis(_ context.Context, messageID, intent, standalone string, version, promptTokens, completionTokens int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for conversationID, values := range m.messages {
+		for index := range values {
+			if values[index].ID != messageID {
+				continue
+			}
+			values[index].Intent = intent
+			values[index].StandaloneQuery = standalone
+			values[index].ContextVersion = version
+			if promptTokens >= 0 {
+				values[index].PromptTokens = promptTokens
+			}
+			if completionTokens >= 0 {
+				values[index].CompletionTokens = completionTokens
+			}
+			m.messages[conversationID] = values
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+func (m *Memory) GetConversationContext(_ context.Context, conversationID string) (domain.ConversationContext, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	value, ok := m.conversationContexts[conversationID]
+	if !ok {
+		return domain.ConversationContext{}, ErrNotFound
+	}
+	return value, nil
+}
+
+func (m *Memory) SaveConversationContext(_ context.Context, value domain.ConversationContext) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.conversations[value.ConversationID]; !ok {
+		return ErrNotFound
+	}
+	m.conversationContexts[value.ConversationID] = value
+	return nil
+}
+
+func (m *Memory) ResetConversationContext(_ context.Context, conversationID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.conversations[conversationID]; !ok {
+		return ErrNotFound
+	}
+	version := 0
+	if current, ok := m.conversationContexts[conversationID]; ok {
+		version = current.Version + 1
+	}
+	resetThrough := ""
+	if messages := m.messages[conversationID]; len(messages) > 0 {
+		resetThrough = messages[len(messages)-1].ID
+	}
+	m.conversationContexts[conversationID] = domain.ConversationContext{
+		ConversationID:        conversationID,
+		ResetThroughMessageID: resetThrough,
+		ActiveTask:            domain.ConversationTaskState{Slots: map[string]any{}},
+		Version:               version,
+		UpdatedAt:             time.Now(),
+	}
+	return nil
+}
+
+func (m *Memory) GetOrCreateBoundConversation(_ context.Context, user domain.User, agentKey, channel, scopeID string, now time.Time, ttl time.Duration) (domain.Conversation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := conversationBindingKey(user.ID, agentKey, channel, scopeID)
+	if binding, ok := m.conversationBindings[key]; ok && binding.ExpiresAt.After(now) {
+		if conversation, exists := m.conversations[binding.ConversationID]; exists {
+			binding.ExpiresAt = now.Add(ttl)
+			binding.UpdatedAt = now
+			m.conversationBindings[key] = binding
+			return conversation, nil
+		}
+	}
+	conversation := domain.Conversation{ID: ids.New("conv"), UserID: user.ID, Title: "飞书行政助手", AgentKey: agentKey, Channel: channel, CreatedAt: now, UpdatedAt: now}
+	normalizeConversation(&conversation)
+	m.conversations[conversation.ID] = conversation
+	m.conversationBindings[key] = domain.ConversationBinding{UserID: user.ID, AgentKey: agentKey, Channel: channel, ExternalScopeID: scopeID, ConversationID: conversation.ID, ExpiresAt: now.Add(ttl), UpdatedAt: now}
+	return conversation, nil
+}
+
+func (m *Memory) ResetConversationBinding(_ context.Context, userID, agentKey, channel, scopeID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.conversationBindings, conversationBindingKey(userID, agentKey, channel, scopeID))
+	return nil
+}
+
+func (m *Memory) CleanupConversationHistory(_ context.Context, before time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for conversationID, messages := range m.messages {
+		for index := range messages {
+			if messages[index].CreatedAt.Before(before) {
+				messages[index].Content = "[内容已按留存策略清理]"
+				messages[index].Citations = []domain.Citation{}
+				messages[index].StandaloneQuery = ""
+			}
+		}
+		m.messages[conversationID] = messages
+	}
+	for conversationID, value := range m.conversationContexts {
+		if value.UpdatedAt.Before(before) {
+			delete(m.conversationContexts, conversationID)
+		}
+	}
+	for key, binding := range m.conversationBindings {
+		if binding.UpdatedAt.Before(before) {
+			delete(m.conversationBindings, key)
+		}
+	}
+	return nil
+}
+
+func normalizeConversation(value *domain.Conversation) {
+	if value.AgentKey == "" {
+		value.AgentKey = domain.AgentAdministrativeAssistant
+	}
+	if value.Channel == "" {
+		value.Channel = domain.ConversationChannelH5
+	}
+}
+
+func conversationBindingKey(userID, agentKey, channel, scopeID string) string {
+	return strings.Join([]string{userID, agentKey, channel, scopeID}, "\x00")
 }
 func (m *Memory) CreateSource(_ context.Context, value domain.KnowledgeSource) error {
 	m.mu.Lock()

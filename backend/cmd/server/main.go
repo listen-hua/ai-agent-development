@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -33,7 +34,7 @@ func run() error {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	defaultConfig := domain.AgentConfig{GenerationModel: cfg.GenerationModel, EmbeddingModel: cfg.EmbeddingModel, RerankModel: cfg.RerankModel, Temperature: .1, MaxOutputTokens: 1600, TimeoutSeconds: 90, RetrievalTopK: 30, RerankTopN: 6, ScoreThreshold: .45, ContextBudget: 12000, SystemPrompt: "你是公司行政制度助手。只能依据提供的已发布制度回答，不得编造，不得使用外部常识补充公司规定。"}
+	defaultConfig := domain.AgentConfig{GenerationModel: cfg.GenerationModel, ContextModel: cfg.ContextModel, EmbeddingModel: cfg.EmbeddingModel, RerankModel: cfg.RerankModel, Temperature: .1, MaxOutputTokens: 1600, TimeoutSeconds: 90, RetrievalTopK: 30, RerankTopN: 6, ScoreThreshold: .45, ContextBudget: 12000, SystemPrompt: "你是公司行政制度助手。只能依据提供的已发布制度回答，不得编造，不得使用外部常识补充公司规定。"}
 	var repo store.Repository
 	var postgres *store.Postgres
 	if cfg.DatabaseURL != "" {
@@ -94,17 +95,31 @@ func run() error {
 	if cfg.ClamAVAddr != "" {
 		scanner = security.ClamAV{Addr: cfg.ClamAVAddr}
 	}
+	imageRepository, ok := repo.(store.ImageRepository)
+	if !ok {
+		return fmt.Errorf("configured repository does not support the image agent")
+	}
+	imageAgent, err := service.NewImageAgent(imageRepository, repo, blobStore, scanner, cfg.AgentSecretEncryptionKey, agents)
+	if err != nil {
+		return err
+	}
+	if err = imageAgent.EnsureDefaults(rootCtx); err != nil {
+		return err
+	}
 	knowledge := service.NewKnowledge(repo, provider, tika, cfg.EmbeddingModel, blobStore, scanner, feishuClient)
 	hub := service.NewRunHub()
 	reminders := service.NewReminder(repo, provider, cfg.ReminderModel, cfg.ReminderTimezone, cfg.ReminderMaxActive)
-	chat := service.NewChat(repo, provider, hub, reminders)
+	meetingLocker := service.NewRedisSlotLocker(cfg.RedisAddr)
+	defer meetingLocker.Close()
+	meetings := service.NewMeeting(repo, feishuClient, meetingLocker, cfg.ReminderTimezone, cfg.FeishuMeetingCalendarID)
+	chat := service.NewChat(repo, provider, hub, reminders, meetings)
 	notifications := service.NewNotification(repo, feishuClient, provider, scanner)
-	feishuBot := service.NewFeishuBot(repo, chat, feishuClient, cfg.FeishuAppLink, reminders)
-	longConnection := feishu.NewLongConnection(cfg.FeishuAppID, cfg.FeishuAppSecret, feishuBot, directory)
+	feishuBot := service.NewFeishuBot(repo, chat, feishuClient, cfg.FeishuAppLink, reminders, meetings)
+	longConnection := feishu.NewLongConnection(cfg.FeishuAppID, cfg.FeishuAppSecret, feishuBot, directory, meetings)
 	sessions := security.NewSessions(cfg.SessionSecret)
 	seed(context.Background(), repo, knowledge)
 	go knowledge.RunSourceScheduler(rootCtx, 15*time.Minute)
-	handler := httpapi.New(cfg, repo, sessions, chat, knowledge, notifications, reminders, feishuClient, directory, agents).Handler()
+	handler := httpapi.New(cfg, repo, sessions, chat, knowledge, notifications, reminders, feishuClient, directory, agents, meetings, imageAgent).Handler()
 	server := &http.Server{Addr: cfg.HTTPAddr, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 1 << 20}
 
 	var longConnectionErr <-chan error

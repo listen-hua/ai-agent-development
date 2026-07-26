@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"internal-ai-agent/backend/internal/blob"
 	"internal-ai-agent/backend/internal/config"
 	"internal-ai-agent/backend/internal/integration/feishu"
 	"internal-ai-agent/backend/internal/model"
+	"internal-ai-agent/backend/internal/security"
 	"internal-ai-agent/backend/internal/service"
 	"internal-ai-agent/backend/internal/store"
 	"log"
@@ -36,8 +38,32 @@ func main() {
 		logger.Warn("DASHSCOPE_API_KEY is not configured; reminder natural-language fallback is limited")
 	}
 	feishuClient := feishu.New(cfg.FeishuAppID, cfg.FeishuAppSecret, cfg.FeishuRedirectURI)
+	var blobStore blob.Store = blob.Noop{}
+	if cfg.MinIOEndpoint != "" {
+		value, blobErr := blob.NewMinIO(ctx, cfg.MinIOEndpoint, cfg.MinIOAccessKey, cfg.MinIOSecretKey, cfg.MinIOBucket, cfg.MinIOSecure)
+		if blobErr != nil {
+			log.Fatal(blobErr)
+		}
+		blobStore = value
+	}
+	var scanner security.Scanner = security.NoopScanner{}
+	if cfg.ClamAVAddr != "" {
+		scanner = security.ClamAV{Addr: cfg.ClamAVAddr}
+	}
+	imageAgent, err := service.NewImageAgent(repo, repo, blobStore, scanner, cfg.AgentSecretEncryptionKey)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err = imageAgent.EnsureDefaults(ctx); err != nil {
+		log.Fatal(err)
+	}
+	imageDispatcher := service.NewImageDispatcher(imageAgent, time.Duration(cfg.RetentionDays)*24*time.Hour)
 	reminders := service.NewReminder(repo, provider, cfg.ReminderModel, cfg.ReminderTimezone, cfg.ReminderMaxActive)
 	dispatcher := service.NewReminderDispatcher(repo, reminders, feishuClient, cfg.FeishuAppLink, time.Duration(cfg.ReminderGraceMinutes)*time.Minute, time.Duration(cfg.RetentionDays)*24*time.Hour)
+	meetingLocker := service.NewRedisSlotLocker(cfg.RedisAddr)
+	defer meetingLocker.Close()
+	meetings := service.NewMeeting(repo, feishuClient, meetingLocker, cfg.ReminderTimezone, cfg.FeishuMeetingCalendarID)
+	meetingDispatcher := service.NewMeetingDispatcher(repo, meetings)
 	notifications := service.NewNotification(repo, feishuClient, provider)
 	interval := time.Duration(cfg.ReminderPollSeconds) * time.Second
 	if interval < time.Second {
@@ -52,6 +78,12 @@ func main() {
 	if err = notifications.DispatchDue(ctx); err != nil {
 		logger.Error("initial scheduled notification tick failed", "error", err)
 	}
+	if err = meetingDispatcher.Tick(ctx); err != nil {
+		logger.Error("initial meeting tick failed", "error", err)
+	}
+	if err = imageDispatcher.Tick(ctx); err != nil {
+		logger.Error("initial image job tick failed", "error", err)
+	}
 	for {
 		select {
 		case <-ticker.C:
@@ -60,6 +92,12 @@ func main() {
 			}
 			if err = notifications.DispatchDue(ctx); err != nil {
 				logger.Error("scheduled notification tick failed", "error", err)
+			}
+			if err = meetingDispatcher.Tick(ctx); err != nil {
+				logger.Error("meeting tick failed", "error", err)
+			}
+			if err = imageDispatcher.Tick(ctx); err != nil {
+				logger.Error("image job tick failed", "error", err)
 			}
 		case <-ctx.Done():
 			logger.Info("worker stopped")

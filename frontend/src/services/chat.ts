@@ -5,6 +5,7 @@ export const chatService = {
   listConversations: () => api.get<Conversation[]>('/api/v1/conversations'),
   createConversation: () => api.post<Conversation>('/api/v1/conversations'),
   deleteConversation: (id: string) => api.delete(`/api/v1/conversations/${id}`),
+  resetContext: (id: string) => api.post<void>(`/api/v1/conversations/${id}/context/reset`),
   listMessages: (id: string) => api.get<Message[]>(`/api/v1/conversations/${id}/messages`),
   sendMessage: (id: string, content: string) => api.post<{ run_id: string }>(`/api/v1/conversations/${id}/messages`, { content }),
   stream(runId: string, onEvent: (event: RunEvent) => void, onConnectionError: () => void) {
@@ -15,4 +16,3 @@ export const chatService = {
     return () => source.close()
   },
 }
-

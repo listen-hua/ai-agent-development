@@ -179,11 +179,12 @@ func (p *Postgres) UpdateUserStatus(ctx context.Context, openID, status string) 
 }
 
 func (p *Postgres) CreateConversation(ctx context.Context, v domain.Conversation) error {
-	_, err := p.pool.Exec(ctx, `INSERT INTO conversations(id,user_id,title,created_at,updated_at) VALUES($1,$2,$3,$4,$5)`, v.ID, v.UserID, v.Title, v.CreatedAt, v.UpdatedAt)
+	normalizeConversation(&v)
+	_, err := p.pool.Exec(ctx, `INSERT INTO conversations(id,user_id,title,agent_key,channel,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7)`, v.ID, v.UserID, v.Title, v.AgentKey, v.Channel, v.CreatedAt, v.UpdatedAt)
 	return err
 }
 func (p *Postgres) ListConversations(ctx context.Context, userID string) ([]domain.Conversation, error) {
-	rows, err := p.pool.Query(ctx, `SELECT id,user_id,title,created_at,updated_at FROM conversations WHERE user_id=$1 AND deleted_at IS NULL ORDER BY updated_at DESC`, userID)
+	rows, err := p.pool.Query(ctx, `SELECT id,user_id,title,agent_key,channel,created_at,updated_at FROM conversations WHERE user_id=$1 AND deleted_at IS NULL ORDER BY updated_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +192,7 @@ func (p *Postgres) ListConversations(ctx context.Context, userID string) ([]doma
 	out := []domain.Conversation{}
 	for rows.Next() {
 		var v domain.Conversation
-		if err = rows.Scan(&v.ID, &v.UserID, &v.Title, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		if err = rows.Scan(&v.ID, &v.UserID, &v.Title, &v.AgentKey, &v.Channel, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -200,31 +201,49 @@ func (p *Postgres) ListConversations(ctx context.Context, userID string) ([]doma
 }
 func (p *Postgres) GetConversation(ctx context.Context, id string) (domain.Conversation, error) {
 	var v domain.Conversation
-	err := p.pool.QueryRow(ctx, `SELECT id,user_id,title,created_at,updated_at FROM conversations WHERE id=$1 AND deleted_at IS NULL`, id).Scan(&v.ID, &v.UserID, &v.Title, &v.CreatedAt, &v.UpdatedAt)
+	err := p.pool.QueryRow(ctx, `SELECT id,user_id,title,agent_key,channel,created_at,updated_at FROM conversations WHERE id=$1 AND deleted_at IS NULL`, id).Scan(&v.ID, &v.UserID, &v.Title, &v.AgentKey, &v.Channel, &v.CreatedAt, &v.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		return v, ErrNotFound
 	}
 	return v, err
 }
 func (p *Postgres) DeleteConversation(ctx context.Context, id, userID string) error {
-	tag, err := p.pool.Exec(ctx, `UPDATE conversations SET deleted_at=now() WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`, id, userID)
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `UPDATE conversations SET deleted_at=now() WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`, id, userID)
 	if err == nil && tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM conversation_contexts WHERE conversation_id=$1`, id); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM conversation_bindings WHERE conversation_id=$1`, id); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 func (p *Postgres) AddMessage(ctx context.Context, v domain.Message) error {
 	citations := mustJSON(v.Citations)
 	var reminderActionID any
+	var meetingActionID any
 	if v.ReminderAction != nil && v.ReminderAction.ID != "" {
 		reminderActionID = v.ReminderAction.ID
+	}
+	if v.MeetingBookingAction != nil && v.MeetingBookingAction.ID != "" {
+		meetingActionID = v.MeetingBookingAction.ID
 	}
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	_, err = tx.Exec(ctx, `INSERT INTO messages(id,conversation_id,role,content,citations,model,reminder_action_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, v.ID, v.ConversationID, v.Role, v.Content, citations, v.Model, reminderActionID, v.CreatedAt)
+	_, err = tx.Exec(ctx, `INSERT INTO messages(id,conversation_id,role,content,citations,model,prompt_tokens,completion_tokens,intent,standalone_query,context_version,reminder_action_id,meeting_booking_action_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, v.ID, v.ConversationID, v.Role, v.Content, citations, v.Model, v.PromptTokens, v.CompletionTokens, v.Intent, v.StandaloneQuery, v.ContextVersion, reminderActionID, meetingActionID, v.CreatedAt)
 	if err != nil {
 		return err
 	}
@@ -236,23 +255,26 @@ func (p *Postgres) AddMessage(ctx context.Context, v domain.Message) error {
 	return tx.Commit(ctx)
 }
 func (p *Postgres) ListMessages(ctx context.Context, id string) ([]domain.Message, error) {
-	rows, err := p.pool.Query(ctx, `SELECT id,conversation_id,role,content,citations,model,COALESCE(reminder_action_id::text,''),created_at FROM messages WHERE conversation_id=$1 ORDER BY created_at`, id)
+	rows, err := p.pool.Query(ctx, `SELECT id,conversation_id,role,content,citations,model,intent,standalone_query,context_version,prompt_tokens,completion_tokens,COALESCE(reminder_action_id::text,''),COALESCE(meeting_booking_action_id::text,''),created_at FROM messages WHERE conversation_id=$1 ORDER BY created_at,id`, id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := []domain.Message{}
 	actionIDs := []string{}
+	meetingActionIDs := []string{}
 	for rows.Next() {
 		var v domain.Message
 		var raw []byte
 		var actionID string
-		if err = rows.Scan(&v.ID, &v.ConversationID, &v.Role, &v.Content, &raw, &v.Model, &actionID, &v.CreatedAt); err != nil {
+		var meetingActionID string
+		if err = rows.Scan(&v.ID, &v.ConversationID, &v.Role, &v.Content, &raw, &v.Model, &v.Intent, &v.StandaloneQuery, &v.ContextVersion, &v.PromptTokens, &v.CompletionTokens, &actionID, &meetingActionID, &v.CreatedAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(raw, &v.Citations)
 		out = append(out, v)
 		actionIDs = append(actionIDs, actionID)
+		meetingActionIDs = append(meetingActionIDs, meetingActionID)
 	}
 	if err = rows.Err(); err != nil {
 		return nil, err
@@ -264,6 +286,14 @@ func (p *Postgres) ListMessages(ctx context.Context, id string) ([]domain.Messag
 		}
 		if action, actionErr := p.GetReminderAction(ctx, actionID); actionErr == nil {
 			out[i].ReminderAction = &action
+		}
+	}
+	for i, actionID := range meetingActionIDs {
+		if actionID == "" {
+			continue
+		}
+		if action, actionErr := p.GetMeetingBookingAction(ctx, actionID); actionErr == nil {
+			out[i].MeetingBookingAction = &action
 		}
 	}
 	return out, nil

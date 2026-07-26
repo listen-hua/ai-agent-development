@@ -11,6 +11,7 @@ import (
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher/callback"
 	larkcontact "github.com/larksuite/oapi-sdk-go/v3/service/contact/v3"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
+	larkmeetingroom "github.com/larksuite/oapi-sdk-go/v3/service/meeting_room/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 )
 
@@ -54,22 +55,38 @@ type ContactChangeHandler interface {
 	HandleContactChange(context.Context, ContactChangeEvent) error
 }
 
+type MeetingRoomStatusChangeEvent struct {
+	EventID string
+	RoomID  string
+	Name    string
+}
+
+type MeetingRoomStatusChangeHandler interface {
+	HandleMeetingRoomStatusChange(context.Context, MeetingRoomStatusChangeEvent) error
+}
+
 type LongConnection struct {
 	configured bool
 	client     *larkws.Client
 }
 
-func NewLongConnection(appID, appSecret string, handler LongConnectionHandler, contactHandlers ...ContactChangeHandler) *LongConnection {
+func NewLongConnection(appID, appSecret string, handler LongConnectionHandler, features ...any) *LongConnection {
 	configured := appID != "" && appSecret != "" && handler != nil
 	connection := &LongConnection{configured: configured}
 	if !configured {
 		return connection
 	}
 	var contactHandler ContactChangeHandler
-	if len(contactHandlers) > 0 {
-		contactHandler = contactHandlers[0]
+	var meetingRoomHandler MeetingRoomStatusChangeHandler
+	for _, feature := range features {
+		if value, ok := feature.(ContactChangeHandler); ok {
+			contactHandler = value
+		}
+		if value, ok := feature.(MeetingRoomStatusChangeHandler); ok {
+			meetingRoomHandler = value
+		}
 	}
-	eventHandler := newLongConnectionDispatcher(handler, contactHandler)
+	eventHandler := newLongConnectionDispatcher(handler, contactHandler, meetingRoomHandler)
 	connection.client = larkws.NewClient(appID, appSecret,
 		larkws.WithEventHandler(eventHandler),
 		larkws.WithLogLevel(larkcore.LogLevelWarn),
@@ -97,7 +114,7 @@ func (c *LongConnection) Close() {
 	}
 }
 
-func newLongConnectionDispatcher(handler LongConnectionHandler, contactHandlers ...ContactChangeHandler) *dispatcher.EventDispatcher {
+func newLongConnectionDispatcher(handler LongConnectionHandler, features ...any) *dispatcher.EventDispatcher {
 	eventDispatcher := dispatcher.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
 			return handler.HandleMessage(ctx, toMessageEvent(event))
@@ -116,20 +133,41 @@ func newLongConnectionDispatcher(handler LongConnectionHandler, contactHandlers 
 			}
 			return response, nil
 		})
-	if len(contactHandlers) == 0 || contactHandlers[0] == nil {
-		return eventDispatcher
+	var contactHandler ContactChangeHandler
+	var meetingRoomHandler MeetingRoomStatusChangeHandler
+	for _, feature := range features {
+		if value, ok := feature.(ContactChangeHandler); ok {
+			contactHandler = value
+		}
+		if value, ok := feature.(MeetingRoomStatusChangeHandler); ok {
+			meetingRoomHandler = value
+		}
 	}
-	contactHandler := contactHandlers[0]
-	return eventDispatcher.
-		OnP2UserCreatedV3(func(ctx context.Context, event *larkcontact.P2UserCreatedV3) error {
+	if contactHandler != nil {
+		eventDispatcher = eventDispatcher.OnP2UserCreatedV3(func(ctx context.Context, event *larkcontact.P2UserCreatedV3) error {
 			return contactHandler.HandleContactChange(ctx, toContactChangeEvent(event.EventV2Base, contactOpenID(event), "created"))
 		}).
-		OnP2UserUpdatedV3(func(ctx context.Context, event *larkcontact.P2UserUpdatedV3) error {
-			return contactHandler.HandleContactChange(ctx, toContactChangeEvent(event.EventV2Base, contactOpenID(event), "updated"))
-		}).
-		OnP2UserDeletedV3(func(ctx context.Context, event *larkcontact.P2UserDeletedV3) error {
-			return contactHandler.HandleContactChange(ctx, toContactChangeEvent(event.EventV2Base, contactOpenID(event), "deleted"))
+			OnP2UserUpdatedV3(func(ctx context.Context, event *larkcontact.P2UserUpdatedV3) error {
+				return contactHandler.HandleContactChange(ctx, toContactChangeEvent(event.EventV2Base, contactOpenID(event), "updated"))
+			}).
+			OnP2UserDeletedV3(func(ctx context.Context, event *larkcontact.P2UserDeletedV3) error {
+				return contactHandler.HandleContactChange(ctx, toContactChangeEvent(event.EventV2Base, contactOpenID(event), "deleted"))
+			})
+	}
+	if meetingRoomHandler != nil {
+		eventDispatcher = eventDispatcher.OnP2MeetingRoomStatusChangedV1(func(ctx context.Context, event *larkmeetingroom.P2MeetingRoomStatusChangedV1) error {
+			value := MeetingRoomStatusChangeEvent{}
+			if event != nil && event.EventV2Base != nil && event.EventV2Base.Header != nil {
+				value.EventID = event.EventV2Base.Header.EventID
+			}
+			if event != nil && event.Event != nil {
+				value.RoomID = stringValue(event.Event.RoomId)
+				value.Name = stringValue(event.Event.RoomName)
+			}
+			return meetingRoomHandler.HandleMeetingRoomStatusChange(ctx, value)
 		})
+	}
+	return eventDispatcher
 }
 
 func toContactChangeEvent(base *larkevent.EventV2Base, openID, change string) ContactChangeEvent {

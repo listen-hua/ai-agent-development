@@ -12,6 +12,8 @@
 - 制度文件查毒、Tika 解析、分块、Embedding、PostgreSQL 全文 + pgvector 混合检索、Rerank、ACL 过滤和引用验证。
 - 制度草稿—发布生命周期，发布前不会参与员工问答。
 - AI 通知润色、人工审核、幂等飞书卡片发送；不能跳过审核。
+- 行政 AI 智能预约普通会议室：同时校验会议室和参会人忙闲，确认后创建飞书日程，支持取消、改期和会后归还提醒。
+- AI 生图：支持两个 OpenAI 兼容中转站、模型能力配置、项目 ACL、快捷提示词、图片反推和持久化无限画布。
 - 飞书消息事件验签令牌校验、加密事件解密、事件幂等和机器人异步回复。
 - PostgreSQL、Redis、MinIO、Tika、ClamAV、API、Worker 和 Nginx 的 Docker Compose 基础设施。
 - 本地开发数据仓库和演示账号；配置 `DATABASE_URL` 后自动使用 PostgreSQL 持久化仓库。
@@ -57,16 +59,17 @@ docker compose up --build
 ### 飞书最小能力清单
 
 - 网页免登：获取用户身份基本信息；需要持续用户授权时再申请 `offline_access`。
-- 通讯录同步：至少开启“获取通讯录基本信息”；按 ACL 所用字段再开启“获取用户组织架构信息”和“获取用户雇佣信息”。使用职级/序列时还需对应的只读权限。应用通讯录可见范围只覆盖计划使用本系统的部门和员工。
+- 通讯录同步：至少开启“获取通讯录基本信息”。知识库部门可见范围还需要 `contact:department.base:readonly`（部门名称）和 `contact:department.organize:readonly`（部门层级），并将应用通讯录可见范围覆盖计划使用本系统的完整组织架构；按 ACL 所用字段再开启“获取用户组织架构信息”和“获取用户雇佣信息”。使用职级/序列时还需对应的只读权限。
 - 机器人问答：接收单聊消息、接收群内 `@` 消息、以应用身份发送消息。
 - 通知：`im:message:send_as_bot`，应用可用范围必须覆盖目标用户。
+- 会议室预约：`vc:room:readonly`、`calendar:room:readonly`、`calendar:calendar:create/read`、`calendar:calendar.event:create/read/update/delete`、`calendar:calendar.free_busy:read`；应用必须开启机器人能力。
 - 云空间同步：读取文件夹清单、文件元数据、云文档正文/导出和文件下载权限；目标文件夹需要显式共享给应用身份。
 
 具体 scope 名称会随飞书控制台版本变化，应在 API 调试台按实际接口生成并由企业管理员审核，禁止为了省事申请整租户全量权限。
 
 ### 飞书长连接配置
 
-1. 在“事件与回调 → 事件配置”中选择“使用长连接接收事件”，添加 `im.message.receive_v1`；如需自动刷新组织信息，再添加 `contact.user.created_v3`、`contact.user.updated_v3` 和 `contact.user.deleted_v3`。
+1. 在“事件与回调 → 事件配置”中选择“使用长连接接收事件”，添加 `im.message.receive_v1`；如需自动刷新组织信息，再添加 `contact.user.created_v3`、`contact.user.updated_v3` 和 `contact.user.deleted_v3`；启用会议室预约时再添加 `meeting_room.meeting_room.status_changed_v1`。
 2. 如使用新版卡片交互，在“回调配置”中选择“使用长连接接收回调”，添加 `card.action.trigger`。旧版 `card.action.trigger_v1` 不支持长连接，本项目不再提供旧版 HTTP 回调端点。
 3. 在 `.env` 中配置 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`。`FEISHU_APP_LINK` 留空时会根据 App ID 自动生成指向 `/chat` 的工作台链接，也可填写自定义 AppLink。长连接不使用 `FEISHU_VERIFICATION_TOKEN` 或 `FEISHU_ENCRYPT_KEY`。
 4. 发布应用版本并确保应用可用范围覆盖试点员工。API 容器启动后出现 `feishu long connection ready` 表示建连成功；SDK 会自动重连。
@@ -85,6 +88,24 @@ docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U ai_agent -d ai_agent 
 ```
 
 不要通过 PowerShell 文本管道把含中文的 SQL 传给 `psql`；部分 Windows 环境会把 UTF-8 中文转换成字面量 `?`。先复制文件再由容器内的 `psql -f` 读取可保留原始字节。
+
+会议室预约的飞书后台配置、首次同步和已有数据库升级步骤见 [docs/FEISHU_MEETING_SETUP.md](docs/FEISHU_MEETING_SETUP.md)。
+
+AI 生图中转站、模型、项目和快捷提示词的配置步骤见 [docs/IMAGE_AGENT_SETUP.md](docs/IMAGE_AGENT_SETUP.md)。
+
+### 多轮上下文
+
+- `DASHSCOPE_CONTEXT_MODEL` 配置低成本上下文模型，默认 `qwen-flash`；后台的 Agent 配置也可按版本修改、发布和回滚。
+- H5 以 `conversation_id` 隔离上下文；新建会话不会继承旧会话，`POST /api/v1/conversations/{id}/context/reset` 可在原会话中建立新的历史边界。
+- 飞书机器人按“用户 + chat_id + agent_key”绑定会话，30 分钟无交互自动新建上下文；发送“新会话”“清除上下文”“重新开始”或“算了”可立即重置。
+- 上下文模型只做意图识别与独立问题改写。制度证据每轮重新执行 ACL 检索，提醒和会议室操作仍需确认后才会执行。
+
+已有数据库升级到上下文版本时执行：
+
+```powershell
+docker compose cp backend/migrations/009_conversation_context.sql postgres:/tmp/009_conversation_context.sql
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U ai_agent -d ai_agent -f /tmp/009_conversation_context.sql
+```
 
 ## 工程结构
 

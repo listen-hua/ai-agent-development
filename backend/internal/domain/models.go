@@ -12,6 +12,7 @@ const (
 	RoleEmployee          Role = "employee"
 	RoleKnowledgeAdmin    Role = "knowledge_admin"
 	RoleNotificationAdmin Role = "notification_admin"
+	RoleImageAdmin        Role = "image_admin"
 	RoleAuditor           Role = "auditor"
 	RoleSuperAdmin        Role = "super_admin"
 )
@@ -47,7 +48,7 @@ func (u User) HasRole(roles ...Role) bool {
 
 func ValidRole(role Role) bool {
 	switch role {
-	case RoleEmployee, RoleKnowledgeAdmin, RoleNotificationAdmin, RoleAuditor, RoleSuperAdmin:
+	case RoleEmployee, RoleKnowledgeAdmin, RoleNotificationAdmin, RoleImageAdmin, RoleAuditor, RoleSuperAdmin:
 		return true
 	default:
 		return false
@@ -252,19 +253,27 @@ type Conversation struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"user_id"`
 	Title     string    `json:"title"`
+	AgentKey  string    `json:"agent_key"`
+	Channel   string    `json:"channel"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type Message struct {
-	ID             string               `json:"id"`
-	ConversationID string               `json:"conversation_id"`
-	Role           string               `json:"role"`
-	Content        string               `json:"content"`
-	Citations      []Citation           `json:"citations"`
-	Model          string               `json:"model,omitempty"`
-	ReminderAction *ReminderActionDraft `json:"reminder_action,omitempty"`
-	CreatedAt      time.Time            `json:"created_at"`
+	ID                   string                `json:"id"`
+	ConversationID       string                `json:"conversation_id"`
+	Role                 string                `json:"role"`
+	Content              string                `json:"content"`
+	Citations            []Citation            `json:"citations"`
+	Model                string                `json:"model,omitempty"`
+	Intent               string                `json:"-"`
+	StandaloneQuery      string                `json:"-"`
+	ContextVersion       int                   `json:"-"`
+	PromptTokens         int                   `json:"-"`
+	CompletionTokens     int                   `json:"-"`
+	ReminderAction       *ReminderActionDraft  `json:"reminder_action,omitempty"`
+	MeetingBookingAction *MeetingBookingAction `json:"meeting_booking_action,omitempty"`
+	CreatedAt            time.Time             `json:"created_at"`
 }
 
 type RunEvent struct {
@@ -280,6 +289,7 @@ type RunEvent struct {
 
 type AgentConfig struct {
 	GenerationModel string  `json:"generation_model"`
+	ContextModel    string  `json:"context_model"`
 	EmbeddingModel  string  `json:"embedding_model"`
 	RerankModel     string  `json:"rerank_model"`
 	Temperature     float64 `json:"temperature"`

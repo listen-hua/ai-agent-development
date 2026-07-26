@@ -51,3 +51,56 @@ func TestChatReturnsGroundedCitation(t *testing.T) {
 		t.Fatal("run did not complete")
 	}
 }
+
+func TestConversationContextResolvesMeetingClarificationFromPreviousTurn(t *testing.T) {
+	ctx := context.Background()
+	repo := store.NewMemory(domain.AgentConfig{})
+	user, _ := repo.GetUser(ctx, store.DemoEmployeeID)
+	engine := NewConversationContextEngine(repo, model.Mock{})
+	chat := NewChat(repo, model.Mock{}, NewRunHub())
+	conversation, err := chat.CreateConversation(ctx, user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	original := "帮我看下1号会议室有没有人，没人帮我预约下，时间从16点30开始，预计17点结束"
+	if err = repo.AddMessage(ctx, domain.Message{ID: "original", ConversationID: conversation.ID, Role: "user", Content: original, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.AddMessage(ctx, domain.Message{ID: "clarification", ConversationID: conversation.ID, Role: "assistant", Content: "请告诉我要预约或操作哪一天的会议室，例如“明天下午 3 点”。", CreatedAt: now.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.AddMessage(ctx, domain.Message{ID: "answer", ConversationID: conversation.ID, Role: "user", Content: "今天的", CreatedAt: now.Add(2 * time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	turn, err := engine.Analyze(ctx, user, conversation.ID, "answer", "今天的", domain.AgentConfig{ContextBudget: 12000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := original + "；用户补充：今天的"
+	if turn.Understanding.Intent != contextIntentMeeting {
+		t.Fatalf("expected meeting intent, got %q", turn.Understanding.Intent)
+	}
+	if turn.Understanding.StandaloneQuery != expected {
+		t.Fatalf("expected %q, got %q", expected, turn.Understanding.StandaloneQuery)
+	}
+}
+
+func TestValidateCurrentCitationsRejectsInvalidAndRenumbersUsedEvidence(t *testing.T) {
+	citations := []domain.Citation{{ID: "cite_1", Title: "制度一"}, {ID: "cite_2", Title: "制度二"}}
+	answer, filtered := validateCurrentCitations("结论来自第二份制度。[2]", citations)
+	if answer != "结论来自第二份制度。[1]" {
+		t.Fatalf("expected citation to be renumbered, got %q", answer)
+	}
+	if len(filtered) != 1 || filtered[0].Title != "制度二" || filtered[0].ID != "cite_1" {
+		t.Fatalf("unexpected filtered citations: %#v", filtered)
+	}
+	answer, filtered = validateCurrentCitations("无引用结论", citations)
+	if answer != noAnswer || filtered != nil {
+		t.Fatal("answer without a current citation must be rejected")
+	}
+	answer, filtered = validateCurrentCitations("错误引用。[3]", citations)
+	if answer != noAnswer || filtered != nil {
+		t.Fatal("out-of-range citation must be rejected")
+	}
+}

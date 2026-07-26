@@ -3,6 +3,7 @@ package feishu
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,6 +32,13 @@ type ContactUser struct {
 	JobFamilyID   string
 	EmployeeType  int
 	Status        string
+}
+type ContactDepartment struct {
+	OpenDepartmentID   string
+	Name               string
+	ParentDepartmentID string
+	Order              string
+	MemberCount        int
 }
 type ChatInfo struct {
 	ChatID    string
@@ -215,10 +223,12 @@ func (c *Client) SendText(ctx context.Context, receiveType, receiveID, text, ide
 	return c.send(ctx, receiveType, map[string]any{"receive_id": receiveID, "msg_type": "text", "content": string(content), "uuid": idempotencyKey})
 }
 func (c *Client) SendCard(ctx context.Context, receiveType, receiveID, title, content, idempotencyKey string) (string, error) {
+	content = normalizeCardMarkdown(content)
 	card := map[string]any{"header": map[string]any{"template": "blue", "title": map[string]string{"tag": "plain_text", "content": title}}, "elements": []any{map[string]string{"tag": "markdown", "content": content}}}
 	return c.sendCard(ctx, receiveType, receiveID, card, idempotencyKey)
 }
 func (c *Client) SendRichCard(ctx context.Context, receiveType, receiveID, title, markdown string, images []CardImage, idempotencyKey string) (string, error) {
+	markdown = normalizeCardMarkdown(markdown)
 	elements := []any{map[string]string{"tag": "markdown", "content": markdown}}
 	for _, image := range images {
 		if image.ImageKey == "" {
@@ -369,6 +379,9 @@ func (c *Client) sendCard(ctx context.Context, receiveType, receiveID string, ca
 	return c.send(ctx, receiveType, map[string]any{"receive_id": receiveID, "msg_type": "interactive", "content": string(encoded), "uuid": idempotencyKey})
 }
 func (c *Client) send(ctx context.Context, receiveType string, payload map[string]any) (string, error) {
+	if value, ok := payload["uuid"].(string); ok {
+		payload["uuid"] = normalizeMessageUUID(value)
+	}
 	token, err := c.getTenantToken(ctx)
 	if err != nil {
 		return "", err
@@ -389,6 +402,46 @@ func (c *Client) send(ctx context.Context, receiveType string, payload map[strin
 	}
 	return output.Data.MessageID, nil
 }
+
+func normalizeMessageUUID(value string) string {
+	if len(value) <= 50 {
+		return value
+	}
+	digest := sha256.Sum256([]byte(value))
+	return fmt.Sprintf("%x", digest)[:50]
+}
+
+func normalizeCardMarkdown(value string) string {
+	lines := strings.Split(strings.ReplaceAll(value, "\r\n", "\n"), "\n")
+	for index, line := range lines {
+		level, title := cardMarkdownHeading(line)
+		if level == 0 {
+			continue
+		}
+		marker := "• "
+		if level == 1 {
+			marker = "▌ "
+		}
+		lines[index] = "**" + marker + title + "**"
+	}
+	return strings.Join(lines, "\n")
+}
+
+func cardMarkdownHeading(line string) (int, string) {
+	for level := 1; level <= 6; level++ {
+		prefix := strings.Repeat("#", level) + " "
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		title := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		if title != "" {
+			return level, title
+		}
+		return 0, ""
+	}
+	return 0, ""
+}
+
 func (c *Client) getTenantToken(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

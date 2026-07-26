@@ -48,6 +48,9 @@ func (d *ReminderDispatcher) Tick(ctx context.Context) error {
 		if err := d.repo.CleanupReminderHistory(ctx, now.Add(-d.retention)); err != nil {
 			return err
 		}
+		if err := d.repo.CleanupConversationHistory(ctx, now.Add(-d.retention)); err != nil {
+			return err
+		}
 		d.lastClean = now
 	}
 	if err := d.materializeDue(ctx); err != nil {

@@ -4,7 +4,7 @@ import type { Role, User } from '@/types/domain'
 
 defineProps<{ users: User[]; loading: boolean }>()
 const emit = defineEmits<{ edit: [user: User] }>()
-const roleLabels: Record<Role, string> = { employee: '员工', knowledge_admin: '知识管理员', notification_admin: '通知管理员', auditor: '审计员', super_admin: '超级管理员' }
+const roleLabels: Record<Role, string> = { employee: '员工', knowledge_admin: '知识管理员', notification_admin: '通知管理员', image_admin: '生图管理员', auditor: '审计员', super_admin: '超级管理员' }
 function roleLabel(role: string) { return roleLabels[role as Role] || role }
 function date(value?: string) { return value ? new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : '尚未同步' }
 </script>

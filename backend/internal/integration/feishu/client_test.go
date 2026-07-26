@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -80,5 +81,53 @@ func TestGetContactUserReturnsAuthorizationAttributes(t *testing.T) {
 	}
 	if user.JobTitle != "会计" || len(user.DepartmentIDs) != 1 || user.DepartmentIDs[0] != "od_finance" || user.Status != "active" {
 		t.Fatalf("unexpected contact profile: %#v", user)
+	}
+}
+
+func TestSendRichCardNormalizesLongMessageUUID(t *testing.T) {
+	var receivedUUID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/open-apis/auth/v3/tenant_access_token/internal/":
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "tenant_access_token": "tenant-token", "expire": 7200})
+		case "/open-apis/im/v1/messages":
+			if r.URL.Query().Get("receive_id_type") != "chat_id" {
+				t.Errorf("unexpected receive_id_type: %s", r.URL.Query().Get("receive_id_type"))
+			}
+			var input map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&input)
+			receivedUUID, _ = input["uuid"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]string{"message_id": "om_test"}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := New("cli_test", "secret", "")
+	client.baseURL = server.URL
+	client.http = server.Client()
+	longUUID := strings.Repeat("a", 36) + "_" + strings.Repeat("b", 36)
+	messageID, err := client.SendRichCard(context.Background(), "chat_id", "oc_test", "测试通知", "正文", nil, longUUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageID != "om_test" {
+		t.Fatalf("unexpected message ID: %s", messageID)
+	}
+	if len(receivedUUID) != 50 || receivedUUID != normalizeMessageUUID(longUUID) {
+		t.Fatalf("message uuid was not normalized: %q (%d)", receivedUUID, len(receivedUUID))
+	}
+	if normalizeMessageUUID("short-idempotency-key") != "short-idempotency-key" {
+		t.Fatal("short message uuid should remain unchanged")
+	}
+}
+
+func TestNormalizeCardMarkdownConvertsUnsupportedHeadings(t *testing.T) {
+	input := "# 一级标题\n## 二级标题\n### 三级标题\n正文\n#"
+	want := "**▌ 一级标题**\n**• 二级标题**\n**• 三级标题**\n正文\n#"
+	if got := normalizeCardMarkdown(input); got != want {
+		t.Fatalf("unexpected normalized markdown:\n%s", got)
 	}
 }

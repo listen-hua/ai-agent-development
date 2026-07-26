@@ -18,12 +18,35 @@ type Repository interface {
 	ListUsers(context.Context) ([]domain.User, error)
 	UpdateUserRoles(context.Context, string, []domain.Role) (domain.User, error)
 	UpdateUserStatus(context.Context, string, string) error
+	UpsertMeetingRooms(context.Context, []domain.MeetingRoom) error
+	ListMeetingRooms(context.Context) ([]domain.MeetingRoom, error)
+	GetMeetingRoom(context.Context, string) (domain.MeetingRoom, error)
+	GetMeetingSettings(context.Context) (domain.MeetingSettings, error)
+	SaveMeetingSettings(context.Context, domain.MeetingSettings) error
+	CreateMeetingBookingAction(context.Context, domain.MeetingBookingAction) error
+	GetMeetingBookingAction(context.Context, string) (domain.MeetingBookingAction, error)
+	ClaimMeetingBookingAction(context.Context, string, string, string, time.Time) (domain.MeetingBookingAction, error)
+	UpdateMeetingBookingAction(context.Context, domain.MeetingBookingAction) error
+	CreateMeetingBooking(context.Context, domain.MeetingBooking) error
+	GetMeetingBooking(context.Context, string) (domain.MeetingBooking, error)
+	ListMeetingBookings(context.Context, string) ([]domain.MeetingBooking, error)
+	UpdateMeetingBooking(context.Context, domain.MeetingBooking) error
+	CreateMeetingBookingDelivery(context.Context, domain.MeetingBookingDelivery) error
+	ClaimMeetingBookingDeliveries(context.Context, time.Time, time.Duration, int) ([]domain.MeetingBookingDelivery, error)
+	UpdateMeetingBookingDelivery(context.Context, domain.MeetingBookingDelivery) error
 	CreateConversation(context.Context, domain.Conversation) error
 	ListConversations(context.Context, string) ([]domain.Conversation, error)
 	GetConversation(context.Context, string) (domain.Conversation, error)
 	DeleteConversation(context.Context, string, string) error
 	AddMessage(context.Context, domain.Message) error
 	ListMessages(context.Context, string) ([]domain.Message, error)
+	UpdateMessageAnalysis(context.Context, string, string, string, int, int, int) error
+	GetConversationContext(context.Context, string) (domain.ConversationContext, error)
+	SaveConversationContext(context.Context, domain.ConversationContext) error
+	ResetConversationContext(context.Context, string) error
+	GetOrCreateBoundConversation(context.Context, domain.User, string, string, string, time.Time, time.Duration) (domain.Conversation, error)
+	ResetConversationBinding(context.Context, string, string, string, string) error
+	CleanupConversationHistory(context.Context, time.Time) error
 	CreateSource(context.Context, domain.KnowledgeSource) error
 	GetSource(context.Context, string) (domain.KnowledgeSource, error)
 	ListSources(context.Context) ([]domain.KnowledgeSource, error)
@@ -79,4 +102,35 @@ type Repository interface {
 	MarkEventProcessed(context.Context, string) bool
 	ForgetProcessedEvent(context.Context, string)
 	Metrics(context.Context) domain.DashboardMetrics
+}
+
+// ImageRepository is intentionally separate from Repository so the image agent
+// remains an optional module for lightweight deployments and isolated tests.
+type ImageRepository interface {
+	ListImageRelays(context.Context) ([]domain.ImageRelay, error)
+	GetImageRelay(context.Context, string) (domain.ImageRelay, error)
+	UpsertImageRelay(context.Context, domain.ImageRelay) error
+	ListImageModels(context.Context, string) ([]domain.ImageModel, error)
+	GetImageModel(context.Context, string) (domain.ImageModel, error)
+	UpsertImageModels(context.Context, []domain.ImageModel) error
+	UpdateImageModel(context.Context, domain.ImageModel) error
+	ListImageProjects(context.Context) ([]domain.ImageProject, error)
+	GetImageProject(context.Context, string) (domain.ImageProject, error)
+	UpsertImageProject(context.Context, domain.ImageProject) error
+	ListImagePromptActions(context.Context, string) ([]domain.ImagePromptAction, error)
+	GetImagePromptAction(context.Context, string) (domain.ImagePromptAction, error)
+	UpsertImagePromptAction(context.Context, domain.ImagePromptAction) error
+	DeleteImagePromptAction(context.Context, string) error
+	GetOrCreateImageCanvas(context.Context, string, string) (domain.ImageCanvas, error)
+	UpdateImageCanvas(context.Context, domain.ImageCanvas, int64) (domain.ImageCanvas, error)
+	CreateImageAsset(context.Context, domain.ImageAsset) error
+	GetImageAsset(context.Context, string) (domain.ImageAsset, error)
+	CreateImageJob(context.Context, domain.ImageJob, []domain.ImageCanvasNode) (domain.ImageJob, error)
+	GetImageJob(context.Context, string) (domain.ImageJob, error)
+	ListImageJobs(context.Context, string, string, int) ([]domain.ImageJob, error)
+	ClaimImageJobs(context.Context, time.Time, time.Duration, int) ([]domain.ImageJob, error)
+	UpdateImageJob(context.Context, domain.ImageJob) error
+	SaveImageJobOutput(context.Context, domain.ImageJobOutput, domain.ImageAsset, domain.ImageCanvasNode) error
+	UpdateImageJobOutputFailure(context.Context, domain.ImageJobOutput, domain.ImageCanvasNode) error
+	CleanupImageJobLogs(context.Context, time.Time) error
 }
