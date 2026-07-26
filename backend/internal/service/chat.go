@@ -38,8 +38,11 @@ func NewChat(repo store.Repository, provider model.Provider, hub *RunHub, featur
 	}
 	return chat
 }
-func (c *Chat) Subscribe(runID string) ([]domain.RunEvent, <-chan domain.RunEvent, bool) {
-	return c.hub.Subscribe(runID)
+func (c *Chat) Subscribe(runID, userID string) ([]domain.RunEvent, <-chan domain.RunEvent, bool) {
+	return c.hub.Subscribe(runID, userID)
+}
+func (c *Chat) Cancel(runID, userID string) bool {
+	return c.hub.Cancel(runID, userID)
 }
 func (c *Chat) CreateConversation(ctx context.Context, user domain.User) (domain.Conversation, error) {
 	now := time.Now()
@@ -87,17 +90,20 @@ func (c *Chat) StartFrom(ctx context.Context, user domain.User, conversationID, 
 		return "", fmt.Errorf("question is required")
 	}
 	runID := ids.New("run")
-	c.hub.Create(runID)
+	runCtx, cancel := context.WithCancel(context.Background())
+	c.hub.Create(runID, user.ID, cancel)
 	userMessage := domain.Message{ID: ids.New("msg"), ConversationID: conversationID, Role: "user", Content: question, Citations: []domain.Citation{}, CreatedAt: time.Now()}
 	ticket := c.turns.Reserve(conversationID)
-	go c.processTurn(user, conversationID, runID, source, userMessage, ticket)
+	go c.processTurn(runCtx, user, conversationID, runID, source, userMessage, ticket)
 	return runID, nil
 }
 
-func (c *Chat) processTurn(user domain.User, conversationID, runID, source string, userMessage domain.Message, ticket *conversationTurnTicket) {
+func (c *Chat) processTurn(ctx context.Context, user domain.User, conversationID, runID, source string, userMessage domain.Message, ticket *conversationTurnTicket) {
 	ticket.Wait()
 	defer ticket.Done()
-	ctx := context.Background()
+	if ctx.Err() != nil {
+		return
+	}
 	if err := c.repo.AddMessage(ctx, userMessage); err != nil {
 		c.fail(runID, err)
 		return
@@ -139,7 +145,13 @@ func (c *Chat) execute(ctx context.Context, user domain.User, conversationID, ru
 			return
 		}
 		if handled {
-			_ = c.repo.AddMessage(ctx, message)
+			if ctx.Err() != nil {
+				return
+			}
+			if err = c.repo.AddMessage(ctx, message); err != nil {
+				c.fail(runID, err)
+				return
+			}
 			c.publish(runID, domain.RunEvent{Type: "delta", RunID: runID, Delta: message.Content, CreatedAt: time.Now()})
 			c.publish(runID, domain.RunEvent{Type: "done", RunID: runID, Message: &message, CreatedAt: time.Now()})
 			c.context.MarkAssistantResult(ctx, conversationID, message)
@@ -156,7 +168,13 @@ func (c *Chat) execute(ctx context.Context, user domain.User, conversationID, ru
 			return
 		}
 		if handled {
-			_ = c.repo.AddMessage(ctx, message)
+			if ctx.Err() != nil {
+				return
+			}
+			if err = c.repo.AddMessage(ctx, message); err != nil {
+				c.fail(runID, err)
+				return
+			}
 			c.publish(runID, domain.RunEvent{Type: "delta", RunID: runID, Delta: message.Content, CreatedAt: time.Now()})
 			c.publish(runID, domain.RunEvent{Type: "done", RunID: runID, Message: &message, CreatedAt: time.Now()})
 			c.context.MarkAssistantResult(ctx, conversationID, message)
@@ -259,6 +277,9 @@ func (c *Chat) execute(ctx context.Context, user domain.User, conversationID, ru
 }
 
 func (c *Chat) complete(ctx context.Context, conversationID, runID, answer string, citations []domain.Citation, modelName string, emitAnswer bool) {
+	if ctx.Err() != nil {
+		return
+	}
 	if emitAnswer {
 		c.publish(runID, domain.RunEvent{Type: "delta", RunID: runID, Delta: answer, CreatedAt: time.Now()})
 	}
@@ -266,8 +287,14 @@ func (c *Chat) complete(ctx context.Context, conversationID, runID, answer strin
 		cite := citations[i]
 		c.publish(runID, domain.RunEvent{Type: "citation", RunID: runID, Citation: &cite, CreatedAt: time.Now()})
 	}
+	if ctx.Err() != nil {
+		return
+	}
 	message := domain.Message{ID: ids.New("msg"), ConversationID: conversationID, Role: "assistant", Content: answer, Citations: citations, Model: modelName, CreatedAt: time.Now()}
-	_ = c.repo.AddMessage(ctx, message)
+	if err := c.repo.AddMessage(ctx, message); err != nil {
+		c.fail(runID, err)
+		return
+	}
 	c.context.MarkAssistantResult(ctx, conversationID, message)
 	c.publish(runID, domain.RunEvent{Type: "done", RunID: runID, Message: &message, CreatedAt: time.Now()})
 }

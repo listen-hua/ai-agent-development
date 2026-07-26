@@ -40,6 +40,7 @@ type Repository interface {
 	DeleteConversation(context.Context, string, string) error
 	AddMessage(context.Context, domain.Message) error
 	ListMessages(context.Context, string) ([]domain.Message, error)
+	RecordMessageFeedback(context.Context, string, string, bool) error
 	UpdateMessageAnalysis(context.Context, string, string, string, int, int, int) error
 	GetConversationContext(context.Context, string) (domain.ConversationContext, error)
 	SaveConversationContext(context.Context, domain.ConversationContext) error

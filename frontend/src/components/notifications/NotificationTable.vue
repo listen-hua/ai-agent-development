@@ -50,8 +50,8 @@ function recipientSummary(row: NotificationDraft) {
 <style scoped>
 .notification-title { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .notification-title > div { display: flex; align-items: center; gap: 7px; }
-.notification-title strong { overflow: hidden; color: #38445a; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.notification-title small { overflow: hidden; color: #9099aa; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.notification-title p { overflow: hidden; margin: 1px 0 0; color: #d55757; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.recipient-summary { color: #647087; font-size: 11px; }
+.notification-title strong { overflow: hidden; color: #38445a; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.notification-title small { overflow: hidden; color: #9099aa; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.notification-title p { overflow: hidden; margin: 1px 0 0; color: #d55757; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.recipient-summary { color: #647087; font-size: 13px; }
 </style>

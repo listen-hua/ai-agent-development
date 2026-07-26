@@ -829,13 +829,35 @@ func (p *Postgres) MarkEventProcessed(ctx context.Context, id string) bool {
 func (p *Postgres) ForgetProcessedEvent(ctx context.Context, id string) {
 	_, _ = p.pool.Exec(ctx, `DELETE FROM processed_events WHERE event_id=$1`, id)
 }
+
+func (p *Postgres) RecordMessageFeedback(ctx context.Context, messageID, userID string, positive bool) error {
+	tag, err := p.pool.Exec(ctx, `INSERT INTO message_feedback(message_id,user_id,positive,created_at,updated_at)
+		SELECT m.id,c.user_id,$3,now(),now()
+		FROM messages m JOIN conversations c ON c.id=m.conversation_id
+		WHERE m.id=$1 AND c.user_id=$2 AND m.role='assistant'
+		ON CONFLICT(message_id) DO UPDATE SET positive=EXCLUDED.positive,user_id=EXCLUDED.user_id,updated_at=now()`,
+		messageID, userID, positive)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (p *Postgres) Metrics(ctx context.Context) domain.DashboardMetrics {
 	var m domain.DashboardMetrics
-	_ = p.pool.QueryRow(ctx, `SELECT COUNT(*) FILTER(WHERE msg.role='user' AND msg.created_at>=date_trunc('day',now())),COUNT(*) FILTER(WHERE d.status='published') FROM messages msg FULL JOIN documents d ON false`).Scan(&m.QuestionsToday, &m.DocumentsPublished)
-	m.PositiveRate = .92
-	m.NoAnswerRate = .08
-	m.CitationCoverage = 1
-	m.DeliverySuccess = .99
+	_ = p.pool.QueryRow(ctx, `
+		SELECT
+			(SELECT COUNT(*) FROM messages WHERE role='user' AND created_at>=date_trunc('day',now())),
+			COALESCE((SELECT AVG(CASE WHEN positive THEN 1.0 ELSE 0.0 END)::float8 FROM message_feedback),0),
+			COALESCE((SELECT AVG(CASE WHEN jsonb_array_length(citations)=0 THEN 1.0 ELSE 0.0 END)::float8 FROM messages WHERE role='assistant'),0),
+			COALESCE((SELECT AVG(CASE WHEN jsonb_array_length(citations)>0 THEN 1.0 ELSE 0.0 END)::float8 FROM messages WHERE role='assistant'),0),
+			(SELECT COUNT(*) FROM documents WHERE status='published'),
+			(SELECT COUNT(*) FROM knowledge_sources WHERE sync_status IN ('queued','pending','syncing')),
+			COALESCE((SELECT AVG(CASE WHEN status='sent' THEN 1.0 ELSE 0.0 END)::float8 FROM delivery_attempts WHERE status IN ('sent','failed')),0)
+	`).Scan(&m.QuestionsToday, &m.PositiveRate, &m.NoAnswerRate, &m.CitationCoverage, &m.DocumentsPublished, &m.SyncBacklog, &m.DeliverySuccess)
 	return m
 }
 

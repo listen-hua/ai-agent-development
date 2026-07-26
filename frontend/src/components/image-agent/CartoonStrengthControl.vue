@@ -26,8 +26,8 @@ const description = computed(() => cartoonStrengthLabels[props.modelValue] || ''
 <style scoped>
 .strength-control { padding: 12px 12px 22px; border: 1px solid #eadff8; border-radius: 12px; background: #fbf8ff; }
 .strength-control header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.strength-control span { color: #564968; font-size: 12px; font-weight: 650; }
-.strength-control strong { color: #8964b5; font-size: 10px; font-weight: 550; }
+.strength-control span { color: #564968; font-size: 14px; font-weight: 650; }
+.strength-control strong { color: #8964b5; font-size: 12px; font-weight: 550; }
 .strength-control :deep(.el-slider) { margin: 13px 6px 0; width: calc(100% - 12px); }
-.strength-control :deep(.el-slider__marks-text) { color: #9b91a8; font-size: 9px; }
+.strength-control :deep(.el-slider__marks-text) { color: #9b91a8; font-size: 11px; }
 </style>

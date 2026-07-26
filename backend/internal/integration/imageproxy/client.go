@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -263,7 +264,33 @@ func collectImageValues(response map[string]any) []string {
 	walk = func(value any) {
 		switch current := value.(type) {
 		case map[string]any:
-			for key, child := range current {
+			keys := make([]string, 0, len(current))
+			for key := range current {
+				keys = append(keys, key)
+			}
+			sort.Slice(keys, func(i, j int) bool {
+				priority := func(key string) int {
+					switch key {
+					case "b64_json":
+						return 0
+					case "url":
+						return 1
+					case "data":
+						return 2
+					case "choices":
+						return 3
+					default:
+						return 4
+					}
+				}
+				left, right := priority(keys[i]), priority(keys[j])
+				if left != right {
+					return left < right
+				}
+				return keys[i] < keys[j]
+			})
+			for _, key := range keys {
+				child := current[key]
 				switch key {
 				case "b64_json":
 					if text, ok := child.(string); ok && text != "" {

@@ -36,11 +36,13 @@ async function login(kind: 'feishu' | 'admin' | 'employee') {
         <p>公司内部行政 AI 助手</p>
         <el-alert v-if="auth.authError" :title="auth.authError" type="error" show-icon :closable="false" />
         <el-button class="feishu-login" type="primary" size="large" :loading="loading" @click="login('feishu')">使用飞书账号登录</el-button>
-        <div class="login-divider"><span>本地开发演示</span></div>
-        <div class="demo-actions">
-          <el-button :icon="UserFilled" @click="login('admin')">管理员</el-button>
-          <el-button @click="login('employee')">普通员工</el-button>
-        </div>
+        <template v-if="auth.devAuthEnabled">
+          <div class="login-divider"><span>本地开发演示</span></div>
+          <div class="demo-actions">
+            <el-button :icon="UserFilled" @click="login('admin')">管理员</el-button>
+            <el-button @click="login('employee')">普通员工</el-button>
+          </div>
+        </template>
         <small>登录即表示你同意遵守公司信息安全与 AI 使用规范</small>
       </div>
     </section>

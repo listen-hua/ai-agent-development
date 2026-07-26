@@ -171,31 +171,31 @@ function updateStrength(value: number) {
 <style scoped>
 .operation-panel { min-height: 0; overflow-y: auto; border: 1px solid #e2dee8; border-radius: 16px; background: white; box-shadow: 0 12px 36px rgba(33, 26, 46, .07); scrollbar-width: thin; scrollbar-color: #c7b8d9 transparent; }
 .module-tabs { position: sticky; top: 0; z-index: 4; padding: 10px; border-bottom: 1px solid #eeeaf1; background: rgba(255,255,255,.96); backdrop-filter: blur(12px); display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
-.module-tabs button { position: relative; height: 42px; border: 0; border-radius: 10px; color: #878090; background: transparent; display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 12px; cursor: pointer; }
-.module-tabs button.active { color: #6d479a; background: #f2ebf9; font-weight: 650; }.module-tabs small { position: absolute; top: 3px; right: 5px; color: #b0a9b8; font-size: 6px; }
+.module-tabs button { position: relative; height: 42px; border: 0; border-radius: 10px; color: #878090; background: transparent; display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 14px; cursor: pointer; }
+.module-tabs button.active { color: #6d479a; background: #f2ebf9; font-weight: 650; }.module-tabs small { position: absolute; top: 3px; right: 5px; color: #b0a9b8; font-size: 10px; }
 .text-to-image-form { padding: 15px; display: grid; gap: 17px; }
 .form-section { display: grid; gap: 8px; }
 .form-section > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.form-section > header > strong { color: #3d4657; font-size: 12px; }.form-section > header > small { color: #9ba2ae; font-size: 9px; }
+.form-section > header > strong { color: #3d4657; font-size: 14px; }.form-section > header > small { color: #9ba2ae; font-size: 11px; }
 .description-section > header > div { width: 67%; display: grid; grid-template-columns: .8fr 1.2fr; gap: 5px; }
-.description-section :deep(.el-select__wrapper), .form-section > :deep(.el-select .el-select__wrapper) { min-height: 30px; font-size: 10px; }
+.description-section :deep(.el-select__wrapper), .form-section > :deep(.el-select .el-select__wrapper) { min-height: 30px; font-size: 12px; }
 .prompt-editor { overflow: hidden; border: 1px solid #dfd9e7; border-radius: 12px; }
-.prompt-editor :deep(.el-textarea__inner) { border: 0; border-radius: 0; box-shadow: none; padding: 11px; font-size: 11px; line-height: 1.6; }
+.prompt-editor :deep(.el-textarea__inner) { border: 0; border-radius: 0; box-shadow: none; padding: 11px; font-size: 13px; line-height: 1.6; }
 .prompt-editor footer { height: 37px; padding: 0 7px 0 11px; border-top: 1px solid #eeeaf2; display: flex; align-items: center; justify-content: space-between; }
-.prompt-editor footer label { color: #6f6877; display: flex; align-items: center; gap: 7px; font-size: 10px; }
+.prompt-editor footer label { color: #6f6877; display: flex; align-items: center; gap: 7px; font-size: 12px; }
 .prompt-editor footer :deep(.el-switch) { --el-switch-on-color: #8056ad; transform: scale(.8); transform-origin: left center; margin-right: -7px; }
-.prompt-editor footer .el-button { color: #9b6f7c; font-size: 10px; }
+.prompt-editor footer .el-button { color: #9b6f7c; font-size: 12px; }
 .choice-grid { display: grid; gap: 6px; }.ratio-grid { grid-template-columns: repeat(5, 1fr); }.size-grid { grid-template-columns: repeat(3, 1fr); }.count-grid { grid-template-columns: repeat(4, 1fr); }
-.choice-grid button { min-width: 0; height: 34px; border: 1px solid #e3dee8; border-radius: 9px; color: #777080; background: white; cursor: pointer; font-size: 10px; }
+.choice-grid button { min-width: 0; height: 34px; border: 1px solid #e3dee8; border-radius: 9px; color: #777080; background: white; cursor: pointer; font-size: 12px; }
 .choice-grid button.active { border-color: #8b64b7; color: #72459f; background: #f7f1fc; box-shadow: inset 0 0 0 1px #8b64b7; }
 .choice-grid button:disabled { opacity: .36; cursor: not-allowed; }.size-grid button { height: 48px; display: flex; justify-content: center; flex-direction: column; gap: 2px; }
-.size-grid button strong { font-size: 10px; }.size-grid button span { color: #a3a0a8; font-size: 8px; }
-.project-status { float: right; color: #9a92a4; font-size: 9px; }
-.prompt-actions { display: flex; flex-wrap: wrap; gap: 6px; }.prompt-actions .el-button { margin: 0; font-size: 9px; }
-.action-section :deep(.el-empty) { padding: 4px 0; }.action-section :deep(.el-empty__description) { margin-top: 3px; }.action-section :deep(.el-empty__description p) { font-size: 9px; }
+.size-grid button strong { font-size: 12px; }.size-grid button span { color: #a3a0a8; font-size: 10px; }
+.project-status { float: right; color: #9a92a4; font-size: 11px; }
+.prompt-actions { display: flex; flex-wrap: wrap; gap: 6px; }.prompt-actions .el-button { margin: 0; font-size: 11px; }
+.action-section :deep(.el-empty) { padding: 4px 0; }.action-section :deep(.el-empty__description) { margin-top: 3px; }.action-section :deep(.el-empty__description p) { font-size: 11px; }
 .generate-button { width: 100%; margin-top: 2px; border: 0; border-radius: 11px; background: linear-gradient(135deg, #8253ad, #6540a2); box-shadow: 0 8px 18px rgba(105, 65, 157, .22); }
 .workflow-placeholder { min-height: 420px; padding: 50px 30px; display: flex; align-items: center; justify-content: center; flex-direction: column; text-align: center; }
 .workflow-placeholder > span { width: 58px; height: 58px; border-radius: 18px; color: #7951a5; background: #f2ecf8; display: grid; place-items: center; font-size: 26px; }
-.workflow-placeholder strong { margin-top: 17px; color: #4c4356; font-size: 15px; }.workflow-placeholder p { max-width: 260px; color: #96909d; font-size: 10px; line-height: 1.7; }
+.workflow-placeholder strong { margin-top: 17px; color: #4c4356; font-size: 16px; }.workflow-placeholder p { max-width: 260px; color: #96909d; font-size: 12px; line-height: 1.7; }
 @media (max-width: 1120px) { .operation-panel { max-height: 540px; }.description-section > header { align-items: stretch; flex-direction: column; }.description-section > header > div { width: 100%; } }
 </style>

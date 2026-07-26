@@ -30,7 +30,14 @@ Set-Location backend
 go run ./cmd/server
 ```
 
-另开终端：
+另开一个终端启动后台 Worker（提醒投递、定时通知、会议清理和生图任务依赖它）：
+
+```powershell
+Set-Location backend
+go run ./cmd/worker
+```
+
+再开一个终端：
 
 ```powershell
 Set-Location frontend
@@ -38,7 +45,7 @@ npm.cmd install
 npm.cmd run dev
 ```
 
-打开 `http://localhost:5173`，选择“管理员”或“普通员工”演示登录。演示数据包含一份已发布的休假和报销制度。若不启动 Docker，也可以清空 `DATABASE_URL`、`MINIO_ENDPOINT`、`CLAMAV_ADDR` 和 `TIKA_URL`，系统会使用内存仓库与纯文本解析。
+打开 `http://localhost:5173`，选择“管理员”或“普通员工”演示登录。演示数据包含一份已发布的休假和报销制度。若不启动 Docker，也可以清空 `DATABASE_URL`、`MINIO_ENDPOINT`、`CLAMAV_ADDR` 和 `TIKA_URL`，系统会使用内存仓库与纯文本解析；此模式无法启动 Worker，因此提醒投递、定时通知、会议清理和异步生图任务不会执行。
 
 完整容器启动：
 
@@ -53,7 +60,7 @@ docker compose up --build
 1. 复制 `.env.example` 为 `.env`，替换所有示例密码，设置至少 32 字节随机 `SESSION_SECRET`。
 2. 配置阿里云百炼业务空间专属 `DASHSCOPE_BASE_URL` 与 `DASHSCOPE_API_KEY`。密钥仅存在部署 Secret 中，后台页面不会返回明文。
 3. 创建飞书企业自建应用，同时启用“网页应用”和“机器人”。配置 H5 地址与 OAuth 回调；事件和新版卡片回调均选择“使用长连接接收”，不需要配置公网回调地址。
-4. 设置 `APP_ENV=production` 和 `DEV_AUTH_ENABLED=false`。生产模式下 PostgreSQL 或 MinIO连接失败会阻止 API 启动。
+4. 设置 `APP_ENV=production` 和 `DEV_AUTH_ENABLED=false`。生产模式会校验会话与加密密钥、PostgreSQL、MinIO、百炼和飞书配置；缺失、不安全或连接失败都会阻止服务启动。
 5. 数据服务只加入内部 Docker 网络；公网网关只暴露 Nginx 的 H5/API。
 
 ### 飞书最小能力清单
@@ -85,6 +92,8 @@ docker compose up --build
 ```powershell
 docker compose cp backend/migrations/002_identity_acl.sql postgres:/tmp/002_identity_acl.sql
 docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U ai_agent -d ai_agent -f /tmp/002_identity_acl.sql
+docker compose cp backend/migrations/013_message_feedback.sql postgres:/tmp/013_message_feedback.sql
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U ai_agent -d ai_agent -f /tmp/013_message_feedback.sql
 ```
 
 不要通过 PowerShell 文本管道把含中文的 SQL 传给 `psql`；部分 Windows 环境会把 UTF-8 中文转换成字面量 `?`。先复制文件再由容器内的 `psql -f` 读取可保留原始字节。

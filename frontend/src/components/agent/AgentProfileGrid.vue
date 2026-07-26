@@ -39,18 +39,18 @@ const providerLabels: Record<string, string> = { aliyun: '阿里云百炼', gemi
 .agent-kind-icon { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; color: #4d66d5; background: #edf1ff; font-size: 20px; }
 .agent-kind-icon.image { color: #9c50bc; background: #f7edfb; }
 .agent-profile-card header > div { min-width: 0; display: flex; flex-direction: column; }
-.agent-profile-card strong { color: #2d3950; font-size: 14px; }
-.agent-profile-card small { margin-top: 2px; color: #9aa2b1; font-size: 9px; }
-.agent-profile-card > p { min-height: 38px; margin: 15px 0; color: #7b8597; font-size: 11px; line-height: 1.7; }
+.agent-profile-card strong { color: #2d3950; font-size: 15px; }
+.agent-profile-card small { margin-top: 2px; color: #9aa2b1; font-size: 11px; }
+.agent-profile-card > p { min-height: 38px; margin: 15px 0; color: #7b8597; font-size: 13px; line-height: 1.7; }
 .agent-profile-card dl { margin: 0; border-radius: 10px; padding: 4px 12px; background: #f8f9fb; }
 .agent-profile-card dl > div { min-height: 36px; display: grid; grid-template-columns: 90px minmax(0, 1fr); align-items: center; border-bottom: 1px solid #e9ecf1; }
 .agent-profile-card dl > div:last-child { border-bottom: 0; }
-.agent-profile-card dt { color: #939baa; font-size: 10px; }
-.agent-profile-card dd { overflow: hidden; margin: 0; color: #4f5b70; font-size: 11px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.agent-profile-card dt { color: #939baa; font-size: 12px; }
+.agent-profile-card dd { overflow: hidden; margin: 0; color: #4f5b70; font-size: 13px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 .agent-profile-card dd .el-icon { margin-right: 4px; vertical-align: -2px; }
 .agent-profile-card dd.ready { color: #23865f; }
 .agent-profile-card footer { min-height: 47px; padding-top: 13px; display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
-.agent-profile-card footer span { color: #9aa2b1; font-size: 9px; }
+.agent-profile-card footer span { color: #9aa2b1; font-size: 11px; }
 .agent-profile-grid :deep(.el-empty) { grid-column: 1 / -1; }
 @media (max-width: 820px) { .agent-profile-grid { grid-template-columns: 1fr; } }
 </style>

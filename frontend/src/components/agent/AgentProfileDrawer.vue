@@ -91,6 +91,6 @@ function submit() {
 .agent-profile-form { padding: 2px 4px 20px; }
 .agent-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
 .agent-profile-form :deep(.el-select) { width: 100%; }
-.agent-profile-form small { display: block; margin-top: 6px; color: #9099aa; font-size: 10px; line-height: 1.5; }
+.agent-profile-form small { display: block; margin-top: 6px; color: #9099aa; font-size: 12px; line-height: 1.5; }
 @media (max-width: 560px) { .agent-form-row { grid-template-columns: 1fr; gap: 0; } }
 </style>

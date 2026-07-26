@@ -25,5 +25,5 @@ const emit = defineEmits<{ edit: [reminder: Reminder]; action: [reminder: Remind
 
 <style scoped>
 .reminder-table-wrap{border:1px solid #e5e8ef;border-radius:14px;background:#fff;overflow:hidden;box-shadow:0 7px 24px rgba(30,44,72,.035)}
-.reminder-title{display:flex;align-items:center;gap:11px}.reminder-title>span{width:35px;height:35px;border-radius:10px;background:#eef2ff;color:#526ed9;display:grid;place-items:center}.reminder-title>span :deep(svg){width:17px}.reminder-title>div{display:flex;min-width:0;flex-direction:column}.reminder-title strong{color:#354157;font-size:12px}.reminder-title small{color:#9aa3b2;font-size:9px}.reminder-actions{display:flex;align-items:center;gap:2px}.reminder-actions :deep(.el-button){margin-left:0}
+.reminder-title{display:flex;align-items:center;gap:11px}.reminder-title>span{width:35px;height:35px;border-radius:10px;background:#eef2ff;color:#526ed9;display:grid;place-items:center}.reminder-title>span :deep(svg){width:17px}.reminder-title>div{display:flex;min-width:0;flex-direction:column}.reminder-title strong{color:#354157;font-size: 14px}.reminder-title small{color:#9aa3b2;font-size: 11px}.reminder-actions{display:flex;align-items:center;gap:2px}.reminder-actions :deep(.el-button){margin-left:0}
 </style>

@@ -46,9 +46,9 @@ function dragReference(event: DragEvent) {
 .canvas-image-node.failed { border-color: #efb9b9; background: #fff7f7; }
 .node-state { width: 100%; height: 100%; color: #8465ac; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 7px; text-align: center; }
 .node-state .el-icon { font-size: 26px; }
-.node-state strong { font-size: 12px; }.node-state span { max-width: 82%; color: #9a91a6; font-size: 9px; line-height: 1.45; }
+.node-state strong { font-size: 14px; }.node-state span { max-width: 82%; color: #9a91a6; font-size: 11px; line-height: 1.45; }
 .node-state.failed { color: #c45b5b; }
-.node-reference-handle { position: absolute; z-index: 4; right: 8px; bottom: 8px; height: 28px; padding: 0 9px; border-radius: 8px; color: white; background: rgba(31, 25, 42, .82); display: flex; align-items: center; gap: 5px; font-size: 9px; cursor: grab; opacity: 0; user-select: none; transition: opacity .18s ease, background .18s ease, transform .18s ease; }
+.node-reference-handle { position: absolute; z-index: 4; right: 8px; bottom: 8px; height: 28px; padding: 0 9px; border-radius: 8px; color: white; background: rgba(31, 25, 42, .82); display: flex; align-items: center; gap: 5px; font-size: 11px; cursor: grab; opacity: 0; user-select: none; transition: opacity .18s ease, background .18s ease, transform .18s ease; }
 .canvas-image-node:hover .node-reference-handle, .canvas-image-node.dragging-reference .node-reference-handle { opacity: 1; }
 .node-reference-handle:hover { background: rgba(104, 67, 151, .94); transform: translateY(-1px); }
 .node-reference-handle:active, .canvas-image-node.dragging-reference .node-reference-handle { cursor: grabbing; }

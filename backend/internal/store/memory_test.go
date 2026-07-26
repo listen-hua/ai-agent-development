@@ -26,6 +26,17 @@ func TestUpsertUserPreservesExistingRoles(t *testing.T) {
 	}
 }
 
+func TestListMessagesReturnsEmptySlice(t *testing.T) {
+	repo := NewMemory(domain.AgentConfig{})
+	messages, err := repo.ListMessages(context.Background(), "empty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messages == nil || len(messages) != 0 {
+		t.Fatalf("expected a non-nil empty slice, got %#v", messages)
+	}
+}
+
 func TestSearchChunksAppliesDepartmentAndJobTitleACL(t *testing.T) {
 	repo := NewMemory(domain.AgentConfig{})
 	now := time.Now()
@@ -78,5 +89,31 @@ func TestBoundConversationIsIsolatedAndExpires(t *testing.T) {
 	expired, _ := repo.GetOrCreateBoundConversation(ctx, firstUser, domain.AgentAdministrativeAssistant, domain.ConversationChannelFeishuBot, "chat-a", now.Add(32*time.Minute), ttl)
 	if expired.ID == first.ID {
 		t.Fatal("an inactive binding should start a new conversation")
+	}
+}
+
+func TestMessageFeedbackAndMetricsUseStoredData(t *testing.T) {
+	ctx := context.Background()
+	repo := NewMemory(domain.AgentConfig{})
+	now := time.Now()
+	conversation := domain.Conversation{ID: "conversation", UserID: DemoEmployeeID, Title: "测试", CreatedAt: now, UpdatedAt: now}
+	if err := repo.CreateConversation(ctx, conversation); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddMessage(ctx, domain.Message{ID: "question", ConversationID: conversation.ID, Role: "user", Content: "问题", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddMessage(ctx, domain.Message{ID: "answer", ConversationID: conversation.ID, Role: "assistant", Content: "答案", Citations: []domain.Citation{{ID: "cite"}}, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordMessageFeedback(ctx, "answer", DemoEmployeeID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordMessageFeedback(ctx, "answer", DemoAdminID, false); err != ErrNotFound {
+		t.Fatalf("another user must not be able to update feedback, got %v", err)
+	}
+	metrics := repo.Metrics(ctx)
+	if metrics.QuestionsToday != 1 || metrics.PositiveRate != 1 || metrics.CitationCoverage != 1 || metrics.NoAnswerRate != 0 {
+		t.Fatalf("unexpected metrics: %#v", metrics)
 	}
 }

@@ -4,6 +4,7 @@ import type { User } from '@/types/domain'
 export interface FeishuAuthConfig {
   app_id: string
   enabled: boolean
+  dev_auth_enabled: boolean
 }
 
 export interface FeishuLoginCode {

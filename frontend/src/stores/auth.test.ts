@@ -25,7 +25,7 @@ describe('auth store initialization', () => {
 
   it('automatically signs in with the Feishu identity when no session exists', async () => {
     vi.spyOn(authService, 'me').mockRejectedValue(new ApiError('未登录', 401))
-    vi.spyOn(authService, 'feishuConfig').mockResolvedValue({ app_id: 'cli_test', enabled: true })
+    vi.spyOn(authService, 'feishuConfig').mockResolvedValue({ app_id: 'cli_test', enabled: true, dev_auth_enabled: false })
     const loginCode = { code: 'login-code', auth_method: 'request_auth_code' as const }
     vi.spyOn(authService, 'requestFeishuCode').mockResolvedValue(loginCode)
     vi.spyOn(authService, 'exchange').mockResolvedValue(employee)
@@ -35,6 +35,7 @@ describe('auth store initialization', () => {
 
     expect(auth.user).toEqual(employee)
     expect(auth.initialized).toBe(true)
+    expect(auth.devAuthEnabled).toBe(false)
     expect(authService.requestFeishuCode).toHaveBeenCalledWith('cli_test')
     expect(authService.exchange).toHaveBeenCalledWith(loginCode)
   })

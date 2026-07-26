@@ -34,19 +34,19 @@ async function logout() { await auth.logout(); await router.push('/login') }
         <div v-if="!collapsed" class="brand-copy"><strong>知行</strong><span>行政 AI 助手</span></div>
       </div>
       <nav class="main-nav">
-        <RouterLink v-for="item in navItems" :key="item.path" :to="item.path" :class="{ active: route.path === item.path }">
+        <RouterLink v-for="item in navItems" :key="item.path" :to="item.path" :class="{ active: route.path === item.path }" :aria-label="item.label" :title="item.label">
           <el-icon :size="19"><component :is="item.icon" /></el-icon><span v-if="!collapsed">{{ item.label }}</span>
         </RouterLink>
       </nav>
       <div class="sidebar-footer">
-        <button class="collapse-button" @click="collapsed = !collapsed"><el-icon><Fold /></el-icon><span v-if="!collapsed">收起导航</span></button>
+        <button class="collapse-button" :aria-label="collapsed ? '展开导航' : '收起导航'" :title="collapsed ? '展开导航' : '收起导航'" @click="collapsed = !collapsed"><el-icon><Fold /></el-icon><span v-if="!collapsed">收起导航</span></button>
       </div>
     </aside>
     <section class="app-stage">
       <header class="topbar">
         <div class="topbar-status"><span class="status-dot" />{{ topbarCopy }}</div>
         <el-dropdown trigger="click">
-          <button class="user-menu"><el-avatar :size="30" :src="auth.user?.avatar_url"><User /></el-avatar><span>{{ auth.user?.name }}</span></button>
+          <button class="user-menu" :aria-label="`${auth.user?.name || '用户'}菜单`" title="用户菜单"><el-avatar :size="30" :src="auth.user?.avatar_url"><User /></el-avatar><span>{{ auth.user?.name }}</span></button>
           <template #dropdown><el-dropdown-menu><el-dropdown-item :icon="SwitchButton" @click="logout">退出登录</el-dropdown-item></el-dropdown-menu></template>
         </el-dropdown>
       </header>

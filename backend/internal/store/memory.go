@@ -13,38 +13,40 @@ import (
 )
 
 type Memory struct {
-	mu                   sync.RWMutex
-	users                map[string]domain.User
-	openIDs              map[string]string
-	conversations        map[string]domain.Conversation
-	messages             map[string][]domain.Message
-	conversationContexts map[string]domain.ConversationContext
-	conversationBindings map[string]domain.ConversationBinding
-	sources              map[string]domain.KnowledgeSource
-	documents            map[string]domain.Document
-	chunks               []domain.Chunk
-	configs              []domain.AgentConfigVersion
-	agentProfiles        map[string]domain.AgentProfile
-	notifications        map[string]domain.NotificationDraft
-	reminders            map[string]domain.Reminder
-	reminderActions      map[string]domain.ReminderActionDraft
-	reminderDeliveries   map[string]domain.ReminderDelivery
-	workdayOverrides     map[string]domain.WorkdayOverride
-	reminderBotJobs      map[string]domain.ReminderBotJob
-	meetingRooms         map[string]domain.MeetingRoom
-	meetingSettings      domain.MeetingSettings
-	meetingActions       map[string]domain.MeetingBookingAction
-	meetingBookings      map[string]domain.MeetingBooking
-	meetingDeliveries    map[string]domain.MeetingBookingDelivery
-	imageRelays          map[string]domain.ImageRelay
-	imageModels          map[string]domain.ImageModel
-	imageProjects        map[string]domain.ImageProject
-	imagePromptActions   map[string]domain.ImagePromptAction
-	imageCanvases        map[string]domain.ImageCanvas
-	imageAssets          map[string]domain.ImageAsset
-	imageJobs            map[string]domain.ImageJob
-	audits               []domain.AuditEvent
-	events               map[string]struct{}
+	mu                     sync.RWMutex
+	users                  map[string]domain.User
+	openIDs                map[string]string
+	conversations          map[string]domain.Conversation
+	messages               map[string][]domain.Message
+	messageFeedback        map[string]bool
+	conversationContexts   map[string]domain.ConversationContext
+	conversationBindings   map[string]domain.ConversationBinding
+	sources                map[string]domain.KnowledgeSource
+	documents              map[string]domain.Document
+	chunks                 []domain.Chunk
+	configs                []domain.AgentConfigVersion
+	agentProfiles          map[string]domain.AgentProfile
+	notifications          map[string]domain.NotificationDraft
+	notificationDeliveries map[string]string
+	reminders              map[string]domain.Reminder
+	reminderActions        map[string]domain.ReminderActionDraft
+	reminderDeliveries     map[string]domain.ReminderDelivery
+	workdayOverrides       map[string]domain.WorkdayOverride
+	reminderBotJobs        map[string]domain.ReminderBotJob
+	meetingRooms           map[string]domain.MeetingRoom
+	meetingSettings        domain.MeetingSettings
+	meetingActions         map[string]domain.MeetingBookingAction
+	meetingBookings        map[string]domain.MeetingBooking
+	meetingDeliveries      map[string]domain.MeetingBookingDelivery
+	imageRelays            map[string]domain.ImageRelay
+	imageModels            map[string]domain.ImageModel
+	imageProjects          map[string]domain.ImageProject
+	imagePromptActions     map[string]domain.ImagePromptAction
+	imageCanvases          map[string]domain.ImageCanvas
+	imageAssets            map[string]domain.ImageAsset
+	imageJobs              map[string]domain.ImageJob
+	audits                 []domain.AuditEvent
+	events                 map[string]struct{}
 }
 
 const DemoAdminID = "00000000-0000-4000-8000-000000000001"
@@ -57,8 +59,8 @@ func NewMemory(defaultConfig domain.AgentConfig) *Memory {
 	config := domain.AgentConfigVersion{ID: ids.New("cfg"), Version: 1, Status: "published", Config: defaultConfig, CreatedBy: admin.ID, CreatedAt: now, PublishedAt: &now}
 	return &Memory{
 		users: map[string]domain.User{admin.ID: admin, employee.ID: employee}, openIDs: map[string]string{admin.FeishuOpenID: admin.ID, employee.FeishuOpenID: employee.ID},
-		conversations: map[string]domain.Conversation{}, messages: map[string][]domain.Message{}, conversationContexts: map[string]domain.ConversationContext{}, conversationBindings: map[string]domain.ConversationBinding{}, sources: map[string]domain.KnowledgeSource{}, documents: map[string]domain.Document{},
-		configs: []domain.AgentConfigVersion{config}, agentProfiles: map[string]domain.AgentProfile{}, notifications: map[string]domain.NotificationDraft{},
+		conversations: map[string]domain.Conversation{}, messages: map[string][]domain.Message{}, messageFeedback: map[string]bool{}, conversationContexts: map[string]domain.ConversationContext{}, conversationBindings: map[string]domain.ConversationBinding{}, sources: map[string]domain.KnowledgeSource{}, documents: map[string]domain.Document{},
+		configs: []domain.AgentConfigVersion{config}, agentProfiles: map[string]domain.AgentProfile{}, notifications: map[string]domain.NotificationDraft{}, notificationDeliveries: map[string]string{},
 		reminders: map[string]domain.Reminder{}, reminderActions: map[string]domain.ReminderActionDraft{}, reminderDeliveries: map[string]domain.ReminderDelivery{},
 		workdayOverrides: map[string]domain.WorkdayOverride{}, reminderBotJobs: map[string]domain.ReminderBotJob{},
 		meetingRooms: map[string]domain.MeetingRoom{}, meetingSettings: domain.MeetingSettings{Timezone: "Asia/Shanghai", WorkdayStart: "09:00", WorkdayEnd: "18:00", SlotMinutes: 30, SyncIntervalMinute: 15, UpdatedAt: now},
@@ -449,7 +451,7 @@ func (m *Memory) AddMessage(_ context.Context, value domain.Message) error {
 func (m *Memory) ListMessages(_ context.Context, conversationID string) ([]domain.Message, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return append([]domain.Message(nil), m.messages[conversationID]...), nil
+	return append([]domain.Message{}, m.messages[conversationID]...), nil
 }
 
 func (m *Memory) UpdateMessageAnalysis(_ context.Context, messageID, intent, standalone string, version, promptTokens, completionTokens int) error {
@@ -876,7 +878,10 @@ func (m *Memory) ClaimDueNotifications(_ context.Context, now time.Time, limit i
 	}
 	return out, nil
 }
-func (m *Memory) RecordNotificationDelivery(context.Context, string, string, string, string, string, string, string, int, time.Time) error {
+func (m *Memory) RecordNotificationDelivery(_ context.Context, notificationID, receiverID, _ string, _ string, status, _ string, _ string, _ int, _ time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.notificationDeliveries[notificationID+"\x00"+receiverID] = status
 	return nil
 }
 func (m *Memory) CreateReminderAction(_ context.Context, value domain.ReminderActionDraft) error {
@@ -1287,16 +1292,89 @@ func (m *Memory) ForgetProcessedEvent(_ context.Context, id string) {
 	defer m.mu.Unlock()
 	delete(m.events, id)
 }
+
+func (m *Memory) RecordMessageFeedback(_ context.Context, messageID, userID string, positive bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for conversationID, messages := range m.messages {
+		conversation, ok := m.conversations[conversationID]
+		if !ok || conversation.UserID != userID {
+			continue
+		}
+		for _, message := range messages {
+			if message.ID == messageID && message.Role == "assistant" {
+				m.messageFeedback[messageID] = positive
+				return nil
+			}
+		}
+	}
+	return ErrNotFound
+}
+
 func (m *Memory) Metrics(_ context.Context) domain.DashboardMetrics {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	now := time.Now()
+	year, day := now.Year(), now.YearDay()
+	questionsToday := 0
+	assistantMessages := 0
+	assistantWithCitations := 0
+	for _, messages := range m.messages {
+		for _, message := range messages {
+			if message.Role == "user" && message.CreatedAt.Year() == year && message.CreatedAt.YearDay() == day {
+				questionsToday++
+			}
+			if message.Role == "assistant" {
+				assistantMessages++
+				if len(message.Citations) > 0 {
+					assistantWithCitations++
+				}
+			}
+		}
+	}
+	positive := 0
+	for _, value := range m.messageFeedback {
+		if value {
+			positive++
+		}
+	}
 	published := 0
 	for _, d := range m.documents {
 		if d.Status == "published" {
 			published++
 		}
 	}
-	return domain.DashboardMetrics{QuestionsToday: len(m.messages) / 2, PositiveRate: .92, NoAnswerRate: .08, CitationCoverage: 1, DocumentsPublished: published, SyncBacklog: 0, DeliverySuccess: .99}
+	syncBacklog := 0
+	for _, source := range m.sources {
+		if source.SyncStatus == "queued" || source.SyncStatus == "pending" || source.SyncStatus == "syncing" {
+			syncBacklog++
+		}
+	}
+	deliveries, sent := 0, 0
+	for _, status := range m.notificationDeliveries {
+		if status == "sent" || status == "failed" {
+			deliveries++
+			if status == "sent" {
+				sent++
+			}
+		}
+	}
+	return domain.DashboardMetrics{
+		QuestionsToday:     questionsToday,
+		PositiveRate:       ratio(positive, len(m.messageFeedback)),
+		NoAnswerRate:       ratio(assistantMessages-assistantWithCitations, assistantMessages),
+		CitationCoverage:   ratio(assistantWithCitations, assistantMessages),
+		DocumentsPublished: published,
+		SyncBacklog:        syncBacklog,
+		DeliverySuccess:    ratio(sent, deliveries),
+	}
+}
+
+func ratio(numerator, denominator int) float64 {
+	if denominator == 0 {
+		return 0
+	}
+	return float64(numerator) / float64(denominator)
 }
 
 func tokenize(value string) []string {

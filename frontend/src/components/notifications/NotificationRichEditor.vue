@@ -83,8 +83,8 @@ function chooseImage(event: Event) {
 .image-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 10px 12px; border-top: 1px solid #edf0f4; }
 .image-strip article { min-width: 0; display: grid; grid-template-columns: 38px 1fr 27px; gap: 7px; align-items: center; padding: 6px; border: 1px solid #e5e9f0; border-radius: 8px; }
 .image-strip img, .image-placeholder { width: 38px; height: 38px; border-radius: 6px; object-fit: cover; background: #eef2f7; display: grid; place-items: center; color: #7d8ba4; }
-.image-strip span { overflow: hidden; color: #59657a; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.image-strip span { overflow: hidden; color: #59657a; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .rich-editor-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 7px 12px; border-top: 1px solid #edf0f4; }
-.rich-editor-actions small { color: #929bab; font-size: 10px; }
+.rich-editor-actions small { color: #929bab; font-size: 12px; }
 @media (max-width: 600px) { .image-strip { grid-template-columns: 1fr; } .rich-editor-actions { align-items: flex-start; flex-direction: column; } }
 </style>

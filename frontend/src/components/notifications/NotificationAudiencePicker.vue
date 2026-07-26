@@ -62,6 +62,6 @@ function changeType(value: NotificationRecipientType) {
 .audience-picker :deep(.el-radio-button__inner) { display: flex; gap: 6px; align-items: center; }
 .chat-permission-alert { align-items: flex-start; }
 .target-option { display: grid; grid-template-columns: 25px 1fr auto; gap: 9px; align-items: center; }
-.target-option small { color: #9aa3b2; font-size: 11px; }
-.audience-tip { margin: -4px 0 0; color: #8a94a6; font-size: 11px; line-height: 1.5; }
+.target-option small { color: #9aa3b2; font-size: 13px; }
+.audience-tip { margin: -4px 0 0; color: #8a94a6; font-size: 13px; line-height: 1.5; }
 </style>

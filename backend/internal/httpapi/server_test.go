@@ -13,7 +13,7 @@ import (
 
 func TestFeishuAuthConfigExposesOnlyPublicClientConfig(t *testing.T) {
 	server := &Server{
-		cfg:    config.Config{FeishuAppID: "cli_test", FeishuAppSecret: "do-not-expose"},
+		cfg:    config.Config{FeishuAppID: "cli_test", FeishuAppSecret: "do-not-expose", DevAuthEnabled: true},
 		feishu: feishu.New("cli_test", "do-not-expose", ""),
 	}
 	recorder := httptest.NewRecorder()
@@ -26,13 +26,14 @@ func TestFeishuAuthConfigExposesOnlyPublicClientConfig(t *testing.T) {
 		t.Fatal("response exposed the app secret")
 	}
 	var response struct {
-		AppID   string `json:"app_id"`
-		Enabled bool   `json:"enabled"`
+		AppID          string `json:"app_id"`
+		Enabled        bool   `json:"enabled"`
+		DevAuthEnabled bool   `json:"dev_auth_enabled"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.AppID != "cli_test" || !response.Enabled {
+	if response.AppID != "cli_test" || !response.Enabled || !response.DevAuthEnabled {
 		t.Fatalf("unexpected response: %+v", response)
 	}
 }

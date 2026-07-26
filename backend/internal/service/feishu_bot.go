@@ -210,7 +210,7 @@ func (b *FeishuBot) answer(event feishu.MessageEvent, question string, ticket *c
 		slog.Error("start feishu agent run failed", "event_id", event.EventID, "error", err)
 		return
 	}
-	history, events, found := b.chat.Subscribe(runID)
+	history, events, found := b.chat.Subscribe(runID, user.ID)
 	if !found {
 		slog.Error("feishu agent run not found", "event_id", event.EventID, "run_id", runID)
 		return

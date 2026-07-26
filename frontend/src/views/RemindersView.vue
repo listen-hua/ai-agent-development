@@ -25,11 +25,16 @@ function edit(reminder: Reminder) { editing.value = reminder; editorOpen.value =
 async function confirmDraft(draft: ReminderActionDraft, description: string) {
   try {
     await ElMessageBox.confirm(description, '确认提醒操作', { type: 'warning', confirmButtonText: '确认生效', cancelButtonText: '取消' })
+  } catch {
+    await reminderService.cancelAction(draft.id).catch(() => undefined)
+    return false
+  }
+  try {
     await reminderService.confirm(draft.id)
     ElMessage.success('提醒操作已生效')
     return true
-  } catch {
-    await reminderService.cancelAction(draft.id).catch(() => undefined)
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '提醒操作确认失败，请稍后重试')
     return false
   }
 }
@@ -62,6 +67,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-.reminder-summary{display:grid;grid-template-columns:180px 150px 150px minmax(220px,1fr);gap:12px;align-items:stretch}.reminder-summary article,.reminder-summary>p{min-height:84px;border:1px solid #e5e9f0;border-radius:13px;padding:16px 18px;background:#fff}.reminder-summary article{display:flex;align-items:center;gap:12px}.reminder-summary article>span{width:38px;height:38px;border-radius:11px;background:#edf1ff;color:#526ed9;display:grid;place-items:center}.reminder-summary article div{display:flex;flex-direction:column}.reminder-summary strong{color:#26334b;font-size:24px}.reminder-summary small{color:#9099a9;font-size:10px}.reminder-summary article.danger strong{color:#d04a4a}.reminder-summary>p{margin:0;color:#6d7890;font-size:11px;line-height:1.7;background:linear-gradient(120deg,#f4f7ff,#fff)}
+.reminder-summary{display:grid;grid-template-columns:180px 150px 150px minmax(220px,1fr);gap:12px;align-items:stretch}.reminder-summary article,.reminder-summary>p{min-height:84px;border:1px solid #e5e9f0;border-radius:13px;padding:16px 18px;background:#fff}.reminder-summary article{display:flex;align-items:center;gap:12px}.reminder-summary article>span{width:38px;height:38px;border-radius:11px;background:#edf1ff;color:#526ed9;display:grid;place-items:center}.reminder-summary article div{display:flex;flex-direction:column}.reminder-summary strong{color:#26334b;font-size:24px}.reminder-summary small{color:#9099a9;font-size: 12px}.reminder-summary article.danger strong{color:#d04a4a}.reminder-summary>p{margin:0;color:#6d7890;font-size: 13px;line-height:1.7;background:linear-gradient(120deg,#f4f7ff,#fff)}
 @media(max-width:900px){.reminder-summary{grid-template-columns:repeat(3,1fr)}.reminder-summary>p{grid-column:1/-1}}@media(max-width:600px){.reminder-summary{grid-template-columns:1fr 1fr}.reminder-summary>p{grid-column:1/-1}.reminder-summary article:first-child{grid-column:1/-1}}
 </style>

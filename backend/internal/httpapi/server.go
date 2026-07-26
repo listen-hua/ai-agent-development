@@ -72,7 +72,9 @@ func (s *Server) routes() {
 	s.mux.Handle("DELETE /api/v1/conversations/{id}", s.auth(http.HandlerFunc(s.deleteConversation)))
 	s.mux.Handle("POST /api/v1/conversations/{id}/context/reset", s.auth(http.HandlerFunc(s.resetConversationContext)))
 	s.mux.Handle("POST /api/v1/conversations/{id}/messages", s.auth(http.HandlerFunc(s.startMessage)))
+	s.mux.Handle("POST /api/v1/messages/{id}/feedback", s.auth(http.HandlerFunc(s.recordMessageFeedback)))
 	s.mux.Handle("GET /api/v1/runs/{id}/events", s.auth(http.HandlerFunc(s.runEvents)))
+	s.mux.Handle("POST /api/v1/runs/{id}/cancel", s.auth(http.HandlerFunc(s.cancelRun)))
 	s.mux.Handle("GET /api/v1/reminders", s.auth(http.HandlerFunc(s.listReminders)))
 	s.mux.Handle("GET /api/v1/reminders/{id}", s.auth(http.HandlerFunc(s.getReminder)))
 	s.mux.Handle("GET /api/v1/reminders/{id}/deliveries", s.auth(http.HandlerFunc(s.listReminderDeliveries)))
@@ -159,8 +161,9 @@ func (s *Server) routes() {
 func (s *Server) feishuAuthConfig(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
-		"app_id":  s.cfg.FeishuAppID,
-		"enabled": s.feishu.Configured(),
+		"app_id":           s.cfg.FeishuAppID,
+		"enabled":          s.feishu.Configured(),
+		"dev_auth_enabled": s.cfg.DevAuthEnabled,
 	})
 }
 
@@ -347,7 +350,7 @@ func (s *Server) runEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "不支持流式响应", nil)
 		return
 	}
-	history, ch, found := s.chat.Subscribe(r.PathValue("id"))
+	history, ch, found := s.chat.Subscribe(r.PathValue("id"), currentUser(r).ID)
 	if !found {
 		writeError(w, 404, "运行不存在", nil)
 		return
@@ -380,6 +383,32 @@ func (s *Server) runEvents(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
+	if !s.chat.Cancel(r.PathValue("id"), currentUser(r).ID) {
+		writeError(w, http.StatusNotFound, "运行不存在", nil)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) recordMessageFeedback(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Positive bool `json:"positive"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if err := s.repo.RecordMessageFeedback(r.Context(), r.PathValue("id"), currentUser(r).ID, input.Positive); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "消息不存在", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "记录反馈失败", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) listSources(w http.ResponseWriter, r *http.Request) {

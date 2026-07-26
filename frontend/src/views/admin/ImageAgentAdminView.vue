@@ -43,10 +43,10 @@ onMounted(admin.load)
 .image-admin-tabs :deep(.el-tabs__content) { overflow: visible; }
 .image-admin-page :deep(.admin-feature-panel) { padding: 18px; border: 1px solid #e3e6ed; border-radius: 14px; background: white; }
 .image-admin-page :deep(.admin-feature-panel > header) { margin-bottom: 16px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.image-admin-page :deep(.admin-feature-panel > header h3) { margin: 0; color: #344057; font-size: 15px; }
-.image-admin-page :deep(.admin-feature-panel > header p) { margin: 5px 0 0; color: #8f97a6; font-size: 10px; }
+.image-admin-page :deep(.admin-feature-panel > header h3) { margin: 0; color: #344057; font-size: 16px; }
+.image-admin-page :deep(.admin-feature-panel > header p) { margin: 5px 0 0; color: #8f97a6; font-size: 12px; }
 .image-admin-page :deep(.form-grid) { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.image-admin-page :deep(.cell-note) { margin-left: 6px; color: #8d95a3; font-size: 9px; }
-.image-admin-page :deep(.el-form-item small) { display: block; margin-top: 5px; color: #969dab; font-size: 9px; }
+.image-admin-page :deep(.cell-note) { margin-left: 6px; color: #8d95a3; font-size: 11px; }
+.image-admin-page :deep(.el-form-item small) { display: block; margin-top: 5px; color: #969dab; font-size: 11px; }
 @media (max-width: 720px) { .image-admin-page :deep(.form-grid) { grid-template-columns: 1fr; } }
 </style>

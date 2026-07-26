@@ -5,9 +5,41 @@ import (
 	"internal-ai-agent/backend/internal/domain"
 	"internal-ai-agent/backend/internal/model"
 	"internal-ai-agent/backend/internal/store"
+	"sync"
 	"testing"
 	"time"
 )
+
+type blockingProvider struct {
+	started  chan struct{}
+	finished chan struct{}
+	once     sync.Once
+}
+
+func (p *blockingProvider) Available() bool { return true }
+func (p *blockingProvider) Generate(ctx context.Context, input model.GenerateRequest) (string, error) {
+	return model.Mock{}.Generate(ctx, input)
+}
+func (p *blockingProvider) StreamGenerate(ctx context.Context, _ model.GenerateRequest, _ func(string)) (string, error) {
+	p.once.Do(func() { close(p.started) })
+	<-ctx.Done()
+	close(p.finished)
+	return "", ctx.Err()
+}
+func (p *blockingProvider) Embed(_ context.Context, _ string, values []string, dimensions int) ([][]float32, error) {
+	result := make([][]float32, len(values))
+	for index := range result {
+		result[index] = make([]float32, dimensions)
+	}
+	return result, nil
+}
+func (p *blockingProvider) Rerank(_ context.Context, _ string, _ string, docs []string, _ int) ([]int, error) {
+	result := make([]int, len(docs))
+	for index := range result {
+		result[index] = index
+	}
+	return result, nil
+}
 
 func TestChatReturnsGroundedCitation(t *testing.T) {
 	ctx := context.Background()
@@ -27,7 +59,7 @@ func TestChatReturnsGroundedCitation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, events, ok := chat.Subscribe(runID)
+	_, events, ok := chat.Subscribe(runID, admin.ID)
 	if !ok {
 		t.Fatal("run not found")
 	}
@@ -49,6 +81,51 @@ func TestChatReturnsGroundedCitation(t *testing.T) {
 	}
 	if !done {
 		t.Fatal("run did not complete")
+	}
+}
+
+func TestChatCancelStopsProviderAndDoesNotPersistAssistant(t *testing.T) {
+	ctx := context.Background()
+	repo := store.NewMemory(domain.AgentConfig{GenerationModel: "blocking", RetrievalTopK: 10, RerankTopN: 5, MaxOutputTokens: 500, ContextBudget: 12000})
+	user, _ := repo.GetUser(ctx, store.DemoEmployeeID)
+	now := time.Now()
+	version := domain.DocumentVersion{ID: "version-cancel", Version: "1.0", Status: "published", CreatedAt: now}
+	document := domain.Document{ID: "document-cancel", Title: "取消测试制度", ACL: domain.ACL{Scope: "all"}, Status: "published", Versions: []domain.DocumentVersion{version}, CreatedAt: now, UpdatedAt: now}
+	if err := repo.CreateDocument(ctx, document, []domain.Chunk{{ID: "chunk-cancel", DocumentID: document.ID, VersionID: version.ID, Content: "取消测试问题的制度依据"}}); err != nil {
+		t.Fatal(err)
+	}
+	provider := &blockingProvider{started: make(chan struct{}), finished: make(chan struct{})}
+	chat := NewChat(repo, provider, NewRunHub())
+	conversation, err := chat.CreateConversation(ctx, user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := chat.Start(ctx, user, conversation.ID, "取消测试问题")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-provider.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("provider did not start")
+	}
+	if chat.Cancel(runID, store.DemoAdminID) {
+		t.Fatal("another user must not be able to cancel the run")
+	}
+	if !chat.Cancel(runID, user.ID) {
+		t.Fatal("owner should be able to cancel the run")
+	}
+	select {
+	case <-provider.finished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("provider context was not cancelled")
+	}
+	messages, err := repo.ListMessages(ctx, conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 || messages[0].Role != "user" {
+		t.Fatalf("cancelled run persisted an assistant response: %#v", messages)
 	}
 }
 

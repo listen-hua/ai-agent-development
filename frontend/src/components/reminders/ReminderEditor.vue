@@ -46,5 +46,5 @@ function submit() {
 </template>
 
 <style scoped>
-.reminder-editor :deep(.el-segmented){width:100%}.reminder-editor :deep(.el-segmented__item){flex:1}.reminder-editor :deep(.el-date-editor){width:100%}.reminder-editor-tip{border-radius:9px;padding:10px 12px;background:#f2f5ff;color:#65739a;font-size:11px;line-height:1.6}
+.reminder-editor :deep(.el-segmented){width:100%}.reminder-editor :deep(.el-segmented__item){flex:1}.reminder-editor :deep(.el-date-editor){width:100%}.reminder-editor-tip{border-radius:9px;padding:10px 12px;background:#f2f5ff;color:#65739a;font-size: 13px;line-height:1.6}
 </style>

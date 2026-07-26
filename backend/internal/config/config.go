@@ -46,12 +46,13 @@ type Config struct {
 }
 
 func Load() Config {
+	environment := strings.ToLower(strings.TrimSpace(env("APP_ENV", "development")))
 	config := Config{
-		Environment:                env("APP_ENV", "development"),
+		Environment:                environment,
 		HTTPAddr:                   env("HTTP_ADDR", ":8080"),
 		PublicURL:                  env("PUBLIC_URL", "http://localhost:5173"),
 		SessionSecret:              env("SESSION_SECRET", "development-only-secret-change-me"),
-		DevAuthEnabled:             envBool("DEV_AUTH_ENABLED", true),
+		DevAuthEnabled:             envBool("DEV_AUTH_ENABLED", environment != "production"),
 		DatabaseURL:                os.Getenv("DATABASE_URL"),
 		RedisAddr:                  env("REDIS_ADDR", "localhost:6379"),
 		MinIOEndpoint:              os.Getenv("MINIO_ENDPOINT"),
@@ -87,6 +88,52 @@ func Load() Config {
 		config.FeishuAppLink = fmt.Sprintf("https://applink.feishu.cn/client/web_app/open?appId=%s&mode=appCenter&path=/chat", config.FeishuAppID)
 	}
 	return config
+}
+
+func (c Config) Validate() error {
+	if c.Environment != "production" {
+		return nil
+	}
+	var problems []string
+	if c.DevAuthEnabled {
+		problems = append(problems, "DEV_AUTH_ENABLED must be false")
+	}
+	if weakSecret(c.SessionSecret) {
+		problems = append(problems, "SESSION_SECRET must be a non-placeholder value with at least 32 characters")
+	}
+	if weakSecret(c.AgentSecretEncryptionKey) {
+		problems = append(problems, "AGENT_SECRET_ENCRYPTION_KEY must be a non-placeholder value with at least 32 characters")
+	}
+	required := []struct {
+		name  string
+		value string
+	}{
+		{"DATABASE_URL", c.DatabaseURL},
+		{"MINIO_ENDPOINT", c.MinIOEndpoint},
+		{"MINIO_ACCESS_KEY", c.MinIOAccessKey},
+		{"MINIO_SECRET_KEY", c.MinIOSecretKey},
+		{"DASHSCOPE_API_KEY", c.DashScopeAPIKey},
+		{"FEISHU_APP_ID", c.FeishuAppID},
+		{"FEISHU_APP_SECRET", c.FeishuAppSecret},
+	}
+	for _, item := range required {
+		if strings.TrimSpace(item.value) == "" {
+			problems = append(problems, item.name+" is required")
+		}
+	}
+	if strings.TrimSpace(c.MinIOSecretKey) != "" && weakSecret(c.MinIOSecretKey) {
+		problems = append(problems, "MINIO_SECRET_KEY must be a non-placeholder value with at least 32 characters")
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("invalid production configuration: %s", strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+func weakSecret(value string) bool {
+	value = strings.TrimSpace(value)
+	lower := strings.ToLower(value)
+	return len(value) < 32 || strings.Contains(lower, "development") || strings.Contains(lower, "change")
 }
 
 func csv(value string) []string {

@@ -135,5 +135,5 @@ defineExpose({ applyDraft, addImage })
 
 <style scoped>
 .notification-form { padding: 0 3px 18px; }
-.schedule-tip { display: block; margin-top: 7px; color: #8f98a8; font-size: 10px; line-height: 1.5; }
+.schedule-tip { display: block; margin-top: 7px; color: #8f98a8; font-size: 12px; line-height: 1.5; }
 </style>

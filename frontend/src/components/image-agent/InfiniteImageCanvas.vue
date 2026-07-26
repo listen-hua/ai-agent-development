@@ -142,7 +142,7 @@ watch(() => props.canvas, syncFromCanvas, { deep: true, immediate: true })
 .infinite-canvas :deep(.vue-flow__minimap-mask:active) { cursor: grabbing; }
 .canvas-empty { position: absolute; inset: 0; pointer-events: none; display: flex; align-items: center; justify-content: center; flex-direction: column; text-align: center; }
 .canvas-empty span { color: #7652a3; font: 500 52px/1 Georgia, serif; }
-.canvas-empty strong { margin-top: 8px; color: #4d4458; font-size: 15px; }
-.canvas-empty p { margin: 7px 0; color: #96909d; font-size: 11px; }
-.readonly-badge { position: absolute; top: 14px; right: 14px; padding: 7px 10px; border: 1px solid #ead7a8; border-radius: 8px; color: #8c6b23; background: rgba(255, 249, 230, .94); font-size: 10px; }
+.canvas-empty strong { margin-top: 8px; color: #4d4458; font-size: 16px; }
+.canvas-empty p { margin: 7px 0; color: #96909d; font-size: 13px; }
+.readonly-badge { position: absolute; top: 14px; right: 14px; padding: 7px 10px; border: 1px solid #ead7a8; border-radius: 8px; color: #8c6b23; background: rgba(255, 249, 230, .94); font-size: 12px; }
 </style>

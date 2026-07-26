@@ -14,6 +14,8 @@ export function useChat() {
   const stage = ref('')
   let stopStream: (() => void) | undefined
   let textStream: TextStreamController | undefined
+  let activeRunId = ''
+  let stopRequested = false
 
   const activeConversation = computed(() => conversations.value.find((item) => item.id === activeId.value))
 
@@ -32,7 +34,7 @@ export function useChat() {
   async function selectConversation(id: string) {
     if (sending.value) return
     activeId.value = id
-    messages.value = await chatService.listMessages(id)
+    messages.value = (await chatService.listMessages(id)) || []
   }
 
   async function removeConversation(id: string) {
@@ -54,11 +56,20 @@ export function useChat() {
     }
     messages.value.push(assistant)
     sending.value = true
+    stopRequested = false
     stage.value = '正在理解问题'
     textStream?.cancel()
     textStream = createTextStreamController((value) => { assistant.content = value })
     try {
       const { run_id } = await chatService.sendMessage(conversationId, content)
+      activeRunId = run_id
+      if (stopRequested) {
+        activeRunId = ''
+        await chatService.cancelRun(run_id).catch(() => {
+          ElMessage.warning('生成已在当前页面停止，但服务端取消请求未成功')
+        })
+        return
+      }
       stopStream = chatService.stream(
         run_id,
         (event) => handleEvent(event, assistant),
@@ -117,6 +128,7 @@ export function useChat() {
     stage.value = ''
     stopStream = undefined
     textStream = undefined
+    activeRunId = ''
     void loadConversations()
   }
 
@@ -125,6 +137,7 @@ export function useChat() {
     stopStream?.()
     textStream = undefined
     stopStream = undefined
+    activeRunId = ''
     assistant.pending = false
     assistant.content = reason
     sending.value = false
@@ -133,6 +146,9 @@ export function useChat() {
   }
 
   function stop() {
+    stopRequested = true
+    const runId = activeRunId
+    activeRunId = ''
     stopStream?.()
     textStream?.cancel()
     stopStream = undefined
@@ -144,17 +160,30 @@ export function useChat() {
       last.pending = false
       last.content ||= '已停止生成。'
     }
+    if (runId) {
+      void chatService.cancelRun(runId).catch(() => {
+        ElMessage.warning('生成已在当前页面停止，但服务端取消请求未成功')
+      })
+    }
   }
 
   function retry(message: Message) {
     const index = messages.value.indexOf(message)
+    if (index < 0) {
+      if (message.content) void send(message.content)
+      return
+    }
     const previous = messages.value.slice(0, index).reverse().find((item) => item.role === 'user')
     if (previous) void send(previous.content)
   }
 
-  function feedback(message: Message, positive: boolean) {
-    ElMessage.success(positive ? '感谢反馈，这会帮助我们改进回答' : '已记录问题，行政知识管理员会复核')
-    message
+  async function feedback(message: Message, positive: boolean) {
+    try {
+      await chatService.feedback(message.id, positive)
+      ElMessage.success(positive ? '感谢反馈，这会帮助我们改进回答' : '已记录问题，行政知识管理员会复核')
+    } catch (error) {
+      ElMessage.error(error instanceof Error ? error.message : '反馈提交失败')
+    }
   }
 
   async function confirmReminder(message: Message) {
@@ -204,6 +233,7 @@ export function useChat() {
   onBeforeUnmount(() => {
     stopStream?.()
     textStream?.cancel()
+    if (activeRunId) void chatService.cancelRun(activeRunId).catch(() => undefined)
   })
 
   return {

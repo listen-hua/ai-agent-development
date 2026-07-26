@@ -96,8 +96,8 @@ function drop(event: DragEvent, index?: number) {
 <style scoped>
 .reference-section { display: grid; gap: 8px; }
 .section-label { display: flex; align-items: center; justify-content: space-between; }
-.section-label span { color: #3d4657; font-size: 12px; font-weight: 650; }
-.section-label small { color: #9aa2af; font-size: 9px; }
+.section-label span { color: #3d4657; font-size: 14px; font-weight: 650; }
+.section-label small { color: #9aa2af; font-size: 11px; }
 .reference-slots { min-height: 78px; padding: 3px; margin: -3px; border: 1px solid transparent; border-radius: 13px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 7px; transition: border-color .16s ease, background .16s ease, box-shadow .16s ease; }
 .reference-slots.drag-active { border-color: #9270bd; background: #f8f3fc; box-shadow: 0 0 0 3px rgba(126, 86, 174, .1); }
 .reference-card, .reference-empty { position: relative; min-width: 0; aspect-ratio: 1; overflow: hidden; border: 1px dashed #d5d9e2; border-radius: 10px; background: #fafbfc; }
@@ -106,7 +106,7 @@ function drop(event: DragEvent, index?: number) {
 .reference-empty { color: #9a8cab; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 3px; cursor: pointer; }
 .reference-empty:hover { border-color: #8d6dba; color: #7452a3; background: #fbf8ff; }
 .reference-slots.drag-active .reference-empty { border-color: #a98acb; color: #7551a0; background: white; }
-.reference-empty span { font-size: 8px; white-space: nowrap; }
-.reference-tip { color: #9aa1ae; display: flex; align-items: center; gap: 5px; font-size: 9px; }
+.reference-empty span { font-size: 10px; white-space: nowrap; }
+.reference-tip { color: #9aa1ae; display: flex; align-items: center; gap: 5px; font-size: 11px; }
 @media (max-width: 960px) { .reference-slots { grid-template-columns: repeat(5, 54px); } }
 </style>
