@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Connection, Lock, Operation, UserFilled } from '@element-plus/icons-vue'
+import { Connection, Lock, Sunny, UserFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 
@@ -22,21 +22,31 @@ async function login(kind: 'feishu' | 'admin' | 'employee') {
     loading.value = false
   }
 }
+
+function retryIAM() {
+  window.location.reload()
+}
 </script>
 
 <template>
   <main class="login-page">
     <section class="login-story">
-      <div class="story-inner"><div class="story-badge"><span />内部可信 AI</div><h1>让制度被看见，<br />让答案有依据。</h1><p>连接公司制度知识与飞书，让每位同事都能快速获得准确、可追溯的行政答复。</p><div class="trust-list"><div><Lock /><span><strong>权限先于检索</strong>看不到的制度，不会出现在答案里</span></div><div><Connection /><span><strong>每个结论有引用</strong>直达制度版本、章节与原文</span></div></div></div>
+      <div class="story-inner"><div class="story-badge"><span />SHIMMER · 企业可信 AI</div><h1>让每一个 AI Agent，<br />照亮具体工作。</h1><p>从制度问答、行政执行到创意生图，在飞书内连接公司知识、工具与多个专业 AI Agent。</p><div class="trust-list"><div><Lock /><span><strong>统一身份与权限</strong>每个 Agent 都遵守公司数据边界</span></div><div><Connection /><span><strong>一个入口，多种能力</strong>按业务场景持续接入新的 AI Agent</span></div></div></div>
     </section>
     <section class="login-panel">
       <div class="login-card">
-        <div class="login-logo"><Operation /></div>
-        <h2>欢迎使用知行</h2>
-        <p>公司内部行政 AI 助手</p>
+        <div class="login-logo"><Sunny /></div>
+        <h2>欢迎使用微光</h2>
+        <p>Shimmer · 公司内部 AI Agent 平台</p>
         <el-alert v-if="auth.authError" :title="auth.authError" type="error" show-icon :closable="false" />
-        <el-button class="feishu-login" type="primary" size="large" :loading="loading" @click="login('feishu')">使用飞书账号登录</el-button>
-        <template v-if="auth.devAuthEnabled">
+        <template v-if="auth.iamConfigured">
+          <el-button class="feishu-login" type="primary" size="large" :loading="auth.isIAMInitializing" @click="retryIAM">重新连接公司 IAM</el-button>
+          <small>普通浏览器通过公司 IAM 自动登录，无需输入微光账号密码</small>
+        </template>
+        <template v-else>
+          <el-button class="feishu-login" type="primary" size="large" :loading="loading" @click="login('feishu')">使用飞书账号登录</el-button>
+        </template>
+        <template v-if="auth.devAuthEnabled && !auth.iamConfigured">
           <div class="login-divider"><span>本地开发演示</span></div>
           <div class="demo-actions">
             <el-button :icon="UserFilled" @click="login('admin')">管理员</el-button>

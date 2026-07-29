@@ -16,6 +16,8 @@ type Memory struct {
 	mu                     sync.RWMutex
 	users                  map[string]domain.User
 	openIDs                map[string]string
+	iamUserIDs             map[int64]string
+	feishuUserIDs          map[string]string
 	conversations          map[string]domain.Conversation
 	messages               map[string][]domain.Message
 	messageFeedback        map[string]bool
@@ -59,6 +61,7 @@ func NewMemory(defaultConfig domain.AgentConfig) *Memory {
 	config := domain.AgentConfigVersion{ID: ids.New("cfg"), Version: 1, Status: "published", Config: defaultConfig, CreatedBy: admin.ID, CreatedAt: now, PublishedAt: &now}
 	return &Memory{
 		users: map[string]domain.User{admin.ID: admin, employee.ID: employee}, openIDs: map[string]string{admin.FeishuOpenID: admin.ID, employee.FeishuOpenID: employee.ID},
+		iamUserIDs: map[int64]string{}, feishuUserIDs: map[string]string{},
 		conversations: map[string]domain.Conversation{}, messages: map[string][]domain.Message{}, messageFeedback: map[string]bool{}, conversationContexts: map[string]domain.ConversationContext{}, conversationBindings: map[string]domain.ConversationBinding{}, sources: map[string]domain.KnowledgeSource{}, documents: map[string]domain.Document{},
 		configs: []domain.AgentConfigVersion{config}, agentProfiles: map[string]domain.AgentProfile{}, notifications: map[string]domain.NotificationDraft{}, notificationDeliveries: map[string]string{},
 		reminders: map[string]domain.Reminder{}, reminderActions: map[string]domain.ReminderActionDraft{}, reminderDeliveries: map[string]domain.ReminderDelivery{},
@@ -106,6 +109,71 @@ func (m *Memory) UpsertUser(_ context.Context, user domain.User) (domain.User, e
 	}
 	m.users[user.ID] = user
 	m.openIDs[user.FeishuOpenID] = user.ID
+	if user.IAMUserID != nil {
+		m.iamUserIDs[*user.IAMUserID] = user.ID
+	}
+	if user.FeishuUserID != "" {
+		m.feishuUserIDs[user.FeishuUserID] = user.ID
+	}
+	return user, nil
+}
+
+func (m *Memory) UpsertIAMUser(_ context.Context, user domain.User) (domain.User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if user.IAMUserID == nil || *user.IAMUserID <= 0 || user.FeishuOpenID == "" || user.FeishuUserID == "" {
+		return domain.User{}, ErrConflict
+	}
+	iamUserID := *user.IAMUserID
+	iamOwner, hasIAMOwner := m.iamUserIDs[iamUserID]
+	openIDOwner, hasOpenIDOwner := m.openIDs[user.FeishuOpenID]
+	feishuUserIDOwner, hasFeishuUserIDOwner := m.feishuUserIDs[user.FeishuUserID]
+	targetID := openIDOwner
+	if targetID == "" {
+		targetID = iamOwner
+	}
+	if targetID == "" {
+		targetID = feishuUserIDOwner
+	}
+	for _, owner := range []struct {
+		id      string
+		present bool
+	}{{iamOwner, hasIAMOwner}, {openIDOwner, hasOpenIDOwner}, {feishuUserIDOwner, hasFeishuUserIDOwner}} {
+		if owner.present && targetID != "" && owner.id != targetID {
+			return domain.User{}, ErrConflict
+		}
+	}
+	if targetID != "" {
+		existing := m.users[targetID]
+		if existing.FeishuOpenID != "" && existing.FeishuOpenID != user.FeishuOpenID {
+			return domain.User{}, ErrConflict
+		}
+		if existing.IAMUserID != nil && *existing.IAMUserID != iamUserID {
+			return domain.User{}, ErrConflict
+		}
+		if existing.FeishuUserID != "" && existing.FeishuUserID != user.FeishuUserID {
+			return domain.User{}, ErrConflict
+		}
+		user.ID = existing.ID
+		user.Roles = existing.Roles
+		if len(user.Roles) == 0 {
+			user.Roles = []domain.Role{domain.RoleEmployee}
+		}
+	} else {
+		if user.ID == "" {
+			user.ID = ids.New("usr")
+		}
+		if len(user.Roles) == 0 {
+			user.Roles = []domain.Role{domain.RoleEmployee}
+		}
+	}
+	if user.Status == "" {
+		user.Status = "active"
+	}
+	m.users[user.ID] = user
+	m.openIDs[user.FeishuOpenID] = user.ID
+	m.iamUserIDs[iamUserID] = user.ID
+	m.feishuUserIDs[user.FeishuUserID] = user.ID
 	return user, nil
 }
 
@@ -130,6 +198,15 @@ func (m *Memory) GetUserByOpenID(_ context.Context, openID string) (domain.User,
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	id, ok := m.openIDs[openID]
+	if !ok {
+		return domain.User{}, ErrNotFound
+	}
+	return m.users[id], nil
+}
+func (m *Memory) GetUserByIAMID(_ context.Context, iamUserID int64) (domain.User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	id, ok := m.iamUserIDs[iamUserID]
 	if !ok {
 		return domain.User{}, ErrNotFound
 	}

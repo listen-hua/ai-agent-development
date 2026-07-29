@@ -4,53 +4,66 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>知行 · 公司内部行政 AI Agent 技术知识与选型详解</title>
+  <title>微光 Shimmer · 公司内部 AI Agent 平台技术栈与实现原理</title>
   <style>
     :root {
       --ink: #182235;
-      --muted: #637087;
+      --muted: #667287;
       --line: #dfe5ee;
       --soft: #f5f7fb;
       --blue: #315bd7;
       --blue-soft: #edf2ff;
       --green: #16785c;
+      --green-soft: #ecfaf5;
       --amber: #a46015;
+      --amber-soft: #fff7e9;
+      --purple: #7451a4;
+      --purple-soft: #f6f1fb;
+      --red: #b74a4a;
       --paper: #fff;
       --shadow: 0 18px 50px rgba(27, 45, 78, .09);
     }
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
-    body { margin: 0; background: #eef2f7; color: var(--ink); font: 15px/1.85 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif; }
+    body { margin: 0; background: #eef2f7; color: var(--ink); font: 15px/1.82 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif; }
     a { color: var(--blue); text-decoration: none; }
     a:hover { text-decoration: underline; }
-    .document { width: min(1180px, calc(100% - 32px)); margin: 28px auto 60px; background: var(--paper); border-radius: 22px; box-shadow: var(--shadow); overflow: hidden; }
-    .hero { padding: 64px 70px 54px; color: white; background: radial-gradient(circle at 80% 12%, rgba(108,145,255,.42), transparent 28%), linear-gradient(135deg, #15264f 0%, #213b83 58%, #315bd7 100%); }
+    .document { width: min(1240px, calc(100% - 32px)); margin: 28px auto 60px; overflow: hidden; border-radius: 22px; background: var(--paper); box-shadow: var(--shadow); }
+    .hero { padding: 66px 72px 56px; color: white; background: radial-gradient(circle at 83% 15%, rgba(125,159,255,.46), transparent 29%), radial-gradient(circle at 12% 92%, rgba(117,86,169,.32), transparent 28%), linear-gradient(135deg, #14254d 0%, #213b83 58%, #315bd7 100%); }
     .hero .kicker { margin: 0 0 12px; letter-spacing: .18em; font-size: 12px; opacity: .78; }
-    .hero h1 { max-width: 820px; margin: 0; font-size: clamp(32px, 5vw, 54px); line-height: 1.18; letter-spacing: -.035em; }
-    .hero .lead { max-width: 760px; margin: 22px 0 0; color: rgba(255,255,255,.82); font-size: 17px; }
+    .hero h1 { max-width: 920px; margin: 0; font-size: clamp(32px, 5vw, 54px); line-height: 1.18; letter-spacing: -.035em; }
+    .hero .lead { max-width: 850px; margin: 22px 0 0; color: rgba(255,255,255,.84); font-size: 17px; }
     .hero-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 30px; }
     .hero-meta span { padding: 7px 12px; border: 1px solid rgba(255,255,255,.2); border-radius: 99px; background: rgba(255,255,255,.08); font-size: 12px; }
-    .layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); }
-    .toc { align-self: start; position: sticky; top: 0; max-height: 100vh; overflow: auto; padding: 32px 24px 40px 32px; border-right: 1px solid var(--line); background: #fbfcfe; }
+    .layout { display: grid; grid-template-columns: 282px minmax(0, 1fr); }
+    .toc { position: sticky; top: 0; align-self: start; max-height: 100vh; overflow: auto; padding: 32px 22px 40px 30px; border-right: 1px solid var(--line); background: #fbfcfe; scrollbar-width: thin; scrollbar-color: #bdc8db transparent; }
+    .toc::-webkit-scrollbar { width: 7px; }
+    .toc::-webkit-scrollbar-thumb { border: 2px solid #fbfcfe; border-radius: 99px; background: #bdc8db; }
     .toc strong { display: block; margin-bottom: 13px; color: #2f3d56; font-size: 12px; letter-spacing: .12em; }
     .toc ol { margin: 0; padding: 0; list-style: none; counter-reset: item; }
     .toc li { counter-increment: item; }
-    .toc a { display: block; padding: 6px 8px; border-radius: 7px; color: #637087; font-size: 12px; line-height: 1.45; }
+    .toc a { display: block; padding: 6px 8px; border-radius: 7px; color: #637087; font-size: 12px; line-height: 1.42; }
     .toc a::before { content: counter(item, decimal-leading-zero) "  "; color: #a0a9b8; font-variant-numeric: tabular-nums; }
     .toc a:hover { background: var(--blue-soft); color: var(--blue); text-decoration: none; }
-    main { min-width: 0; padding: 44px 58px 80px; }
-    section { scroll-margin-top: 22px; margin: 0 0 56px; }
+    main { min-width: 0; padding: 46px 60px 82px; }
+    section { scroll-margin-top: 22px; margin: 0 0 58px; }
     h2 { margin: 0 0 22px; padding-bottom: 12px; border-bottom: 1px solid var(--line); font-size: 26px; line-height: 1.35; letter-spacing: -.02em; }
     h3 { margin: 30px 0 10px; color: #2c3b58; font-size: 18px; line-height: 1.5; }
+    h4 { margin: 20px 0 7px; color: #41506a; font-size: 14px; }
     p { margin: 10px 0; }
     ul, ol { padding-left: 24px; }
     li + li { margin-top: 5px; }
-    .intro { font-size: 16px; color: #3f4d64; }
+    code { padding: 2px 6px; border-radius: 5px; background: #eef2f7; color: #34476d; font: 12px/1.6 Consolas, "SFMono-Regular", monospace; }
+    pre { margin: 17px 0; padding: 18px 20px; overflow: auto; border-radius: 12px; background: #111b2d; color: #dbe6ff; font: 12px/1.75 Consolas, "SFMono-Regular", monospace; }
+    pre code { padding: 0; background: transparent; color: inherit; }
+    .intro { color: #3f4d64; font-size: 16px; }
+    .caption { color: var(--muted); font-size: 12px; }
     .callout { margin: 22px 0; padding: 16px 18px; border-left: 4px solid var(--blue); border-radius: 0 10px 10px 0; background: var(--blue-soft); color: #314262; }
-    .callout.warn { border-left-color: #d78b26; background: #fff7e9; color: #69471c; }
-    .callout.good { border-left-color: #25a37a; background: #ecfaf5; color: #225d4c; }
+    .callout.warn { border-left-color: #d78b26; background: var(--amber-soft); color: #69471c; }
+    .callout.good { border-left-color: #25a37a; background: var(--green-soft); color: #225d4c; }
+    .callout.purple { border-left-color: var(--purple); background: var(--purple-soft); color: #544068; }
     .architecture { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 24px 0; }
-    .architecture article { min-height: 118px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--soft); }
+    .architecture article { min-height: 122px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--soft); }
     .architecture article:nth-child(1) { background: #f4f7ff; }
     .architecture article:nth-child(2) { background: #f3fbf8; }
     .architecture article:nth-child(3) { background: #fff8ed; }
@@ -59,14 +72,13 @@
     .architecture span { color: var(--muted); font-size: 12px; line-height: 1.6; }
     .flow { margin: 18px 0; padding: 18px; border: 1px dashed #b8c5dc; border-radius: 12px; background: #fbfcff; color: #42516c; font-weight: 600; text-align: center; }
     .flow b { color: var(--blue); }
+    .flow.multiline { text-align: left; font-weight: 500; }
+    .flow.multiline div + div { margin-top: 7px; }
     .table-wrap { margin: 20px 0; overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
     th { background: #f3f6fb; color: #40506a; white-space: nowrap; }
     tr:last-child td { border-bottom: 0; }
-    code { padding: 2px 6px; border-radius: 5px; background: #eef2f7; color: #34476d; font: 12px/1.6 Consolas, "SFMono-Regular", monospace; }
-    pre { margin: 17px 0; padding: 18px 20px; overflow: auto; border-radius: 12px; background: #111b2d; color: #dbe6ff; font: 12px/1.75 Consolas, "SFMono-Regular", monospace; }
-    pre code { padding: 0; background: transparent; color: inherit; }
     .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 18px 0; }
     .compare article { padding: 16px 18px; border: 1px solid var(--line); border-radius: 11px; }
     .compare article:first-child { background: #eff9f5; }
@@ -76,8 +88,29 @@
     .key-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 0; list-style: none; counter-reset: key; }
     .key-list li { counter-increment: key; position: relative; margin: 0; padding: 15px 16px 15px 50px; border: 1px solid var(--line); border-radius: 11px; background: #fbfcfe; }
     .key-list li::before { content: counter(key); position: absolute; left: 15px; top: 14px; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--blue); color: white; font-size: 11px; font-weight: 700; }
-    .footer { padding: 28px 58px; border-top: 1px solid var(--line); background: #f8fafc; color: var(--muted); font-size: 12px; }
-    @media (max-width: 900px) {
+    .feature-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+    .feature-grid article { padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: #fbfcfe; }
+    .feature-grid strong { display: block; margin-bottom: 6px; color: #31415d; }
+    .feature-grid p { margin: 0; color: var(--muted); font-size: 12px; }
+    .decision { margin: 18px 0; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; }
+    .decision > header { display: flex; align-items: center; gap: 9px; padding: 11px 15px; background: #f3f6fb; color: #34435f; font-weight: 700; }
+    .decision > header span { padding: 2px 8px; border-radius: 99px; background: var(--blue); color: white; font-size: 10px; }
+    .decision > div { display: grid; grid-template-columns: 1fr 1fr; }
+    .decision article { padding: 14px 16px; }
+    .decision article + article { border-left: 1px solid var(--line); }
+    .decision h4 { margin: 0 0 6px; }
+    .decision p { margin: 0; color: var(--muted); font-size: 13px; }
+    .tag { display: inline-block; margin: 2px 3px 2px 0; padding: 2px 8px; border-radius: 99px; background: #edf2ff; color: #3156c6; font-size: 11px; }
+    .tag.green { background: #eaf8f2; color: #197457; }
+    .tag.purple { background: #f3edf9; color: #674590; }
+    .tag.amber { background: #fff3df; color: #94601f; }
+    .status { display: inline-flex; align-items: center; gap: 6px; color: var(--green); font-size: 12px; font-weight: 700; }
+    .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #27a379; }
+    details { margin: 12px 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: #fbfcfe; }
+    summary { padding: 12px 15px; cursor: pointer; color: #35445f; font-weight: 700; }
+    details > div { padding: 0 15px 15px; color: var(--muted); }
+    .footer { padding: 28px 60px; border-top: 1px solid var(--line); background: #f8fafc; color: var(--muted); font-size: 12px; }
+    @media (max-width: 960px) {
       .document { width: 100%; margin: 0; border-radius: 0; }
       .hero { padding: 46px 28px 38px; }
       .layout { display: block; }
@@ -85,25 +118,27 @@
       .toc ol { columns: 2; }
       main { padding: 34px 28px 64px; }
       .architecture { grid-template-columns: 1fr 1fr; }
+      .feature-grid { grid-template-columns: 1fr 1fr; }
     }
-    @media (max-width: 600px) {
+    @media (max-width: 620px) {
       .toc ol { columns: 1; }
-      .architecture, .compare, .key-list { grid-template-columns: 1fr; }
+      .architecture, .compare, .key-list, .feature-grid, .decision > div { grid-template-columns: 1fr; }
+      .decision article + article { border-top: 1px solid var(--line); border-left: 0; }
       main { padding: 30px 20px 52px; }
       h2 { font-size: 23px; }
     }
     @media print {
       @page { size: A4; margin: 16mm; }
       body { background: white; font-size: 10.5pt; }
-      .document { width: 100%; margin: 0; box-shadow: none; border-radius: 0; }
+      .document { width: 100%; margin: 0; border-radius: 0; box-shadow: none; }
       .hero { padding: 20mm 14mm; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
       .layout { display: block; }
       .toc { position: static; max-height: none; padding: 12mm 0; border: 0; page-break-after: always; }
       .toc ol { columns: 2; }
       main { padding: 0; }
       section { margin-bottom: 12mm; }
-      h2, h3 { break-after: avoid-page; }
-      pre, table, .callout, .architecture article, .compare article, .key-list li { break-inside: avoid; }
+      h2, h3, h4 { break-after: avoid-page; }
+      pre, table, .callout, .architecture article, .compare article, .key-list li, .feature-grid article, .decision { break-inside: avoid; }
       .footer { padding: 10mm 0 0; }
     }
   </style>
@@ -111,313 +146,543 @@
 <body>
   <article class="document">
     <header class="hero">
-      <p class="kicker">INTERNAL AI AGENT · TECHNICAL GUIDE</p>
-      <h1>知行：公司内部行政 AI Agent 技术知识与选型详解</h1>
-      <p class="lead">从企业身份、权限、知识库、RAG、飞书集成到可靠提醒调度，解释项目用到的核心技术、为什么采用这些方案，以及什么情况下应该更换方案。</p>
-      <div class="hero-meta"><span>Vue 3 + TypeScript</span><span>Go</span><span>PostgreSQL + pgvector</span><span>阿里云百炼</span><span>飞书 H5 + 机器人</span><span>Docker Compose</span></div>
+      <p class="kicker">SHIMMER · INTERNAL AI AGENT PLATFORM</p>
+      <h1>微光 Shimmer：公司内部 AI Agent 平台技术栈与功能实现原理</h1>
+      <p class="lead">基于当前项目代码梳理，不只列出“用了什么”，还解释每个功能如何落地、为什么采用这种方式，以及在什么条件下才值得更换为其他方案。</p>
+      <div class="hero-meta">
+        <span>Vue 3 + TypeScript</span><span>Go 1.25</span><span>PostgreSQL 17 + pgvector</span>
+        <span>阿里云百炼</span><span>飞书 H5 + 机器人</span><span>会议室预约</span>
+        <span>多轮上下文</span><span>AI 生图 + 无限画布</span><span>Docker Compose</span>
+      </div>
     </header>
 
     <div class="layout">
       <nav class="toc" aria-label="目录">
         <strong>目录</strong>
         <ol>
-          <li><a href="#overview">整体认知</a></li>
-          <li><a href="#selection">主要技术选型</a></li>
-          <li><a href="#frontend">Vue 3 与前端架构</a></li>
-          <li><a href="#backend">Go 后端</a></li>
-          <li><a href="#monolith">模块化单体</a></li>
-          <li><a href="#repository">Repository 与 SQL</a></li>
-          <li><a href="#database">PostgreSQL 与 pgvector</a></li>
-          <li><a href="#rag">RAG 完整链路</a></li>
-          <li><a href="#model">阿里云百炼与模型分工</a></li>
-          <li><a href="#stream">SSE 流式输出</a></li>
-          <li><a href="#identity">飞书免登与会话</a></li>
-          <li><a href="#permission">RBAC 与 ACL</a></li>
-          <li><a href="#feishu">飞书长连接</a></li>
-          <li><a href="#reminder">个人提醒系统</a></li>
-          <li><a href="#files">MinIO、Tika、ClamAV</a></li>
-          <li><a href="#deployment">Docker Compose 与 Nginx</a></li>
-          <li><a href="#redis">Redis 当前定位</a></li>
-          <li><a href="#versioning">配置与版本治理</a></li>
-          <li><a href="#testing">测试体系</a></li>
-          <li><a href="#gaps">当前实现边界</a></li>
-          <li><a href="#principles">核心思想总结</a></li>
+          <li><a href="#scope">项目定位与边界</a></li>
+          <li><a href="#architecture">整体架构</a></li>
+          <li><a href="#stack">技术栈总表</a></li>
+          <li><a href="#frontend">前端架构</a></li>
+          <li><a href="#backend">Go 后端与 Worker</a></li>
+          <li><a href="#data">数据基础设施</a></li>
+          <li><a href="#identity">飞书免登</a></li>
+          <li><a href="#permission">RBAC 与组织 ACL</a></li>
+          <li><a href="#knowledge">制度资料入库</a></li>
+          <li><a href="#rag">RAG 制度问答</a></li>
+          <li><a href="#context">多轮上下文引擎</a></li>
+          <li><a href="#stream">AI 流式回答</a></li>
+          <li><a href="#bot">飞书机器人与长连接</a></li>
+          <li><a href="#reminder">个人提醒</a></li>
+          <li><a href="#notification">通知中心</a></li>
+          <li><a href="#meeting">智能会议室预约</a></li>
+          <li><a href="#agent-config">Agent 与模型配置</a></li>
+          <li><a href="#image-agent">AI 生图 Agent</a></li>
+          <li><a href="#canvas">无限画布</a></li>
+          <li><a href="#security">安全设计</a></li>
+          <li><a href="#deployment">部署与网络</a></li>
+          <li><a href="#testing">测试与可观测性</a></li>
+          <li><a href="#boundaries">当前边界</a></li>
+          <li><a href="#evolution">何时更换架构</a></li>
+          <li><a href="#principles">设计原则总结</a></li>
         </ol>
       </nav>
 
       <main>
-        <section id="overview">
-          <h2>一、先建立整体认知</h2>
-          <p class="intro">这个项目不是简单的聊天机器人，而是四类系统的组合：企业身份与权限、制度知识库与 RAG、飞书 H5 与机器人、可靠提醒与通知。</p>
+        <section id="scope">
+          <h2>一、项目定位与边界</h2>
+          <p class="intro">这个项目已经不是单一的“制度聊天机器人”，而是一套嵌入飞书的公司内部行政 AI 平台。它同时处理身份、组织权限、制度知识、行政任务、可靠消息投递、会议室资源和图片生产。</p>
           <div class="architecture">
-            <article><strong>用户入口</strong><span>飞书 H5、普通浏览器、机器人私聊、群内 @ 机器人。</span></article>
-            <article><strong>业务服务</strong><span>Go API 负责身份、对话、知识库、配置、通知与飞书长连接。</span></article>
-            <article><strong>数据与 AI</strong><span>PostgreSQL、pgvector、MinIO、Tika、ClamAV 和阿里云百炼。</span></article>
-            <article><strong>后台任务</strong><span>独立 Go Worker 调度提醒、处理重试、幂等和 90 天历史清理。</span></article>
+            <article><strong>制度助手</strong><span>上传或同步制度，按员工权限检索，生成带版本和原文引用的回答。</span></article>
+            <article><strong>行政执行</strong><span>个人提醒、工作日历、通知中心、会议室预约、取消、改期和会后归还提醒。</span></article>
+            <article><strong>飞书集成</strong><span>H5 免登、通讯录、云空间、Wiki、机器人长连接、消息卡片和日历接口。</span></article>
+            <article><strong>AI 生图</strong><span>多中转站、多模型、项目权限、异步生成、参考图和持久化无限画布。</span></article>
           </div>
-          <div class="flow">员工 → 飞书 H5 / 机器人 → Nginx / 长连接 → Go API → 权限过滤 → 检索与模型 → SSE / 飞书卡片</div>
-          <div class="callout good">项目采用“模块化单体 + 独立 Worker”。它保留了简单部署和本地事务，又通过清晰模块边界为未来拆分服务留出空间。</div>
+          <div class="callout good"><strong>最关键的认识：</strong>大模型只负责“理解和生成”，权限判断、时间校验、资源占用、审批确认、幂等与补偿必须由确定性代码负责。这样才能把概率性的 AI 放进可审计的企业流程。</div>
+          <h3>当前明确不做的事</h3>
+          <p>系统没有把 AI 设成拥有无限工具权限的自主 Agent；不会让模型自行扩大收件人、绕过确认、读取未授权制度或直接猜测重名员工。AI 生图的“工作流”也只是入口占位，尚未实现多人协同节点编排。</p>
         </section>
 
-        <section id="selection">
-          <h2>二、主要技术选型概览</h2>
+        <section id="architecture">
+          <h2>二、整体架构：模块化单体 + 独立 Worker</h2>
+          <div class="flow multiline">
+            <div><b>H5 链路：</b>飞书工作台 → Nginx → Vue 单页应用 → Go API → PostgreSQL / MinIO / Redis / 阿里云或图片中转站</div>
+            <div><b>机器人链路：</b>飞书 WebSocket 长连接 → Go 事件处理 → 数据库任务或对话运行 → 飞书消息卡片</div>
+            <div><b>异步链路：</b>Go Worker → 领取到期任务 → 外部 API → 幂等记录、重试或人工告警</div>
+          </div>
+          <h3>为什么采用模块化单体</h3>
+          <p>当前规模预期不超过约 1,000 名员工、10,000 份文档和 30 路峰值问答。此时最昂贵的通常是外部模型调用和文档处理，不是单体进程本身。将身份、知识库、对话、提醒、通知、会议和生图放在一个 Go 代码库中，可以共享领域类型、事务、权限和审计规则，部署也更简单。</p>
+          <div class="decision">
+            <header><span>选型</span>模块化单体，而不是一开始拆微服务</header>
+            <div>
+              <article><h4>当前方案的收益</h4><p>跨模块事务简单；本地开发容易；接口和 DTO 不必跨仓库同步；两台服务器即可部署；出现问题时日志链路较短。</p></article>
+              <article><h4>没有选微服务的原因</h4><p>微服务会提前引入服务发现、分布式追踪、跨服务鉴权、消息一致性和版本治理，而首期业务量不足以抵消这些成本。</p></article>
+            </div>
+          </div>
+          <p>项目仍把 API 与 Worker 分成两个进程：API 追求低延迟，Worker 负责同步、解析、提醒、会议室会后消息和生图等耗时任务。两者共享代码和数据库，但故障域与资源占用相对隔离。</p>
+        </section>
+
+        <section id="stack">
+          <h2>三、技术栈总表</h2>
           <div class="table-wrap"><table>
-            <thead><tr><th>领域</th><th>当前选择</th><th>选择原因</th><th>没有优先选择的方案</th></tr></thead>
+            <thead><tr><th>层次</th><th>当前技术</th><th>主要职责</th><th>选择理由</th></tr></thead>
             <tbody>
-              <tr><td>前端</td><td>Vue 3 + TypeScript</td><td>适合企业后台和 H5，团队上手快，类型明确</td><td>React 也可行，但当前没有明显收益</td></tr>
-              <tr><td>构建</td><td>Vite</td><td>启动、热更新和生产构建速度快</td><td>Webpack 配置更重</td></tr>
-              <tr><td>UI</td><td>Element Plus</td><td>表格、表单、弹窗、上传能力完整</td><td>自研组件成本高</td></tr>
-              <tr><td>后端</td><td>Go 1.25 + net/http</td><td>并发、资源、部署和稳定性平衡</td><td>Node 快但运行时约束更多；Java 对首期偏重</td></tr>
-              <tr><td>数据库</td><td>PostgreSQL 17</td><td>事务、JSONB、全文、审计和任务锁都适合</td><td>MySQL 缺少同等自然的向量与 JSONB 组合</td></tr>
-              <tr><td>向量检索</td><td>pgvector</td><td>业务和向量共库，权限与版本可在同一查询过滤</td><td>Milvus 对当前规模运维过重</td></tr>
-              <tr><td>对象存储</td><td>MinIO</td><td>自建、S3 兼容、便于备份和迁移 OSS</td><td>本地目录不适合多实例；数据库 BLOB 会膨胀</td></tr>
-              <tr><td>文档解析</td><td>Apache Tika</td><td>一个服务覆盖多种 Office/PDF 格式</td><td>逐格式维护解析库成本高</td></tr>
-              <tr><td>模型</td><td>阿里云百炼</td><td>中文、国内网络、企业模型矩阵和合规边界较适合</td><td>不把业务写死在单一接口，通过 Provider 隔离</td></tr>
-              <tr><td>浏览器流</td><td>SSE</td><td>AI Token 是服务端单向推送，HTTP 语义足够</td><td>WebSocket 对此场景复杂度更高</td></tr>
-              <tr><td>部署</td><td>Docker Compose</td><td>当前 1～2 台服务器规模下易部署、易排错</td><td>Kubernetes 暂无与其复杂度匹配的收益</td></tr>
+              <tr><td>前端框架</td><td>Vue 3.5 + TypeScript 5.8</td><td>员工端、管理端、聊天、画布</td><td>组合式 API 适合拆分复杂页面，TS 约束 API 数据结构</td></tr>
+              <tr><td>构建与路由</td><td>Vite 7、Vue Router 4</td><td>构建、按路由懒加载、RBAC 路由</td><td>开发反馈快，资源哈希与浏览器缓存策略清晰</td></tr>
+              <tr><td>状态与 UI</td><td>Pinia 3、Element Plus</td><td>登录/会话状态、表格表单弹窗</td><td>企业后台组件成熟，减少低价值 UI 重造</td></tr>
+              <tr><td>画布</td><td>Vue Flow + Background/Controls/MiniMap</td><td>节点、坐标、缩放、平移、小地图</td><td>天然提供无限画布所需的空间交互模型</td></tr>
+              <tr><td>后端</td><td>Go 1.25、标准库 net/http</td><td>API、SSE、业务编排、Worker</td><td>并发模型简单、单文件部署、内存占用可控</td></tr>
+              <tr><td>数据库</td><td>PostgreSQL 17</td><td>业务数据、审计、任务队列、全文索引</td><td>事务、JSONB、行锁和扩展能力集中在一处</td></tr>
+              <tr><td>向量</td><td>pgvector</td><td>制度切片向量与相似度</td><td>检索和 ACL 可在同一 SQL 中完成</td></tr>
+              <tr><td>缓存/锁</td><td>Redis 7.4 + AOF</td><td>会议室时段分布式锁</td><td>跨 API 实例快速互斥，支持带过期时间的锁</td></tr>
+              <tr><td>对象存储</td><td>MinIO</td><td>原文件、通知图片、参考图、生成图</td><td>S3 兼容、自建可控、避免数据库 BLOB 膨胀</td></tr>
+              <tr><td>文档处理</td><td>Apache Tika 3.2、ClamAV 1.4</td><td>多格式提取、上传安全扫描</td><td>格式覆盖广；安全检查独立于业务解析</td></tr>
+              <tr><td>文本 AI</td><td>阿里云百炼 OpenAI 兼容接口</td><td>生成、Embedding、Rerank、上下文理解</td><td>中文与国内网络适配，模型职责可拆分</td></tr>
+              <tr><td>生图 AI</td><td>XGAPI、Comfly OpenAI 兼容中转站</td><td>Chat/Images 生图、反推描述</td><td>用统一协议屏蔽不同上游模型差异</td></tr>
+              <tr><td>飞书</td><td>官方 Go SDK + H5 SDK + OpenAPI</td><td>免登、长连接、消息、通讯录、云文档、日历</td><td>官方协议变化由 SDK 吸收，减少自维护风险</td></tr>
+              <tr><td>部署</td><td>Docker Compose + Nginx</td><td>服务编排、反向代理、SPA 与 SSE</td><td>适合 1～2 台内网服务器，运维门槛低</td></tr>
+              <tr><td>测试</td><td>Go test、Vitest、Vue Test Utils、Playwright</td><td>单元、组件和端到端测试</td><td>覆盖纯逻辑、组件行为和真实浏览器链路</td></tr>
             </tbody>
           </table></div>
         </section>
 
         <section id="frontend">
-          <h2>三、Vue 3、TypeScript 与前端架构</h2>
-          <h3>Vue 3 解决什么问题</h3>
-          <p>聊天页面需要处理消息追加、生成状态、引用到达、提醒确认、会话切换等大量响应式状态。Vue 的 <code>ref</code>、<code>computed</code> 和 Composition API 能把这些状态组织成可复用用例。</p>
-          <p>项目按职责拆分：路由页面负责组合，组件负责展示与交互，composable 负责业务状态，service 负责 HTTP/SSE，Pinia 只保存跨页面身份状态。</p>
-          <pre><code>views        路由级组合
-components   聊天、提醒、知识库等功能组件
-composables  页面用例与异步状态
-services     HTTP DTO、上传和 SSE
-stores       当前用户、角色、登录状态
-types        前后端共享概念的 TypeScript 类型</code></pre>
-          <h3>为什么选择 TypeScript</h3>
-          <p>项目包含用户角色、文档版本、ACL、提醒状态、SSE 事件和引用等复杂类型。TypeScript 能在构建阶段发现字段拼写、可空值和状态分支错误，显著降低前后端联调风险。</p>
-          <h3>为什么是 Pinia，而不是所有状态都全局化</h3>
-          <p>跨页面共享的身份信息进入 Pinia；聊天状态放在 <code>useChat</code>；弹窗和表单放在组件内部。这避免了全局 Store 变成难以维护的“大杂烩”。</p>
-          <h3>为什么使用 Element Plus</h3>
-          <p>后台包含大量表格、上传、日期、对话框和表单验证，使用成熟组件库比自研更可靠。代价是主包较大，后续可通过按需导入和手动分包优化。</p>
+          <h2>四、前端架构：一个 Vue 应用承载员工端和管理端</h2>
+          <p>同一个 Vue SPA 提供 <code>/chat</code>、<code>/reminders</code>、<code>/image-agent</code> 和多个 <code>/admin/*</code> 页面。路由懒加载减少飞书 WebView 首次下载体积；Pinia 保存跨页面的身份和会话状态；复杂页面继续拆成 feature component、composable、service 与 type。</p>
+          <div class="feature-grid">
+            <article><strong>Router</strong><p>根据身份判断是否登录，根据角色元数据决定能否进入管理路由；未知路由进入独立 404 页面。</p></article>
+            <article><strong>Service 层</strong><p>统一封装 REST 与 SSE，页面不直接拼接底层请求细节，避免 DTO 散落在组件里。</p></article>
+            <article><strong>组件拆分</strong><p>聊天消息、引用抽屉、ACL 编辑、会议卡片、富文本编辑器和画布节点均独立维护。</p></article>
+          </div>
+          <h3>为什么选 Vue 3 + TypeScript</h3>
+          <p>行政后台的复杂度主要来自表格、筛选、抽屉、表单、角色控制和多个异步状态，而不是极端 SEO 或跨端原生渲染。Vue 的响应式状态和单文件组件对此很合适；TypeScript 可以在编译阶段发现“后端新增字段但前端仍按旧结构访问”等问题。</p>
+          <div class="compare">
+            <article><strong>没有选 React 的原因</strong><p>React 同样能完成需求，但本项目不存在必须依赖 React 生态的能力；切换只会增加团队学习与迁移成本，不会改变系统核心安全性。</p></article>
+            <article><strong>没有选微前端的原因</strong><p>员工端和后台共享身份、设计系统与领域类型。当前团队和页面数量不足以支撑微前端带来的运行时隔离、依赖重复和发布协调成本。</p></article>
+          </div>
+          <h3>为什么使用 Element Plus，而不是全部自研</h3>
+          <p>管理系统的价值在业务规则，不在重复实现日期选择器、表格、分页、上传和无障碍键盘行为。Element Plus 提供可靠基础控件；项目再通过自定义布局和样式建立自己的视觉语言。无限画布是特殊交互，因此没有勉强使用后台组件库，而是单独采用 Vue Flow。</p>
         </section>
 
         <section id="backend">
-          <h2>四、为什么后端选择 Go</h2>
-          <p>系统多数工作是网络 I/O：调用模型、访问飞书、查询数据库、发送 SSE、上传 MinIO 和调用 Tika。Go 的 goroutine、<code>context.Context</code>、静态编译和较低资源占用非常适合这类长期运行服务。</p>
-          <div class="compare">
-            <article><strong>Go 的优势</strong><p>单二进制、启动快、并发模型简单、内存可控、部署轻、标准库完整。</p></article>
-            <article><strong>对应代价</strong><p>业务开发没有 Java 框架那么丰富，SQL 和错误处理更显式，需要团队保持工程规范。</p></article>
+          <h2>五、Go 后端：薄 HTTP 层、业务 Service、Repository 与 Integration</h2>
+          <div class="flow"><b>HTTP Handler</b> → 参数和身份 → <b>Service</b> → 业务规则 → <b>Repository / Integration</b> → PostgreSQL、飞书、模型与对象存储</div>
+          <p>HTTP 层只处理输入输出与中间件；Service 负责“能不能做、先做什么、失败如何补偿”；Repository 隔离 PostgreSQL；Integration 隔离飞书、阿里云、Tika、MinIO 和中转站协议。</p>
+          <h3>为什么使用标准库 net/http</h3>
+          <p>Go 新版路由已经支持方法和路径参数，项目接口规模也没有大到需要重型 Web 框架。标准库依赖少、行为透明，SSE 与中间件足够实现。若以后需要自动 OpenAPI 生成、复杂参数校验或大量插件，再评估 Echo、Gin 或代码生成框架更合理。</p>
+          <h3>为什么 API 和 Worker 分进程</h3>
+          <ul>
+            <li>文档解析、生图和外部消息发送可能持续数秒到数分钟，不应占住请求生命周期。</li>
+            <li>Worker 可以独立重启和扩容，外部模型拥堵不会直接拖垮登录与查询接口。</li>
+            <li>任务状态先入 PostgreSQL，页面刷新或进程重启后仍可恢复。</li>
+          </ul>
+          <div class="callout">“异步”不是简单地开一个 goroutine。重要任务必须先持久化，再由 Worker 领取；否则 API 进程重启会让内存中的提醒、生图或通知永久丢失。</div>
+        </section>
+
+        <section id="data">
+          <h2>六、数据基础设施：一套存储承担不同职责</h2>
+          <h3>PostgreSQL：系统事实来源</h3>
+          <p>用户、角色、组织属性、会话、文档版本、切片、配置、通知、提醒、会议预约、生图任务、画布和审计都以 PostgreSQL 为准。JSONB 用于配置、ACL 和扩展字段；事务用于版本发布、任务领取和状态流转；<code>FOR UPDATE SKIP LOCKED</code> 让多个 Worker 能并发领取任务而不重复处理。</p>
+          <h3>pgvector：向量与权限共库</h3>
+          <p>向量存放在制度切片行中。当前实现将向量相似度和 PostgreSQL 全文排名做加权，再在应用层按中文词命中做一次筛选排序，最后调用 Rerank。它并非独立向量数据库，也不是严格 RRF 实现。</p>
+          <div class="decision">
+            <header><span>选型</span>pgvector，而不是 Milvus、Qdrant 或 Elasticsearch</header>
+            <div>
+              <article><h4>为什么现在适合</h4><p>10,000 份文档规模下，共库可以在同一查询中先过滤已发布版本和用户 ACL，再计算相似度，避免向量系统返回无权限结果。</p></article>
+              <article><h4>为什么暂不拆</h4><p>独立向量库会增加双写、版本一致性、权限过滤、备份和运维。只有向量达到千万级、检索 QPS 很高或需要专用索引能力时收益才明显。</p></article>
+            </div>
           </div>
-          <h3>为什么不是 Node.js</h3>
-          <p>Node.js 适合快速原型，但 Worker、文件处理、长连接和多类后台任务在 Go 中更容易保持资源稳定。若团队全部是 TypeScript 工程师、目标只是快速验证，NestJS 也会是合理选择。</p>
-          <h3>为什么不是 Spring Boot</h3>
-          <p>Spring Boot 更适合大型组织和复杂中台，但当前首期规模下内存、启动、配置和部署成本偏高。未来若行政场景扩展成大型流程平台，可以重新评估。</p>
-          <h3>为什么直接使用 net/http</h3>
-          <p>Go 新版本标准路由已支持方法和路径参数，当前接口复杂度不要求 Gin。减少框架依赖意味着行为更透明；若未来需要 OpenAPI 自动生成、复杂绑定和大量中间件，再引入框架更合适。</p>
-        </section>
-
-        <section id="monolith">
-          <h2>五、模块化单体为什么优于首期微服务</h2>
-          <p>部署上是一个代码库，但代码按领域分为 <code>domain</code>、<code>service</code>、<code>store</code>、<code>model</code>、<code>integration</code>、<code>httpapi</code> 等模块。API 和 Worker 使用同一套领域与仓储代码，但编译成不同入口。</p>
-          <p>如果首期直接拆成身份、知识库、对话、通知、提醒、飞书网关六个服务，就会立刻引入服务发现、分布式事务、消息一致性、多套部署和链路追踪，而用户规模尚未带来对应收益。</p>
-          <div class="callout">微服务不是“更先进”的同义词。边界清晰的模块化单体通常是中小团队构建复杂业务的最佳起点。</div>
-        </section>
-
-        <section id="repository">
-          <h2>六、Repository 模式、依赖倒置与直接 SQL</h2>
-          <p>Service 不直接调用 PostgreSQL，而依赖 Repository 接口。项目提供内存实现和 PostgreSQL 实现，因此本地测试不必依赖数据库，业务逻辑也不会和 SQL 混在一起。</p>
-          <pre><code>type Repository interface {
-    GetUser(...)
-    SearchChunks(...)
-    CreateReminderAction(...)
-    ClaimReminderDeliveries(...)
-}</code></pre>
-          <p>项目没有使用 ORM，而是使用 <code>pgx</code> 和原生 SQL。原因是 pgvector 距离、JSONB ACL、全文检索、HNSW 和 <code>FOR UPDATE SKIP LOCKED</code> 都需要精确控制 SQL。ORM 会隐藏细节并增加调优难度。</p>
-          <p>直接 SQL 的代价是扫描字段和迁移需要人工维护，因此复杂查询应通过数据库集成测试保护。</p>
-        </section>
-
-        <section id="database">
-          <h2>七、PostgreSQL + pgvector</h2>
-          <p>PostgreSQL 同时保存用户、角色、文档、版本、ACL、切片、向量、会话、配置、通知、提醒、工作日历、审计和事件幂等记录。</p>
-          <h3>为什么不是独立向量数据库</h3>
-          <p>当前目标规模不超过约 10,000 份文档、1,000 名员工和 30 路并发。pgvector 可以让文档状态、ACL 和向量处于同一事务和同一 SQL 中，避免向量库与业务库双写不一致。</p>
-          <h3>为什么不是外部云向量库</h3>
-          <p>公司制度和元数据具有数据边界要求。自建 PostgreSQL 可以减少数据出域、供应商锁定和删除审计复杂度。</p>
-          <h3>什么时候应该迁移</h3>
-          <p>切片进入千万级、高并发检索影响事务、需要复杂分片或多模态向量大量增长时，再考虑 Milvus、Qdrant 或 OpenSearch。</p>
-        </section>
-
-        <section id="rag">
-          <h2>八、RAG 的完整工作原理</h2>
-          <div class="flow">上传 / 飞书同步 → 查毒 → 解析 → SHA-256 → MinIO → 切片 → Embedding → 草稿 → 发布 → 检索 → Rerank → 生成与引用</div>
-          <h3>原文件、哈希与版本</h3>
-          <p>原文件保存在 MinIO，数据库只保存对象键。SHA-256 根据内容判断是否变化：哈希相同说明内容未变，哈希不同则创建新草稿版本。新版本必须由管理员发布后才能进入普通问答。</p>
-          <h3>为什么要切片</h3>
-          <p>模型上下文有限，整份制度不能每次全部发送。当前按约 900 个 Unicode 字符切片，并保留约 120 字符重叠，避免完整规则刚好被截断。更高级的版本应按标题、段落和表格结构切分。</p>
-          <h3>Embedding 与 HNSW</h3>
-          <p>Embedding 将文本转换为 1024 维向量，让“年假怎么申请”和“带薪年休假流程”即使字面不同也能按语义匹配。HNSW 是近似最近邻索引，用极小的精度代价换取更快检索。</p>
-          <h3>为什么不能只有向量检索</h3>
-          <p>金额、制度编号、部门名和专有词更适合关键词检索。当前数据库排序大致为：</p>
-          <pre><code>综合分数 = 0.7 × 向量相似度 + 0.3 × PostgreSQL 全文分数</code></pre>
-          <p>随后应用层用中文词项和双字组合再次匹配，再调用 Rerank。当前是“加权混合检索”，不是严格 RRF；后续更稳健的实现应把向量 Top-K 和关键词 Top-K 分开召回，再用 RRF 按排名融合。</p>
-          <h3>Rerank 的意义</h3>
-          <p>Embedding 负责从大量切片快速召回，Rerank 同时阅读问题和候选片段，负责更精确排序。不能让 Rerank 直接扫描全部知识库，因为成本和延迟都太高。</p>
-          <h3>权限先于模型</h3>
-          <p>正确链路是“权限过滤 → 检索 → Rerank → 模型”。受限内容不能先进入模型再要求模型保密。当前在 SQL 和 Go 应用层执行双重 ACL 检查。</p>
-          <h3>Prompt Injection 与引用</h3>
-          <p>制度内容被标记为不可信资料，模型不得执行文档里的指令。但 Prompt 不是绝对安全边界，真正的边界仍然是 ACL、最小上下文、工具权限和审计。</p>
-          <p>引用对象来自本次授权召回结果，包含制度名、版本、章节、页码、摘录和来源链接。当前尚未做到逐结论引用覆盖校验，若目标是 100% 引用覆盖，还需解析答案引用编号、拒绝无效编号并检测冲突证据。</p>
-        </section>
-
-        <section id="model">
-          <h2>九、阿里云百炼与模型分工</h2>
-          <div class="table-wrap"><table>
-            <thead><tr><th>任务</th><th>模型</th><th>原因</th></tr></thead>
-            <tbody>
-              <tr><td>制度回答</td><td>qwen-plus</td><td>中文生成质量与成本平衡</td></tr>
-              <tr><td>向量生成</td><td>text-embedding-v4</td><td>专门输出稳定语义向量</td></tr>
-              <tr><td>候选精排</td><td>qwen3-rerank</td><td>比向量距离更精确判断问句与片段相关性</td></tr>
-              <tr><td>提醒结构化</td><td>qwen-flash</td><td>简单任务延迟低、成本低，支持 JSON Mode</td></tr>
-            </tbody>
-          </table></div>
-          <p>业务层只依赖统一 Provider 接口：<code>Generate</code>、<code>StreamGenerate</code>、<code>Embed</code>、<code>Rerank</code>。因此未来可以添加本地模型或其他 OpenAI 兼容服务，不需要重写知识库。</p>
-          <p>制度回答明确设置 <code>enable_search=false</code>，避免模型联网后混入非公司信息。</p>
-        </section>
-
-        <section id="stream">
-          <h2>十、为什么聊天使用 SSE</h2>
-          <p>SSE 适合服务端到浏览器的单向持续推送。当前发送 <code>status</code>、<code>delta</code>、<code>citation</code>、<code>done</code> 和 <code>error</code> 事件。</p>
-          <p>相对 WebSocket，SSE 基于普通 HTTP、调试简单、Nginx 支持成熟，而且 AI Token 流不需要高频双向通信。</p>
-          <p>前端另外使用文本流控制器平滑展示 chunk，因为模型一次返回的可能是一句话而不是单个字。</p>
-          <div class="callout warn">当前“停止生成”主要停止浏览器接收和本地动画，尚未真正取消阿里云上游请求。后续应维护 run_id 到 cancel function 的映射，并增加服务端取消接口。</div>
+          <h3>MinIO：大文件和图片</h3>
+          <p>数据库只保存对象键、元数据、哈希和权限关系，二进制内容放在 MinIO。相比本地目录，它更适合容器重建和后续多实例；相比直接把 BLOB 塞进 PostgreSQL，它不会让事务日志、备份和主库 IO 被大图片拖累。</p>
+          <h3>Redis：只用于真正需要的短期分布式协调</h3>
+          <p>当前明确使用 Redis 进行会议室时段锁：用带 TTL 的 <code>SET NX</code> 抢锁，并用校验锁值的 Lua 逻辑释放，防止误删别人的锁。提醒、通知和生图的持久任务领取则使用 PostgreSQL 行锁，因为这些任务必须可审计和可恢复。</p>
         </section>
 
         <section id="identity">
-          <h2>十一、飞书免登、内部 UUID 与 HttpOnly 会话</h2>
-          <div class="flow">H5 调用 tt.requestAuthCode → 一次性 code → Go API → 飞书换取身份 → 内部 User → HttpOnly Cookie</div>
-          <p>App Secret 永远只保存在服务端。浏览器得到的飞书 code 是一次性的，后端换取 open_id 后映射到内部 UUID。</p>
-          <p>业务实体使用内部 UUID，而不是直接把飞书 open_id 当主键，可以减少外部平台绑定，也便于未来接入其他协同平台。</p>
-          <p>会话 Cookie 使用 HMAC-SHA256 签名，配置 HttpOnly、SameSite=Lax，并在生产环境启用 Secure。相比 localStorage JWT，JavaScript 无法直接读取它，降低 XSS 窃取风险。</p>
-          <p>生产环境还应补充 Origin/Referer 校验、CSRF 防护、强制会话撤销和 Secret 轮换。</p>
+          <h2>七、飞书免密登录：身份由飞书证明，会话由本系统管理</h2>
+          <div class="flow">飞书 H5 SDK 获取临时 code → 后端用 App ID/Secret 换用户身份 → 同步组织资料 → 签发 HttpOnly Cookie → <code>/api/v1/me</code> 返回当前用户</div>
+          <p>前端优先调用飞书客户端提供的授权能力，失败时按兼容路径尝试另一种授权码接口。后端不相信前端直接传来的 <code>open_id</code>，而是使用一次性 code 向飞书换取身份。登录成功后签发 12 小时会话 Cookie，并设置 <code>HttpOnly</code>、<code>SameSite=Lax</code>，生产环境启用 <code>Secure</code>。</p>
+          <h3>为什么不把 Token 放 localStorage</h3>
+          <p>localStorage 可被页面中的恶意脚本读取；HttpOnly Cookie 对 JavaScript 不可见，能降低 XSS 直接窃取会话的风险。Cookie 方案需要处理 CSRF 与 SameSite，但同源 H5 + API 的结构正适合这一模式。</p>
+          <h3>超级管理员如何初始化</h3>
+          <p><code>BOOTSTRAP_SUPER_ADMIN_OPEN_IDS</code> 只用于冷启动。API 启动会为已存在用户补角色；尚未登录的用户在首次登录时获得角色。完成首位管理员初始化后应移除该环境变量，再从“用户与权限”页面分配其他管理员。</p>
         </section>
 
         <section id="permission">
-          <h2>十二、RBAC 与文档 ACL/ABAC</h2>
-          <h3>RBAC：控制能做什么</h3>
-          <p>角色包括员工、知识管理员、通知管理员、审计员和超级管理员。管理员角色必须显式授予，不根据“经理”“主管”等职务自动推导，因为职位不等于系统权限。</p>
-          <h3>ACL/ABAC：控制能看什么</h3>
-          <p>文档可根据部门、职务、职级、序列、人员类型、指定用户和后台角色限制。单个规则组内部为 AND，多个规则组之间为 OR。</p>
-          <pre><code>（财务部 AND 会计）
-OR
-（指定用户张三）</code></pre>
-          <p>RBAC 控制后台操作，ACL 控制数据可见范围，两者不能互相替代。</p>
+          <h2>八、权限体系：RBAC 管功能，组织 ACL 管数据</h2>
+          <h3>RBAC：决定可以操作什么</h3>
+          <p>角色包括员工、知识管理员、通知管理员、生图管理员、审计员和超级管理员。前端隐藏无权限菜单以改善体验，后端对每个管理接口再次校验角色。前端路由守卫不是安全边界，因为用户可以绕过页面直接调用 API。</p>
+          <h3>组织 ACL：决定可以看到哪份制度或哪个项目</h3>
+          <p>登录或组织事件同步后，本地用户保存飞书部门、职位、职级、序列、员工类型和人员 ID。ACL 规则支持这些维度。一个规则内部不同维度是 AND，同一维度多个值是 OR；多条规则之间是 OR。例如：</p>
+          <pre><code>规则 A：部门 ∈ {财务部, 审计部} AND 职位 ∈ {会计}
+规则 B：指定人员 ∈ {张三}
+最终可见 = 规则 A 命中 OR 规则 B 命中</code></pre>
+          <p>检索时先在 SQL 中过滤，再用领域对象的 <code>ACL.Allows(user)</code> 二次防御。超级管理员可以绕过文档 ACL用于治理，但普通员工无法通过猜文件名、引用 ID 或历史会话越权。</p>
+          <div class="decision">
+            <header><span>选型</span>RBAC + ABAC/ACL 混合，而不是只用角色</header>
+            <div>
+              <article><h4>为什么要混合</h4><p>后台能力适合少量稳定角色；制度可见范围经常按部门、职位或人员变化，仅靠角色会产生大量“财务会计制度读者”式角色。</p></article>
+              <article><h4>为什么不实时依赖飞书文件权限</h4><p>飞书源权限只表示应用能否读取源文件，不能直接等价为员工在 AI 中的可见范围；内部发布流程也需要独立、可审计的权限快照。</p></article>
+            </div>
+          </div>
         </section>
 
-        <section id="feishu">
-          <h2>十三、为什么飞书事件使用 WebSocket 长连接</h2>
-          <p>长连接不需要开发电脑具备公网 HTTPS 地址，官方 SDK 负责连接和重连，适合开发环境和当前部署方式。HTTP 回调则需要公网网关、证书、验签和解密，接入成本更高。</p>
-          <p>项目通过数据库中的 event_id 幂等记录防止飞书重复事件造成重复回复或重复任务。</p>
-          <p>未来多 API 副本运行时仍必须保留数据库幂等，不能依赖单进程内存去重。</p>
+        <section id="knowledge">
+          <h2>九、制度资料入库：从“不可信文件”到“可发布证据”</h2>
+          <div class="flow multiline">
+            <div><b>上传：</b>文件 → 大小/MIME 校验 → ClamAV → MinIO → Tika → 切片 → Embedding → 草稿版本</div>
+            <div><b>飞书同步：</b>资料源 Token → 递归 Drive/Wiki → 解析真实对象 → 下载/导出 → 哈希比对 → 新草稿版本</div>
+            <div><b>上线：</b>管理员检查内容与 ACL → 发布新版本 → 旧版本下线 → 新会话立即检索新版本</div>
+          </div>
+          <h3>上传与解析</h3>
+          <p>普通文本和 Markdown 可直接读取；PDF、DOCX、PPTX、XLSX、HTML 等交给 Tika。上传前由 ClamAV 扫描，原文件通过对象键存入 MinIO，解析后的文本切片和向量写入 PostgreSQL。切片保留文档、版本、顺序、标题、页码和正文，为引用回溯提供结构。</p>
+          <h3>为什么先查毒再解析</h3>
+          <p>解析器面对的是外部输入，历史上 Office、PDF 和压缩格式都可能触发解析漏洞。先限制大小和类型，再查毒，最后交给 Tika，能缩小攻击面。ClamAV 不是万能沙箱，但比“直接让业务进程解析任何文件”更稳妥。</p>
+          <h3>飞书云空间与 Wiki</h3>
+          <p>资料源支持云空间文件夹和 Wiki 根节点。Wiki 页面先解析 <code>obj_token</code> 与 <code>obj_type</code>，再按 Docx、Sheet、Bitable 或普通文件读取/导出；递归遍历子节点。后台选择的部门来自飞书公司组织架构同步结果，而不是手工写死。</p>
+          <h3>为什么同步后是“待发布”</h3>
+          <p>同步只证明源文件发生变化，不证明内容、解析质量、生效日期和 ACL 已经正确。新版本先进入草稿，管理员确认后发布；发布新版本时旧版本下线。这避免飞书里一次误编辑立即污染所有员工问答。</p>
+          <h3>增量与失权处理</h3>
+          <p>系统按远程 Token 定位文档，以 SHA-256/版本校验识别未变化内容；Worker 周期性同步，也支持手动触发。源文件删除或应用失去读取权限时，文档停止参与检索，但审计历史不被直接物理删除。</p>
+          <div class="callout warn"><strong>当前边界：</strong>Compose 中没有独立 PaddleOCR 服务。扫描版 PDF 或纯图片制度的文字识别质量取决于 Tika 可提取内容；如扫描件占比高，应新增 OCR 阶段和人工抽检。</div>
+        </section>
+
+        <section id="rag">
+          <h2>十、RAG 制度问答：回答必须来自本轮授权证据</h2>
+          <ol class="key-list">
+            <li><strong>问题独立化</strong><br>上下文引擎把“那试用期呢”改写成语义完整的问题。</li>
+            <li><strong>强制 ACL</strong><br>用当前用户组织属性过滤已发布且有效的文档版本。</li>
+            <li><strong>混合召回</strong><br>向量相似度解决语义表达差异，全文和词命中保留精确术语。</li>
+            <li><strong>Rerank</strong><br>对候选切片做更精细的查询—文档相关性排序。</li>
+            <li><strong>证据预算</strong><br>只把高相关片段放入上下文，避免长文档淹没问题。</li>
+            <li><strong>严格引用</strong><br>模型每个制度结论必须用 <code>[数字]</code> 指向本轮片段。</li>
+            <li><strong>服务端验证</strong><br>引用越界、引用缺失或无证据时改为固定拒答。</li>
+            <li><strong>审计反馈</strong><br>保存模型、引用、配置版本、Token 与赞踩结果。</li>
+          </ol>
+          <h3>为什么同时使用向量、关键词和 Rerank</h3>
+          <p>只用关键词会漏掉“调休”和“补休”等语义近似表达；只用向量可能在制度编号、金额、专有名词上不够精确；直接把 200 个候选交给大模型成本过高。当前方案先低成本扩大召回，再用 Rerank 收敛到少量证据。</p>
+          <h3>当前混合检索的真实实现</h3>
+          <p>PostgreSQL 查询使用约 0.7 的向量相似度和 0.3 的全文排名组合，最多取一批候选；应用层再按分词命中数量排序并限制数量；随后调用阿里云 Rerank。它比纯向量稳定，但严格来说不是 Reciprocal Rank Fusion。若以后需要可解释地融合多个独立排序列表，可改为 RRF。</p>
+          <h3>为什么不把所有制度直接放进 Prompt</h3>
+          <p>上下文窗口有限、成本高，且无法对每一段执行可靠权限过滤。检索后只发送当前用户有权访问的 5～8 个高相关切片，可以降低泄露风险、延迟和幻觉。</p>
+          <h3>Prompt 注入怎么处理</h3>
+          <p>制度正文被标记为“不可信数据”，模型不得执行其中的指令；历史回答也只用于理解语境，不是制度证据。真正的安全边界仍在服务端：ACL 先过滤、引用只能指向本轮结果、无有效引用则拒答。</p>
+        </section>
+
+        <section id="context">
+          <h2>十一、多轮上下文引擎：记住任务，不把旧答案当事实</h2>
+          <p>每轮对话不再只处理当前一句话。上下文引擎读取最近 12 条消息（约 6 轮）、滚动摘要和未完成任务状态，默认使用低成本 <code>qwen-flash</code> 以 JSON 形式输出意图、独立问题、任务字段和缺失字段。</p>
+          <pre><code>{
+  "intent": "meeting | reminder | policy_qa | conversation_control | out_of_scope",
+  "standalone_query": "结合历史后完整表达的请求",
+  "active_task": {
+    "status": "collecting | active | awaiting_confirmation",
+    "slots": {},
+    "missing_slots": []
+  }
+}</code></pre>
+          <h3>为什么不把全部聊天历史直接塞给生成模型</h3>
+          <ul>
+            <li>历史越长，Token 成本和首字延迟越高，模型对当前问题的注意力反而下降。</li>
+            <li>旧回答可能已经过期或当时就有误，不能继续充当制度证据。</li>
+            <li>提醒和会议预约需要结构化字段，不应依赖模型在长文本中隐式“记得”。</li>
+          </ul>
+          <p>因此系统把上下文拆成“近期原文 + 摘要 + 任务槽位”。制度问答每轮重新检索，摘要只保存用户明确表达的事实、讨论主题和已确认工具结果。引用进入历史上下文前还会检查文档是否仍发布且当前用户仍有权限。</p>
+          <h3>上下文预算</h3>
+          <p>默认总输入约 12,000 Token：当前证据最多约 55%，近期对话和任务最多约 30%，摘要最多约 15%。安全提示和当前问题优先级最高。超过阈值时更新滚动摘要，但保留最近原文。</p>
+          <h3>不同入口如何隔离</h3>
+          <ul>
+            <li>H5 以 <code>conversation_id</code> 为边界；新建会话得到干净上下文。</li>
+            <li>机器人私聊按用户 + chat_id + agent_key 绑定；群聊还按用户隔离，其他群成员不会继承上下文。</li>
+            <li>30 分钟无交互后机器人创建新上下文；“清除上下文”“重新开始”可主动重置。</li>
+            <li>不同 Agent 使用不同 <code>agent_key</code>，行政助手内容不会传到生图 Agent。</li>
+          </ul>
+          <h3>为什么同一会话要串行处理</h3>
+          <p>用户可能连续发送“帮我订会议室”和“今天下午三点”。如果两轮并发分析，第二轮可能在第一轮消息尚未入库时读取历史，导致字段丢失。会话级队列保证消息按到达顺序处理；数据库任务幂等再防止重复执行。</p>
+          <div class="callout">上下文模型失败时，完整且明确的单轮请求可以走确定性解析器；明显依赖历史的句子则要求用户完整重述，不能为了“体验顺滑”而猜时间、对象或执行动作。</div>
+        </section>
+
+        <section id="stream">
+          <h2>十二、AI 流式回答：SSE 负责传输，前端负责平滑呈现</h2>
+          <p>发送消息后，API 立即返回 <code>run_id</code>。前端用 <code>EventSource</code> 连接运行事件流，依次接收：</p>
+          <p><span class="tag">status</span><span class="tag">delta</span><span class="tag">citation</span><span class="tag">done</span><span class="tag">error</span></p>
+          <p><code>status</code> 会告诉界面正在结合上下文、检索或生成；<code>delta</code> 是模型增量文本；<code>citation</code> 单独补充引用；<code>done</code> 给出最终落库消息。Nginx 对 <code>/api/</code> 关闭代理缓冲，避免增量被攒成一大块后才发给浏览器。</p>
+          <div class="decision">
+            <header><span>选型</span>SSE，而不是 WebSocket</header>
+            <div>
+              <article><h4>SSE 正好匹配</h4><p>浏览器端 AI 回答是服务端到客户端的单向事件流；自动重连和标准 HTTP 代理都较成熟。</p></article>
+              <article><h4>WebSocket 没有额外收益</h4><p>用户提问仍可走普通 POST。若为此维护双向连接，需要额外心跳、协议和重连状态，复杂度高于收益。</p></article>
+            </div>
+          </div>
+          <p>“一个字一个字”的视觉效果不能只靠 CSS；它来自服务端真实流式回调与前端增量追加。最终消息仍由服务端落库并校验引用，前端不能把未完成流当作最终事实。</p>
+        </section>
+
+        <section id="bot">
+          <h2>十三、飞书机器人：长连接接事件，异步执行重任务</h2>
+          <p>项目使用飞书官方 SDK 的 WebSocket 长连接接收消息、卡片点击、通讯录变化和会议室状态变化。无需将事件回调端点暴露到公网，也减少本地开发阶段的 HTTPS 穿透配置。</p>
+          <h3>为什么长连接适合当前部署</h3>
+          <p>应用主要运行在内网，出站连接通常比开放公网入站更容易；SDK 负责鉴权、心跳和事件分发。若未来多地域部署或企业网络不允许稳定长连接，才考虑公网 HTTP 回调加网关验签。</p>
+          <h3>事件处理的可靠性</h3>
+          <ul>
+            <li>每个飞书事件先写入 <code>processed_events</code>，唯一键保证重复投递不重复执行。</li>
+            <li>消息事件尽快转入异步作业，避免阻塞飞书响应窗口。</li>
+            <li>卡片按钮携带内部 action ID，但后端仍校验事件用户、任务归属、状态和过期时间。</li>
+            <li>机器人回答附带 AppLink，复杂引用和操作可回到 H5 查看。</li>
+          </ul>
+          <div class="callout warn">“收到一次事件”不等于“只会执行一次”。网络重试、SDK 重连和用户重复点击都会产生重复输入，因此幂等必须依赖数据库唯一约束和状态机，而不是内存布尔值。</div>
         </section>
 
         <section id="reminder">
-          <h2>十四、个人提醒系统的核心知识</h2>
-          <h3>规则与 AI 混合解析</h3>
-          <p>时间属于确定性业务。系统优先使用可测试的中文规则解析，无法处理时再调用 qwen-flash JSON Mode，并由服务端校验结构。相比全 AI 更稳定、便宜；相比全正则又能覆盖更多自然表达。</p>
-          <h3>Human-in-the-loop 二次确认</h3>
-          <p>自然语言解析后不会立即创建提醒，而是生成 30 分钟有效的 Action Draft。只有用户确认才真正提交。这是“Prepare → Commit”的两阶段命令模式，适合所有会影响外部世界的 AI 操作。</p>
-          <h3>为什么不用系统 Cron</h3>
-          <p>个人提醒可以随时创建、修改、暂停和删除，还涉及工作日、失败重试和发送记录。操作系统 Cron 不适合管理大量动态用户任务，因此系统使用数据库中的 <code>next_fire_at</code> 调度。</p>
-          <h3>SKIP LOCKED、租约与幂等</h3>
-          <p>Worker 通过 <code>FOR UPDATE SKIP LOCKED</code> 竞争任务。一个 Worker 锁住任务后，其他 Worker 跳过；若进程崩溃，<code>locked_until</code> 到期后可重新领取。</p>
-          <p>投递表对 <code>(reminder_id, scheduled_for)</code> 和 <code>idempotency_key</code> 建立唯一约束，避免重启、超时和重复轮询造成重复投递。</p>
-          <h3>补发窗口与工作日历</h3>
-          <p>延迟不超过 30 分钟会补发并标记延迟，超过则标记 missed，避免第二天发送已经失效的提醒。工作日默认周一至周五，再由公司节假日和调休日历覆盖。</p>
+          <h2>十四、个人提醒：AI 解析自然语言，数据库保证准时与不重复</h2>
+          <div class="flow">“工作日 11:50 提醒点外卖” → 解析内容/时间/重复规则 → 确认卡片 → Reminder → Worker 物化投递 → 飞书私聊</div>
+          <h3>实现要点</h3>
+          <ul>
+            <li>解析绝对日期、相对日期、上下午、单次/每天/工作日重复。</li>
+            <li>信息不完整时保存任务槽位并追问；完整后先生成确认卡片，不立即创建正式提醒。</li>
+            <li>工作日不是简单的周一到周五，后台工作日历可以覆盖节假日和调休。</li>
+            <li>Worker 先把规则物化为具体投递，再用 <code>SKIP LOCKED</code> 加租约领取。</li>
+            <li>网络、429 和临时服务错误按退避策略重试；权限类错误进入永久失败。</li>
+            <li>每次投递有幂等键，重复 Worker 不会重复发同一条提醒。</li>
+          </ul>
+          <h3>为什么不用系统内存定时器或 cron</h3>
+          <p>内存定时器在容器重启后丢失，多个实例会重复触发；cron 擅长固定系统任务，不擅长数百名用户随时增删的动态规则。数据库状态机让提醒可暂停、取消、审计和恢复，Worker 只是执行者。</p>
+          <h3>为什么要单独维护工作日历</h3>
+          <p>中国节假日和调休无法用普通 weekday 规则正确表达。将特殊日期保存为工作/休息覆盖项，既能解释“为什么今天触发”，也能由行政修正，而无需修改代码。</p>
         </section>
 
-        <section id="files">
-          <h2>十五、MinIO、Tika 与 ClamAV</h2>
-          <h3>MinIO</h3>
-          <p>MinIO 是自建 S3 兼容对象存储。与本地目录相比，它适合容器、多实例、统一备份和未来迁移阿里云 OSS；与数据库 BLOB 相比，不会让业务库因大文件快速膨胀。</p>
-          <h3>Apache Tika</h3>
-          <p>Tika 用统一接口解析 PDF、DOCX、PPTX、XLSX、HTML 和文本，避免为每种格式维护独立解析库。缺点是复杂版面、表格、页码和标题层级可能丢失。</p>
-          <h3>ClamAV</h3>
-          <p>文件在解析与存储前查毒，防止恶意 Office、病毒附件和解析器攻击。当前 OCR 仅预留接口，Compose 尚未部署 PaddleOCR，因此纯扫描 PDF 仍可能无法提取文本。</p>
+        <section id="notification">
+          <h2>十五、通知中心：人工审核的富文本群发</h2>
+          <p>通知管理员可以选择个人或机器人已加入的大群，编辑 Markdown 风格正文，上传图片，设置计划时间，预览卡片并审批后发送。过去时间在前端限制的同时，后端也拒绝，防止绕过界面。</p>
+          <h3>富文本如何映射到飞书卡片</h3>
+          <p>后台编辑器只开放飞书卡片可稳定表达的格式。标题语法会在发送前规范化，正文转换为卡片 Markdown 元素，图片使用飞书上传后得到的 <code>image_key</code>。这样比直接发送 HTML 更可靠，因为飞书卡片并不执行任意 HTML，支持的 Markdown 也不是完整 CommonMark。</p>
+          <h3>为什么限制图片和正文大小</h3>
+          <p>前端体验、飞书卡片协议和消息接口都有边界。系统在服务端限制标题、正文和最多 9 张图片，防止生成无法发送的草稿。服务端校验是最终标准，不能只依赖编辑器。</p>
+          <h3>审批、调度与投递结果</h3>
+          <ul>
+            <li>草稿只有经过通知管理员审批才能进入发送流程。</li>
+            <li>AI 只负责润色正文，不拥有收件人和发送权限。</li>
+            <li>发送前重新解析个人或群聊目标，发现机器人已退群则停止。</li>
+            <li>计划任务由 Worker 使用数据库行锁领取；每个接收者记录消息 ID、状态、错误和尝试次数。</li>
+            <li>幂等 UUID 会规范到飞书允许长度，避免长内部 ID 导致接口字段校验失败。</li>
+          </ul>
+          <div class="decision">
+            <header><span>选型</span>人工审批，而不是 AI 自主通知</header>
+            <div>
+              <article><h4>为什么必须审核</h4><p>群发消息影响面大，错误对象、时间或措辞会造成真实组织风险；管理员应看到最终卡片和人数后确认。</p></article>
+              <article><h4>为什么不让模型决定收件人</h4><p>自然语言模型可能误解部门、重名人员或历史语境。目标解析和权限必须由确定性目录数据完成。</p></article>
+            </div>
+          </div>
+        </section>
+
+        <section id="meeting">
+          <h2>十六、智能会议室预约：AI 理解意图，日历 API 完成真实占用</h2>
+          <div class="flow multiline">
+            <div><b>候选阶段：</b>解析日期/时间/参会人/会议室 → 解析重名 → 查人员忙闲 → 查会议室忙闲 → 返回最多 3 个候选</div>
+            <div><b>确认阶段：</b>领取 action → Redis 房间时段锁 → 再查全部忙闲 → 创建临时日程 → 邀请会议室 → 等待 RSVP</div>
+            <div><b>完成阶段：</b>会议室 accept → 添加申请人和参会人 → 保存预约 → 创建会后提醒 → 返回结果卡片</div>
+          </div>
+          <h3>会议室同步和筛选</h3>
+          <p>Worker 每 15 分钟同步会议室名称、容量、层级、启用状态、禁用区间和预订限制；状态变化事件会触发刷新。候选只包含启用、未禁用、容量足够、时长合规且不需要审批的普通会议室。忙闲不依赖缓存，候选和最终确认都会实时查询飞书。</p>
+          <h3>参会人解析为什么不能猜</h3>
+          <p>系统使用通讯录把姓名解析成 <code>open_id</code>，再批量查询忙闲。重名或未匹配必须让用户选择。错误地把“王伟”解析成另一个人不仅会造成冲突判断错误，还可能泄露他人忙闲。</p>
+          <h3>候选算法</h3>
+          <p>申请人计入参会人数；未指定容量时优先选择刚好容纳人数的最小房间，减少大会议室浪费。人员忙闲按飞书接口限制分批查询，会议室忙闲也分批查询；在指定当天、工作时间内按 30 分钟粒度寻找交集，最多返回 3 个候选。</p>
+          <h3>为什么确认时必须再次查询</h3>
+          <p>用户看到候选到点击确认之间存在竞态，房间或参会人可能已被其他系统占用。候选仅在 15 分钟内有效，确认时先用 Redis 锁住“房间 + 时间段”，再向飞书实时复核。锁只解决本系统内部竞争，飞书复核解决外部竞争。</p>
+          <h3>为什么创建日程要分步骤并补偿</h3>
+          <ol>
+            <li>在应用专用共享日历创建临时日程。</li>
+            <li>先添加资源类型会议室并检查 RSVP。</li>
+            <li>会议室接受后再添加申请人和其他参会人。</li>
+            <li>任一步失败就删除临时日程；清理失败标记 <code>needs_admin</code> 并告警。</li>
+          </ol>
+          <p>飞书日历不是本地数据库事务，不能使用一次 SQL rollback。这里采用 Saga/补偿思想：每个外部步骤都有反向清理动作。相比“先邀请所有人再看房间是否成功”，它能减少幽灵日程和误通知。</p>
+          <h3>取消、改期和会后归还提醒</h3>
+          <p>用户只能操作自己经行政 AI 创建的预约。取消删除飞书日程并取消本地投递；改期采用“先创建新预约，成功后删除旧预约”，新方案失败时保留原日程。预约成功时创建一条结束时间投递，Worker 到点私聊组织者关闭设备、带走物品并恢复会议室；取消和改期会同步处理投递。</p>
+          <div class="callout good"><strong>这条链路的核心不是 NLP，而是资源一致性：</strong>模型只负责把话变成字段，真正的占用结果以飞书会议室 RSVP 和日程事件为准。</div>
+        </section>
+
+        <section id="agent-config">
+          <h2>十七、Agent 与模型配置：把模型当可替换供应商</h2>
+          <p>行政助手和生图 Agent 都有独立 <code>agent_key</code>、显示信息、模型、启用状态、凭证来源和设置。阿里云生成、Embedding、Rerank、上下文模型也分别配置，避免“一把模型包办所有任务”。</p>
+          <div class="feature-grid">
+            <article><strong>Generation</strong><p>负责最终制度回答，偏重中文生成质量和遵循引用指令。</p></article>
+            <article><strong>Embedding</strong><p>把问题和制度切片变为向量，关注语义检索质量和成本。</p></article>
+            <article><strong>Rerank</strong><p>对较少候选做精排，关注相关性而不是语言生成。</p></article>
+            <article><strong>Context model</strong><p>输出结构化意图和独立问题，默认使用更便宜、更快的模型。</p></article>
+            <article><strong>Image model</strong><p>由中转站和协议决定能力，独立于行政助手文本模型。</p></article>
+            <article><strong>Demo provider</strong><p>未配置真实密钥时提供确定性结果，方便开发 UI 和测试，但不能用于生产答案。</p></article>
+          </div>
+          <h3>为什么使用 Provider/Adapter 接口</h3>
+          <p>业务层只调用 <code>Generate</code>、<code>StreamGenerate</code>、<code>Embed</code>、<code>Rerank</code> 等能力，不直接依赖供应商 JSON。这样更换模型只影响适配器与配置；权限、引用、会话和审计逻辑保持不变。</p>
+          <h3>配置为什么需要版本</h3>
+          <p>Prompt、温度、召回数、阈值和模型改变都可能影响答案。草稿—发布模式让线上始终只有一个明确版本，并可在审计中回答“这条回答用了哪套配置”。相比直接覆盖一行配置，它更适合企业问题追踪和回滚。</p>
+        </section>
+
+        <section id="image-agent">
+          <h2>十八、AI 生图 Agent：多中转站、项目权限和异步任务</h2>
+          <h3>中转站与模型</h3>
+          <p>后台内置 XGAPI 和 Comfly 的 API Base URL，管理员填写各自 API Key、连接超时和允许的图片响应域名；通过 <code>/models</code> 同步模型后，再明确启用支持生图的模型，并配置 Chat Completions 或 Images Generations 协议、参考图、反推、1K/2K/4K 与最大数量能力。</p>
+          <p>模型列表“能看到”不等于“能生图”，因此同步后默认不直接开放。能力由管理员显式声明，员工端只显示已启用且有项目权限的组合。</p>
+          <h3>为什么不自动切换中转站</h3>
+          <p>中转站不是无差别节点：费用、账号额度、模型版本和数据发送边界都不同。自动故障切换虽然看似提高可用性，却可能把公司图片发送给管理员未选择的供应商。因此当前失败只按同一中转站重试，不跨站切换。</p>
+          <h3>项目 ACL</h3>
+          <p>每个公司项目可以面向全员、指定飞书部门或指定人员开放。停用项目后禁止新任务，但保留历史画布只读。权限在服务端检查，图片资源接口也检查资产所属项目和用户，不能通过猜资产 ID 跨项目查看。</p>
+          <h3>参考图与图片反推</h3>
+          <ul>
+            <li>支持 JPG、PNG、WEBP；单张最多 10 MB，最多 5 张，总计最多 30 MB。</li>
+            <li>本地上传先查毒并存 MinIO；画布已有图片可通过拖拽资产 ID 复用，不重复上传。</li>
+            <li>图片反推固定走多模态 Chat，只接受文本描述，不生成图片。</li>
+          </ul>
+          <h3>快捷功能与卡通化强度</h3>
+          <p>功能按键由管理员配置，可全局或项目级覆盖。普通模板点击后可立即发起生成；若包含一次 <code>"cartoonization_strength": 0</code>，前端显示 0、0.25、0.5、0.75、1 五档滑块并实时替换字段，必须再点“生成图片”。后端保存时再次校验字段只能出现一次且范围为 0～1。</p>
+          <h3>异步生图与部分成功</h3>
+          <p>1/2/4/8 张会拆为独立输出请求，同一任务最多并发两个。Worker 领取任务后根据协议组装请求，解析 Base64、Data URL、Chat 图片块、Markdown 图片链接或 HTTPS URL。网络、429 和 5xx 最多退避重试三次；部分图片成功时保留结果并标记 partial，而不是全部作废。</p>
+          <h3>为什么生图必须异步</h3>
+          <p>4K 图片和多张生成可能耗时很长，HTTP 请求容易超时。先创建任务和占位节点，页面轮询任务状态，Worker 完成后原位替换，可在刷新后恢复，也能记录每个输出的成功与失败。</p>
+          <h3>远程图片 URL 为什么要白名单</h3>
+          <p>中转站可能返回自己的 CDN 地址。服务端下载前检查 HTTPS、允许域名、DNS 解析不能指向私网、重定向仍需通过检查、MIME 必须是图片且不超过 64 MB，最后再查毒。这样防止上游响应诱导服务器访问内网地址，即 SSRF。</p>
+          <div class="callout purple">允许输出域名不是“越多越好”。应只添加真实中转站或其 CDN 域名；通配整个公共云域会显著扩大 SSRF 与恶意内容下载面。</div>
+        </section>
+
+        <section id="canvas">
+          <h2>十九、无限画布：Vue Flow 把图片变成有坐标的持久节点</h2>
+          <p>每位用户在每个授权项目下只有一张私人画布。画布保存视口 <code>x/y/zoom</code> 和节点的 <code>x/y/width/height/z-index</code>。新任务在当前视野中心按网格创建占位节点，生成成功后节点保持位置只替换资产，失败则显示错误状态。</p>
+          <h3>为什么选 Vue Flow，而不是自己监听鼠标事件</h3>
+          <p>无限画布需要处理屏幕坐标与世界坐标转换、缩放中心、拖动、平移、节点选择、视口、小地图和触控边界。手写首版看似简单，但容易出现缩放后拖动偏移、MiniMap 视野不一致和高 DPI 问题。Vue Flow 已提供成熟的空间模型，项目只需实现图片节点和持久化。</p>
+          <h3>拖拽到参考图</h3>
+          <p>图片节点提供专用拖拽手柄，在 <code>dataTransfer</code> 中写入资产 ID；参考图槽位处理 drop 后读取资产并加入列表。使用资产 ID 而不是图片 URL，能让后端重新校验权限，也避免复制临时鉴权 URL。</p>
+          <h3>右下角 MiniMap</h3>
+          <p>MiniMap 显示所有节点和当前视野遮罩，支持拖动、缩放和点击定位。点击地图坐标后调用画布的 <code>setCenter</code>，再保存新的视口。地图是空间导航器，不只是静态缩略图。</p>
+          <h3>为什么画布保存版本号</h3>
+          <p>两个浏览器标签可能同时编辑同一画布。如果只做“最后写入覆盖”，晚提交的旧页面会悄悄抹掉新节点。乐观版本号要求 PATCH 携带读取时版本；冲突时重新加载服务器最新版，让冲突可见。</p>
+        </section>
+
+        <section id="security">
+          <h2>二十、安全设计：权限、Secret、输入和外部副作用分层防护</h2>
+          <div class="table-wrap"><table>
+            <thead><tr><th>风险</th><th>当前措施</th><th>为什么这样做</th></tr></thead>
+            <tbody>
+              <tr><td>账号冒用</td><td>飞书临时 code 后端换身份，HttpOnly 会话</td><td>不信任前端传 open_id，不暴露会话给脚本</td></tr>
+              <tr><td>功能越权</td><td>前端隐藏 + 后端 RBAC</td><td>体验与安全分离，直接调用 API 仍被拒绝</td></tr>
+              <tr><td>制度泄露</td><td>SQL ACL + 应用二次 ACL + 本轮引用验证</td><td>在进入模型前阻断，并防止历史引用复活</td></tr>
+              <tr><td>Prompt 注入</td><td>文件视为不可信数据，模型不执行文档指令</td><td>制度正文只能提供证据，不能改变系统规则</td></tr>
+              <tr><td>重复执行</td><td>事件唯一键、action 状态机、投递幂等键</td><td>应对飞书重投、用户重复点击和 Worker 重启</td></tr>
+              <tr><td>密钥泄漏</td><td>AES-GCM 加密保存，只返回尾号</td><td>后台页面和 API 不回传明文 Key</td></tr>
+              <tr><td>恶意文件</td><td>格式/大小限制、ClamAV、鉴权资源接口</td><td>降低解析漏洞和公开对象地址风险</td></tr>
+              <tr><td>SSRF</td><td>输出域名白名单、DNS 私网检查、重定向复检</td><td>防止中转站诱导服务器访问内网</td></tr>
+              <tr><td>错误外部操作</td><td>提醒/会议/通知确认，服务端最终校验</td><td>模型理解不等于获得执行授权</td></tr>
+            </tbody>
+          </table></div>
+          <h3>为什么后台 API Key 要加密而不只是脱敏</h3>
+          <p>脱敏只影响展示，数据库中若仍是明文，备份泄露或只读数据库账号被攻破仍会暴露密钥。项目用由 <code>AGENT_SECRET_ENCRYPTION_KEY</code> 派生的 AES-GCM 密钥加密，兼顾保密和完整性。更高等级环境可替换为 KMS/Vault，使应用数据库也无法独立解密。</p>
+          <h3>为什么不能把前端校验当安全措施</h3>
+          <p>前端的时间范围、图片数量、项目选择和按钮禁用都可以被修改请求绕过，所以后端必须重复校验。前端校验用于即时反馈，后端校验用于建立可信边界。</p>
         </section>
 
         <section id="deployment">
-          <h2>十六、Docker Compose 与 Nginx</h2>
-          <p>Compose 管理 PostgreSQL、Redis、MinIO、Tika、ClamAV、API、Worker 和 Web。对于 1～2 台服务器，它比 Kubernetes 更容易部署、备份和排错。</p>
-          <p>当系统需要多机高可用、自动扩缩容、滚动发布和统一集群治理时，再迁移 Kubernetes。</p>
-          <p>Nginx 同时提供静态页面、SPA 路由回退、API 反向代理、同源 Cookie 和 SSE 代理。API 8080 不直接暴露给宿主机，减少攻击面。</p>
-          <div class="callout warn">当前 Nginx 可能在 API 容器重建后保留旧容器 IP，需要重启 Web 容器。生产环境应使用动态 DNS 解析或稳定服务发现配置。</div>
-        </section>
-
-        <section id="redis">
-          <h2>十七、Redis 当前到底做了什么</h2>
-          <p>Redis 已在 Compose 中部署并开启 AOF，但当前 Go 代码还没有真正创建 Redis 客户端。提醒队列实际使用 PostgreSQL 的投递表、租约、唯一约束和 SKIP LOCKED。</p>
-          <p>当前规模下 PostgreSQL 队列的优势是任务与业务状态处于同一个事务系统，避免 Redis 与数据库双写不一致。</p>
-          <p>后续 Redis 可以承担飞书 Token 缓存、分布式限流、短期 SSE 状态、高频队列和分布式锁。</p>
-        </section>
-
-        <section id="versioning">
-          <h2>十八、配置与文档为什么必须版本化</h2>
-          <p>模型、Prompt 和检索参数采用 <code>draft → published → archived</code>；文档也采用草稿、发布和归档生命周期。</p>
+          <h2>二十一、部署与网络：Docker Compose + Nginx 的现实平衡</h2>
+          <p>Compose 启动 PostgreSQL、Redis、MinIO、Tika、ClamAV、API、Worker 和 Web。Nginx 提供静态 Vue 页面，并把 <code>/api/</code> 代理到内部 API；数据库、Redis、Tika 和 API 默认不直接暴露公网。</p>
+          <h3>Nginx 的关键配置</h3>
           <ul>
-            <li>修改不会立即污染线上。</li>
-            <li>可以测试和评测后再发布。</li>
-            <li>能够追踪某次回答使用的配置。</li>
-            <li>发生问题时可以回滚。</li>
-            <li>便于审计模型和制度的变化。</li>
+            <li><code>proxy_buffering off</code>：保证 SSE 增量及时到达。</li>
+            <li><code>try_files ... /index.html</code>：支持 Vue history 路由刷新。</li>
+            <li><code>/assets/</code> 使用长期 immutable 缓存；<code>index.html</code> 禁止长期缓存。</li>
+            <li>资源 chunk 不存在时返回 404，不误返回 HTML，避免飞书 WebView 把 HTML 当 JavaScript 执行。</li>
+            <li>当前宿主端口绑定 <code>127.0.0.1:8088</code>，避免意外暴露到所有网卡；生产应由 HTTPS 网关转发。</li>
           </ul>
+          <h3>为什么现在不使用 Kubernetes</h3>
+          <p>Kubernetes 解决的是多节点调度、弹性、自愈、滚动发布和复杂网络治理。当前 1～2 台服务器用 Compose 更容易备份、排查和交接。若 API/Worker 需要独立弹性扩容、多环境频繁发布或高可用跨节点，才进入 K8s 的收益区间。</p>
+          <h3>迁移文件的注意点</h3>
+          <p><code>/docker-entrypoint-initdb.d</code> 只在全新 PostgreSQL 数据卷执行。已有环境升级必须显式执行新增迁移，不能认为“重启容器就会自动升级”。生产进一步应引入正式 migration runner 和版本表。</p>
         </section>
 
         <section id="testing">
-          <h2>十九、测试体系</h2>
-          <div class="table-wrap"><table>
-            <thead><tr><th>层次</th><th>工具</th><th>主要覆盖</th></tr></thead>
-            <tbody>
-              <tr><td>后端单元测试</td><td>Go Test</td><td>ACL、角色保护、提醒解析、确认幂等、工作日和 Worker</td></tr>
-              <tr><td>前端单元测试</td><td>Vitest + Vue Test Utils</td><td>登录状态、表单工具、文本流和聊天组件</td></tr>
-              <tr><td>浏览器端到端</td><td>Playwright</td><td>登录、页面操作、API 联动和最终展示</td></tr>
-            </tbody>
-          </table></div>
-          <p>单元测试快且定位准确，集成测试验证 SQL 和外部接口，E2E 验证真实用户流程。后续最需要加强的是临时 PostgreSQL 容器集成测试，覆盖 pgvector、JSONB ACL、SKIP LOCKED 和发布事务。</p>
+          <h2>二十二、测试与可观测性：测试确定性边界，不测试模型“心情”</h2>
+          <h3>后端测试重点</h3>
+          <ul>
+            <li>ACL 对部门、职位、人员和角色的允许/拒绝。</li>
+            <li>引用缺失、越界和撤权历史不能继续使用。</li>
+            <li>上下文补全、主题切换、重置和模型失败降级。</li>
+            <li>提醒解析、工作日、任务租约、重试与幂等。</li>
+            <li>会议室候选、并发确认、RSVP、补偿、取消、改期和会后投递。</li>
+            <li>中转站协议、密钥加密、SSRF、任务部分成功和画布版本冲突。</li>
+          </ul>
+          <h3>前端测试重点</h3>
+          <p>Vitest + Vue Test Utils 验证路由权限、H5 登录回退、通知 Markdown、表单和组件交互；Playwright 验证真实浏览器中的登录、流式聊天、管理页面和画布操作。模型接口应使用可控 mock，真实中转站只做少量验收测试，避免费用和随机性让测试不稳定。</p>
+          <h3>指标和审计</h3>
+          <p>系统记录登录、角色修改、资料上传与发布、ACL 修改、配置发布、通知审批发送、会议预约和生图调用。质量看板关注问题数、已发布文档等基础指标；建议持续补充首字延迟、完整耗时、无答案率、引用覆盖率、模型费用、同步积压、飞书发送成功率和生图失败原因分布。</p>
+          <div class="callout">端到端成功率不能只看 HTTP 200。例如会议室必须看 RSVP 是否 accept，通知要看每个接收者投递结果，生图要看输出资产是否完成校验并落入 MinIO。</div>
         </section>
 
-        <section id="gaps">
-          <h2>二十、当前实现与原始规划的差异</h2>
-          <ul>
-            <li>混合检索是加权分数，不是严格 RRF。</li>
-            <li>中文全文索引使用 PostgreSQL simple 配置和应用层双字匹配，不是真正中文分词。</li>
-            <li>OCR 仅预留接口，尚未部署 PaddleOCR。</li>
-            <li>Redis 已部署，但目前没有进入实际业务链路。</li>
-            <li>文档切片仍是固定长度，标题、表格和页码结构保留有限。</li>
-            <li>SSE 停止按钮尚未真正取消阿里云上游请求。</li>
-            <li>引用来自授权召回，但尚未做逐结论引用覆盖校验。</li>
-            <li>飞书资料源支持手动同步，当前 Worker 主要执行提醒；15 分钟自动同步仍需加入调度。</li>
-            <li>Docker initdb 迁移只对新数据卷自动执行，已有数据库要手工运行 SQL。</li>
-          </ul>
-          <div class="callout">建议尽快引入 goose 或 golang-migrate，把迁移纳入发布流程；随后优先加强中文检索、结构化切片、引用验证和真正的上游取消。</div>
+        <section id="boundaries">
+          <h2>二十三、当前实现边界与应补强点</h2>
+          <div class="table-wrap"><table>
+            <thead><tr><th>领域</th><th>当前边界</th><th>建议触发条件</th></tr></thead>
+            <tbody>
+              <tr><td>OCR</td><td>没有独立 PaddleOCR 流程</td><td>扫描 PDF 命中率明显偏低时加入 OCR 与版面分析</td></tr>
+              <tr><td>检索融合</td><td>加权混合 + 词命中重排，不是严格 RRF</td><td>评测显示某类问题被应用层词筛选误伤时升级</td></tr>
+              <tr><td>数据库迁移</td><td>新增迁移需人工对已有数据卷执行</td><td>进入多人持续部署前引入 migration runner</td></tr>
+              <tr><td>高可用</td><td>Compose 主要面向单机/双机</td><td>出现明确 RTO/RPO 和跨节点容灾要求时升级</td></tr>
+              <tr><td>生图工作流</td><td>只有入口占位</td><td>明确节点类型、输入输出契约和版本规则后再建设</td></tr>
+              <tr><td>生图协作</td><td>每用户、每项目私人画布</td><td>出现多人实时编辑需求时引入操作日志/CRDT</td></tr>
+              <tr><td>密钥管理</td><td>应用层 AES-GCM</td><td>合规要求密钥托管、轮换或审计时接 KMS/Vault</td></tr>
+              <tr><td>审批会议室</td><td>只自动预约无需审批的普通会议室</td><td>飞书开放适合应用身份的审批闭环后再接入</td></tr>
+            </tbody>
+          </table></div>
+          <p>“边界”不是缺陷清单，而是有意控制首期复杂度。是否补强应由评测、容量、合规和真实业务频率驱动，而不是为了追求技术名词齐全。</p>
+        </section>
+
+        <section id="evolution">
+          <h2>二十四、什么时候应该换成其他方案</h2>
+          <details open>
+            <summary>什么时候从 pgvector 迁移独立向量数据库？</summary>
+            <div>当有效切片达到千万级、向量检索 QPS 明显挤压主库、需要多向量字段/高级过滤或跨地域索引时。迁移前应先做索引、查询计划和真实召回评测，不能只看文档数量。</div>
+          </details>
+          <details>
+            <summary>什么时候引入 Kafka、RabbitMQ 或专用任务队列？</summary>
+            <div>当任务吞吐远高于业务事务、需要多消费者广播、严格顺序分区或跨服务事件流时。当前数据库任务队列具备持久化、行锁和审计，规模较小时更简单。</div>
+          </details>
+          <details>
+            <summary>什么时候拆微服务？</summary>
+            <div>当会议、生图、知识解析拥有独立团队和发布节奏，资源模型差异巨大，或某模块故障频繁影响其他模块时。拆分应沿已有模块边界进行，而不是按数据库表随意拆。</div>
+          </details>
+          <details>
+            <summary>什么时候改用 WebSocket 传 AI 回答？</summary>
+            <div>当同一浏览器连接需要双向实时协作、服务器主动推送多个频道、画布多人编辑或语音流时。单向文本生成继续使用 SSE 更简单。</div>
+          </details>
+          <details>
+            <summary>什么时候使用本地大模型？</summary>
+            <div>当制度片段不允许离开内网、调用量足以摊薄 GPU 成本，且团队具备模型推理运维能力时。Provider 抽象允许替换模型，但本地化还需要评测、容量和安全治理。</div>
+          </details>
+          <details>
+            <summary>什么时候升级 Kubernetes？</summary>
+            <div>当多节点高可用、自动扩缩容、滚动发布、资源配额和多环境治理成为持续痛点时；不是因为容器数量超过几个就必须升级。</div>
+          </details>
         </section>
 
         <section id="principles">
-          <h2>二十一、最值得掌握的核心思想</h2>
+          <h2>二十五、核心设计原则总结</h2>
           <ol class="key-list">
-            <li>权限必须先于检索，不能依赖模型替系统保密。</li>
-            <li>RAG 不是训练模型，而是先检索证据再生成回答。</li>
-            <li>向量解决语义，关键词解决精确匹配，Rerank 负责精排。</li>
-            <li>AI 操作外部世界时必须加入人工确认和幂等机制。</li>
-            <li>RBAC 控制操作权限，ACL/ABAC 控制数据可见范围。</li>
-            <li>动态个人提醒适合持久化调度，不适合逐条系统 Cron。</li>
-            <li>PostgreSQL 可同时承担业务库、中小规模向量库和可靠队列。</li>
-            <li>模块化单体适合首期，微服务不是先进程度的标志。</li>
-            <li>模型可以替换，权限、版本、审计和可靠性才是长期资产。</li>
-            <li>企业 AI 的难点不只是调用模型，而是数据生命周期和错误边界。</li>
+            <li><strong>模型负责理解，代码负责授权。</strong><br>AI 输出不能扩大 ACL、决定角色或绕过确认。</li>
+            <li><strong>先持久化，再异步执行。</strong><br>提醒、通知、会议投递和生图都必须能从重启中恢复。</li>
+            <li><strong>候选不是结果。</strong><br>会议室在确认时复核，外部 RSVP 才是真实成功。</li>
+            <li><strong>历史不是证据。</strong><br>制度问答每轮重新检索，引用只来自本轮授权片段。</li>
+            <li><strong>前端校验改善体验，后端校验建立安全。</strong><br>任何可修改请求都必须在服务端重验。</li>
+            <li><strong>所有外部副作用都要幂等。</strong><br>飞书事件、卡片点击、消息发送和 Worker 都可能重复。</li>
+            <li><strong>外部事务使用补偿。</strong><br>日历、消息和模型调用不能依赖数据库 rollback。</li>
+            <li><strong>架构随证据演进。</strong><br>当前规模优先可维护性，达到容量或组织触发点再拆分。</li>
           </ol>
-          <p class="intro">这套架构的长期价值在于：模型供应商可以变化，但身份、权限、知识治理、引用、提醒调度和审计不必推倒重来。</p>
+          <div class="callout good"><strong>一句话概括：</strong>这套系统的技术价值不在于“接了几个大模型”，而在于把不确定的模型能力包在身份、权限、证据、确认、幂等、补偿和审计这些确定性工程边界之内。</div>
+          <p class="caption">本文基于当前仓库代码、依赖、数据库迁移与部署配置整理。实际生产上线前仍应完成飞书权限复核、公司数据边界审批、备份恢复演练和真实评测集验收。</p>
         </section>
       </main>
     </div>
 
-    <footer class="footer">知行 · 公司内部行政 AI Agent 技术文档｜独立 HTML，可直接用浏览器打开、打印或导出为 PDF。</footer>
+    <footer class="footer">
+      <span class="status">基于当前实现整理</span>
+      <p>文档版本：2026-07-28 · 参考代码版本：<code>bfd38a8</code> · 文件可直接用浏览器打开或打印为 PDF。</p>
+    </footer>
   </article>
 </body>
 </html>

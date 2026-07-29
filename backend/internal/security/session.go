@@ -11,14 +11,19 @@ import (
 )
 
 type Claims struct {
-	UserID    string `json:"user_id"`
-	ExpiresAt int64  `json:"exp"`
+	UserID     string `json:"user_id"`
+	AuthSource string `json:"auth_source,omitempty"`
+	IAMUserID  int64  `json:"iam_user_id,omitempty"`
+	ExpiresAt  int64  `json:"exp"`
 }
 type Sessions struct{ secret []byte }
 
 func NewSessions(secret string) *Sessions { return &Sessions{secret: []byte(secret)} }
 func (s *Sessions) Issue(userID string, ttl time.Duration) (string, error) {
-	payload, err := json.Marshal(Claims{UserID: userID, ExpiresAt: time.Now().Add(ttl).Unix()})
+	return s.IssueFor(userID, "", 0, ttl)
+}
+func (s *Sessions) IssueFor(userID, authSource string, iamUserID int64, ttl time.Duration) (string, error) {
+	payload, err := json.Marshal(Claims{UserID: userID, AuthSource: authSource, IAMUserID: iamUserID, ExpiresAt: time.Now().Add(ttl).Unix()})
 	if err != nil {
 		return "", err
 	}

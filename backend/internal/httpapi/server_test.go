@@ -1,14 +1,20 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"internal-ai-agent/backend/internal/config"
+	"internal-ai-agent/backend/internal/domain"
 	"internal-ai-agent/backend/internal/integration/feishu"
+	iamintegration "internal-ai-agent/backend/internal/integration/iam"
+	"internal-ai-agent/backend/internal/security"
+	"internal-ai-agent/backend/internal/store"
 )
 
 func TestFeishuAuthConfigExposesOnlyPublicClientConfig(t *testing.T) {
@@ -35,6 +41,70 @@ func TestFeishuAuthConfigExposesOnlyPublicClientConfig(t *testing.T) {
 	}
 	if response.AppID != "cli_test" || !response.Enabled || !response.DevAuthEnabled {
 		t.Fatalf("unexpected response: %+v", response)
+	}
+}
+
+func TestIAMAuthConfigDoesNotExposeSecret(t *testing.T) {
+	iamClient := iamintegration.New("https://iam.example.com", "shimmer-ai", "do-not-expose", "", time.Second, time.Second)
+	server := &Server{
+		cfg:    config.Config{IAMEnabled: true, IAMAppID: "shimmer-ai", IAMAppSecret: "do-not-expose"},
+		iam:    iamClient,
+		feishu: feishu.New("feishu-app", "feishu-secret", ""),
+	}
+	recorder := httptest.NewRecorder()
+	server.iamAuthConfig(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/auth/iam/config", nil))
+	if recorder.Code != http.StatusOK || strings.Contains(recorder.Body.String(), "do-not-expose") {
+		t.Fatalf("unexpected IAM config response: %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestIAMPermissionMiddlewareUsesIAMInsteadOfLocalAdminRole(t *testing.T) {
+	iamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		permission := r.URL.Query().Get("permission_key")
+		w.Header().Set("Content-Type", "application/json")
+		if permission == permissionAgentUse {
+			_, _ = w.Write([]byte(`{"code":0,"data":{"user_id":18}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":510001,"message":"权限不足"}`))
+	}))
+	defer iamServer.Close()
+	iamClient := iamintegration.New(iamServer.URL, "shimmer-ai", "secret", "", time.Second, time.Second)
+	repo := store.NewMemory(domain.AgentConfig{})
+	iamUserID := int64(18)
+	user, err := repo.UpsertIAMUser(context.Background(), domain.User{
+		FeishuOpenID: "ou_iam_user",
+		FeishuUserID: "iam-feishu-user",
+		IAMUserID:    &iamUserID,
+		Name:         "IAM User",
+		Status:       "active",
+		Roles:        []domain.Role{domain.RoleEmployee, domain.RoleSuperAdmin},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := security.NewSessions("a-secret-long-enough-for-tests")
+	sessionToken, err := sessions.IssueFor(user.ID, "iam", iamUserID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{repo: repo, sessions: sessions, iam: iamClient}
+	handler := server.auth(server.permission(permissionUserManage, domain.RoleSuperAdmin)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})))
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", nil)
+	request.AddCookie(&http.Cookie{Name: "ai_agent_session", Value: sessionToken})
+	request.AddCookie(&http.Cookie{Name: "iam_user_token", Value: "iam-token"})
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	var payload struct {
+		Code int `json:"code"`
+	}
+	if err = json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Code != http.StatusOK || payload.Code != iamintegration.CodePermissionDenied {
+		t.Fatalf("IAM denial must override local super_admin: status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

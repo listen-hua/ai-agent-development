@@ -17,6 +17,7 @@ import (
 	"internal-ai-agent/backend/internal/domain"
 	"internal-ai-agent/backend/internal/ids"
 	"internal-ai-agent/backend/internal/integration/feishu"
+	iamintegration "internal-ai-agent/backend/internal/integration/iam"
 	"internal-ai-agent/backend/internal/security"
 	"internal-ai-agent/backend/internal/service"
 	"internal-ai-agent/backend/internal/store"
@@ -35,11 +36,38 @@ type Server struct {
 	agents        *service.AgentRegistry
 	imageAgent    *service.ImageAgent
 	feishu        *feishu.Client
+	iam           *iamintegration.Client
 	mux           *http.ServeMux
 }
 type contextKey string
 
-const userKey contextKey = "user"
+const (
+	userKey     contextKey = "user"
+	claimsKey   contextKey = "claims"
+	iamTokenKey contextKey = "iam_token"
+)
+
+const (
+	permissionAgentUse           = "agent_use"
+	permissionKnowledgeManage    = "knowledge_manage"
+	permissionAgentManage        = "agent_manage"
+	permissionImageManage        = "image_manage"
+	permissionNotificationManage = "notification_manage"
+	permissionCalendarManage     = "calendar_manage"
+	permissionAuditView          = "audit_view"
+	permissionUserManage         = "user_manage"
+)
+
+var allIAMPermissions = []string{
+	permissionAgentUse,
+	permissionKnowledgeManage,
+	permissionAgentManage,
+	permissionImageManage,
+	permissionNotificationManage,
+	permissionCalendarManage,
+	permissionAuditView,
+	permissionUserManage,
+}
 
 func New(cfg config.Config, repo store.Repository, sessions *security.Sessions, chat *service.Chat, knowledge *service.Knowledge, notifications *service.Notification, reminders *service.Reminder, feishuClient *feishu.Client, directory *service.Directory, agents *service.AgentRegistry, features ...any) *Server {
 	s := &Server{cfg: cfg, repo: repo, sessions: sessions, chat: chat, knowledge: knowledge, notifications: notifications, reminders: reminders, directory: directory, agents: agents, feishu: feishuClient, mux: http.NewServeMux()}
@@ -49,6 +77,8 @@ func New(cfg config.Config, repo store.Repository, sessions *security.Sessions, 
 			s.meetings = value
 		case *service.ImageAgent:
 			s.imageAgent = value
+		case *iamintegration.Client:
+			s.iam = value
 		}
 	}
 	s.routes()
@@ -63,6 +93,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/auth/feishu/config", s.feishuAuthConfig)
 	s.mux.HandleFunc("POST /api/v1/auth/feishu/client-diagnostics", s.feishuClientDiagnostics)
 	s.mux.HandleFunc("POST /api/v1/auth/feishu/exchange", s.exchange)
+	s.mux.HandleFunc("GET /api/v1/auth/iam/config", s.iamAuthConfig)
+	s.mux.HandleFunc("POST /api/v1/auth/iam/exchange", s.exchangeIAM)
 	s.mux.Handle("GET /api/v1/me", s.auth(http.HandlerFunc(s.me)))
 	s.mux.Handle("GET /api/v1/agents", s.auth(http.HandlerFunc(s.listAvailableAgents)))
 	s.mux.Handle("POST /api/v1/auth/logout", s.auth(http.HandlerFunc(s.logout)))
@@ -91,6 +123,7 @@ func (s *Server) routes() {
 		s.mux.Handle("GET /api/v1/image-agent/options", s.auth(http.HandlerFunc(s.imageAgentOptions)))
 		s.mux.Handle("GET /api/v1/image-agent/projects/{id}/canvas", s.auth(http.HandlerFunc(s.imageCanvas)))
 		s.mux.Handle("PATCH /api/v1/image-agent/projects/{id}/canvas", s.auth(http.HandlerFunc(s.updateImageCanvas)))
+		s.mux.Handle("POST /api/v1/image-agent/projects/{id}/canvas/imports", s.auth(http.HandlerFunc(s.importImageCanvasAsset)))
 		s.mux.Handle("POST /api/v1/image-agent/assets", s.auth(http.HandlerFunc(s.uploadImageAsset)))
 		s.mux.Handle("GET /api/v1/image-agent/assets/{id}/content", s.auth(http.HandlerFunc(s.imageAssetContent)))
 		s.mux.Handle("POST /api/v1/image-agent/jobs", s.auth(http.HandlerFunc(s.createImageJob)))
@@ -98,11 +131,13 @@ func (s *Server) routes() {
 		s.mux.Handle("GET /api/v1/image-agent/jobs/{id}", s.auth(http.HandlerFunc(s.getImageJob)))
 	}
 
-	knowledgeAdmin := s.roles(domain.RoleKnowledgeAdmin)
-	directoryAdmin := s.roles(domain.RoleKnowledgeAdmin, domain.RoleImageAdmin)
-	notificationAdmin := s.roles(domain.RoleNotificationAdmin)
-	auditor := s.roles(domain.RoleAuditor, domain.RoleKnowledgeAdmin, domain.RoleNotificationAdmin)
-	superAdmin := s.roles(domain.RoleSuperAdmin)
+	knowledgeAdmin := s.permission(permissionKnowledgeManage, domain.RoleKnowledgeAdmin)
+	agentAdmin := s.permission(permissionAgentManage, domain.RoleKnowledgeAdmin)
+	directoryAdmin := s.permissions([]string{permissionKnowledgeManage, permissionImageManage}, domain.RoleKnowledgeAdmin, domain.RoleImageAdmin)
+	notificationAdmin := s.permission(permissionNotificationManage, domain.RoleNotificationAdmin)
+	calendarAdmin := s.permission(permissionCalendarManage, domain.RoleNotificationAdmin)
+	auditor := s.permission(permissionAuditView, domain.RoleAuditor, domain.RoleKnowledgeAdmin, domain.RoleNotificationAdmin)
+	superAdmin := s.permission(permissionUserManage, domain.RoleSuperAdmin)
 	s.mux.Handle("GET /api/v1/admin/knowledge/sources", s.auth(knowledgeAdmin(http.HandlerFunc(s.listSources))))
 	s.mux.Handle("POST /api/v1/admin/knowledge/sources", s.auth(knowledgeAdmin(http.HandlerFunc(s.createSource))))
 	s.mux.Handle("POST /api/v1/admin/knowledge/sources/{id}/sync", s.auth(knowledgeAdmin(http.HandlerFunc(s.syncSource))))
@@ -111,12 +146,12 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/admin/knowledge/documents/{id}/publish", s.auth(knowledgeAdmin(http.HandlerFunc(s.publishDocument))))
 	s.mux.Handle("PUT /api/v1/admin/knowledge/documents/{id}/acl", s.auth(knowledgeAdmin(http.HandlerFunc(s.updateDocumentACL))))
 	s.mux.Handle("GET /api/v1/admin/directory/options", s.auth(directoryAdmin(http.HandlerFunc(s.directoryOptions))))
-	s.mux.Handle("GET /api/v1/admin/agent/configs", s.auth(knowledgeAdmin(http.HandlerFunc(s.listConfigs))))
-	s.mux.Handle("POST /api/v1/admin/agent/configs", s.auth(knowledgeAdmin(http.HandlerFunc(s.createConfig))))
-	s.mux.Handle("POST /api/v1/admin/agent/configs/{id}/publish", s.auth(knowledgeAdmin(http.HandlerFunc(s.publishConfig))))
-	s.mux.Handle("GET /api/v1/admin/agents", s.auth(knowledgeAdmin(http.HandlerFunc(s.listAgentProfiles))))
-	s.mux.Handle("POST /api/v1/admin/agents", s.auth(knowledgeAdmin(http.HandlerFunc(s.createAgentProfile))))
-	s.mux.Handle("PUT /api/v1/admin/agents/{id}", s.auth(knowledgeAdmin(http.HandlerFunc(s.updateAgentProfile))))
+	s.mux.Handle("GET /api/v1/admin/agent/configs", s.auth(agentAdmin(http.HandlerFunc(s.listConfigs))))
+	s.mux.Handle("POST /api/v1/admin/agent/configs", s.auth(agentAdmin(http.HandlerFunc(s.createConfig))))
+	s.mux.Handle("POST /api/v1/admin/agent/configs/{id}/publish", s.auth(agentAdmin(http.HandlerFunc(s.publishConfig))))
+	s.mux.Handle("GET /api/v1/admin/agents", s.auth(agentAdmin(http.HandlerFunc(s.listAgentProfiles))))
+	s.mux.Handle("POST /api/v1/admin/agents", s.auth(agentAdmin(http.HandlerFunc(s.createAgentProfile))))
+	s.mux.Handle("PUT /api/v1/admin/agents/{id}", s.auth(agentAdmin(http.HandlerFunc(s.updateAgentProfile))))
 	s.mux.Handle("GET /api/v1/admin/notifications", s.auth(notificationAdmin(http.HandlerFunc(s.listNotifications))))
 	s.mux.Handle("POST /api/v1/admin/notifications", s.auth(notificationAdmin(http.HandlerFunc(s.createNotification))))
 	s.mux.Handle("GET /api/v1/admin/notifications/targets", s.auth(notificationAdmin(http.HandlerFunc(s.notificationTargets))))
@@ -125,22 +160,22 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/admin/notifications/{id}/approve", s.auth(notificationAdmin(http.HandlerFunc(s.approveNotification))))
 	s.mux.Handle("POST /api/v1/admin/notifications/{id}/send", s.auth(notificationAdmin(http.HandlerFunc(s.sendNotification))))
 	s.mux.Handle("POST /api/v1/admin/notifications/{id}/cancel", s.auth(notificationAdmin(http.HandlerFunc(s.cancelNotification))))
-	s.mux.Handle("GET /api/v1/admin/work-calendar", s.auth(notificationAdmin(http.HandlerFunc(s.listWorkCalendar))))
-	s.mux.Handle("PUT /api/v1/admin/work-calendar/{date}", s.auth(notificationAdmin(http.HandlerFunc(s.upsertWorkCalendar))))
-	s.mux.Handle("DELETE /api/v1/admin/work-calendar/{date}", s.auth(notificationAdmin(http.HandlerFunc(s.deleteWorkCalendar))))
-	s.mux.Handle("POST /api/v1/admin/work-calendar/import", s.auth(notificationAdmin(http.HandlerFunc(s.importWorkCalendar))))
+	s.mux.Handle("GET /api/v1/admin/work-calendar", s.auth(calendarAdmin(http.HandlerFunc(s.listWorkCalendar))))
+	s.mux.Handle("PUT /api/v1/admin/work-calendar/{date}", s.auth(calendarAdmin(http.HandlerFunc(s.upsertWorkCalendar))))
+	s.mux.Handle("DELETE /api/v1/admin/work-calendar/{date}", s.auth(calendarAdmin(http.HandlerFunc(s.deleteWorkCalendar))))
+	s.mux.Handle("POST /api/v1/admin/work-calendar/import", s.auth(calendarAdmin(http.HandlerFunc(s.importWorkCalendar))))
 	s.mux.Handle("GET /api/v1/admin/audit", s.auth(auditor(http.HandlerFunc(s.listAudit))))
 	s.mux.Handle("GET /api/v1/admin/metrics", s.auth(auditor(http.HandlerFunc(s.metrics))))
 	s.mux.Handle("GET /api/v1/admin/users", s.auth(superAdmin(http.HandlerFunc(s.listUsers))))
 	s.mux.Handle("PUT /api/v1/admin/users/{id}/roles", s.auth(superAdmin(http.HandlerFunc(s.updateUserRoles))))
 	s.mux.Handle("POST /api/v1/admin/users/sync", s.auth(superAdmin(http.HandlerFunc(s.syncUsers))))
 	if s.meetings != nil {
-		s.mux.Handle("GET /api/v1/admin/meeting-rooms", s.auth(notificationAdmin(http.HandlerFunc(s.listMeetingRooms))))
-		s.mux.Handle("POST /api/v1/admin/meeting-rooms/sync", s.auth(notificationAdmin(http.HandlerFunc(s.syncMeetingRooms))))
-		s.mux.Handle("POST /api/v1/admin/meeting-rooms/calendar", s.auth(notificationAdmin(http.HandlerFunc(s.initializeMeetingCalendar))))
+		s.mux.Handle("GET /api/v1/admin/meeting-rooms", s.auth(calendarAdmin(http.HandlerFunc(s.listMeetingRooms))))
+		s.mux.Handle("POST /api/v1/admin/meeting-rooms/sync", s.auth(calendarAdmin(http.HandlerFunc(s.syncMeetingRooms))))
+		s.mux.Handle("POST /api/v1/admin/meeting-rooms/calendar", s.auth(calendarAdmin(http.HandlerFunc(s.initializeMeetingCalendar))))
 	}
 	if s.imageAgent != nil {
-		imageAdmin := s.roles(domain.RoleImageAdmin)
+		imageAdmin := s.permission(permissionImageManage, domain.RoleImageAdmin)
 		s.mux.Handle("GET /api/v1/admin/image-agent/relays", s.auth(imageAdmin(http.HandlerFunc(s.listImageRelays))))
 		s.mux.Handle("POST /api/v1/admin/image-agent/relays", s.auth(imageAdmin(http.HandlerFunc(s.createImageRelay))))
 		s.mux.Handle("PUT /api/v1/admin/image-agent/relays/{id}", s.auth(imageAdmin(http.HandlerFunc(s.updateImageRelay))))
@@ -165,6 +200,92 @@ func (s *Server) feishuAuthConfig(w http.ResponseWriter, _ *http.Request) {
 		"enabled":          s.feishu.Configured(),
 		"dev_auth_enabled": s.cfg.DevAuthEnabled,
 	})
+}
+
+func (s *Server) iamAuthConfig(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled": s.cfg.IAMEnabled && s.iam != nil && s.iam.Configured(),
+		"app_id":  s.cfg.IAMAppID,
+	})
+}
+
+type authUserResponse struct {
+	domain.User
+	AuthSource     string   `json:"auth_source"`
+	IAMPermissions []string `json:"iam_permissions,omitempty"`
+}
+
+func (s *Server) exchangeIAM(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.IAMEnabled || s.iam == nil || !s.iam.Configured() || s.feishu == nil || !s.feishu.Configured() {
+		writeIAMCode(w, iamintegration.CodeUnavailable, "IAM 登录尚未配置")
+		return
+	}
+	token, ok := readIAMToken(r)
+	if !ok {
+		writeIAMCode(w, iamintegration.CodeTokenInvalid, "令牌非法")
+		return
+	}
+	iamUserID, err := s.iam.Authenticate(r.Context(), token, permissionAgentUse, nil)
+	if err != nil {
+		s.writeIAMError(w, err)
+		return
+	}
+	commonInfo, err := s.iam.LookupUser(r.Context(), token, iamUserID)
+	if err != nil {
+		s.writeIAMError(w, err)
+		return
+	}
+	contact, err := s.feishu.GetContactUserByUserID(r.Context(), commonInfo.FeishuAccountInfo.UserID)
+	if err != nil || strings.TrimSpace(contact.OpenID) == "" {
+		slog.Warn("IAM identity could not be resolved through Feishu", "iam_user_id", iamUserID, "error", err)
+		writeIAMCode(w, 519003, "无法从飞书通讯录确认当前 IAM 用户，请联系管理员")
+		return
+	}
+	now := time.Now()
+	candidate := domain.User{
+		FeishuOpenID:         contact.OpenID,
+		FeishuUserID:         commonInfo.FeishuAccountInfo.UserID,
+		IAMUserID:            &iamUserID,
+		Name:                 contact.Name,
+		AvatarURL:            contact.AvatarURL,
+		DepartmentIDs:        contact.DepartmentIDs,
+		JobTitle:             contact.JobTitle,
+		JobLevelID:           contact.JobLevelID,
+		JobFamilyID:          contact.JobFamilyID,
+		EmployeeType:         contact.EmployeeType,
+		Status:               contact.Status,
+		OrganizationSyncedAt: &now,
+		Roles:                []domain.Role{domain.RoleEmployee},
+	}
+	user, err := s.repo.UpsertIAMUser(r.Context(), candidate)
+	if errors.Is(err, store.ErrConflict) {
+		_ = s.repo.AppendAudit(r.Context(), domain.AuditEvent{ID: ids.New("aud"), Action: "auth.iam_identity_conflict", ResourceType: "user", ResourceID: fmt.Sprint(iamUserID), Metadata: map[string]any{"feishu_user_id": commonInfo.FeishuAccountInfo.UserID}, CreatedAt: now})
+		writeIAMCode(w, 519002, "IAM 与飞书账号绑定冲突，请联系管理员处理")
+		return
+	}
+	if err != nil {
+		slog.Error("IAM identity binding failed", "iam_user_id", iamUserID, "error", err)
+		writeIAMCode(w, iamintegration.CodeUnavailable, "IAM 身份绑定失败")
+		return
+	}
+	if user.Status != "" && user.Status != "active" {
+		writeIAMCode(w, 519004, "账号已停用，请联系管理员")
+		return
+	}
+	sessionToken, err := s.sessions.IssueFor(user.ID, "iam", iamUserID, 12*time.Hour)
+	if err != nil {
+		writeIAMCode(w, iamintegration.CodeUnavailable, "创建登录会话失败")
+		return
+	}
+	permissions, err := s.iam.GrantedPermissions(r.Context(), token, allIAMPermissions)
+	if err != nil {
+		s.writeIAMError(w, err)
+		return
+	}
+	setSessionCookie(w, sessionToken, s.cfg.Environment == "production")
+	_ = s.repo.AppendAudit(r.Context(), domain.AuditEvent{ID: ids.New("aud"), ActorID: user.ID, ActorName: user.Name, Action: "auth.login", ResourceType: "session", ResourceID: user.ID, Metadata: map[string]any{"auth_source": "iam", "iam_user_id": iamUserID}, CreatedAt: now})
+	writeJSON(w, http.StatusOK, authUserResponse{User: user, AuthSource: "iam", IAMPermissions: permissions})
 }
 
 func (s *Server) feishuClientDiagnostics(w http.ResponseWriter, r *http.Request) {
@@ -221,7 +342,9 @@ func (s *Server) exchange(w http.ResponseWriter, r *http.Request) {
 	}
 	var user domain.User
 	var err error
+	authSource := "feishu"
 	if s.cfg.DevAuthEnabled && strings.HasPrefix(input.Code, "dev:") {
+		authSource = "dev"
 		if input.Code == "dev:employee" {
 			user, err = s.repo.GetUser(r.Context(), store.DemoEmployeeID)
 		} else {
@@ -262,14 +385,14 @@ func (s *Server) exchange(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "账号已停用，请联系管理员", nil)
 		return
 	}
-	token, err := s.sessions.Issue(user.ID, 12*time.Hour)
+	token, err := s.sessions.IssueFor(user.ID, authSource, 0, 12*time.Hour)
 	if err != nil {
 		writeError(w, 500, "创建会话失败", err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "ai_agent_session", Value: token, Path: "/", HttpOnly: true, Secure: s.cfg.Environment == "production", SameSite: http.SameSiteLaxMode, MaxAge: 43200})
-	_ = s.repo.AppendAudit(r.Context(), domain.AuditEvent{ID: ids.New("aud"), ActorID: user.ID, ActorName: user.Name, Action: "auth.login", ResourceType: "session", ResourceID: user.ID, Metadata: map[string]any{}, CreatedAt: time.Now()})
-	writeJSON(w, http.StatusOK, user)
+	setSessionCookie(w, token, s.cfg.Environment == "production")
+	_ = s.repo.AppendAudit(r.Context(), domain.AuditEvent{ID: ids.New("aud"), ActorID: user.ID, ActorName: user.Name, Action: "auth.login", ResourceType: "session", ResourceID: user.ID, Metadata: map[string]any{"auth_source": authSource}, CreatedAt: time.Now()})
+	writeJSON(w, http.StatusOK, authUserResponse{User: user, AuthSource: authSource})
 }
 
 func containsString(values []string, expected string) bool {
@@ -280,7 +403,20 @@ func containsString(values []string, expected string) bool {
 	}
 	return false
 }
-func (s *Server) me(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, currentUser(r)) }
+func (s *Server) me(w http.ResponseWriter, r *http.Request) {
+	claims := currentClaims(r)
+	source := normalizedAuthSource(claims.AuthSource)
+	response := authUserResponse{User: currentUser(r), AuthSource: source}
+	if source == "iam" {
+		permissions, err := s.iam.GrantedPermissions(r.Context(), currentIAMToken(r), allIAMPermissions)
+		if err != nil {
+			s.writeIAMError(w, err)
+			return
+		}
+		response.IAMPermissions = permissions
+	}
+	writeJSON(w, http.StatusOK, response)
+}
 func (s *Server) listAvailableAgents(w http.ResponseWriter, r *http.Request) {
 	values, err := s.agents.List(r.Context(), false)
 	respond(w, values, err)
@@ -857,12 +993,71 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			writeError(w, http.StatusForbidden, "账号已停用", nil)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, user)))
+		ctx := context.WithValue(r.Context(), userKey, user)
+		ctx = context.WithValue(ctx, claimsKey, claims)
+		if normalizedAuthSource(claims.AuthSource) == "iam" {
+			if s.iam == nil || !s.iam.Configured() {
+				writeIAMCode(w, iamintegration.CodeUnavailable, "IAM 服务未配置")
+				return
+			}
+			iamToken, ok := readIAMToken(r)
+			if !ok {
+				writeIAMCode(w, iamintegration.CodeTokenInvalid, "令牌非法")
+				return
+			}
+			iamUserID, authErr := s.iam.Authenticate(ctx, iamToken, permissionAgentUse, nil)
+			if authErr != nil {
+				slog.Warn("IAM permission denied", "permission_key", permissionAgentUse, "iam_user_id", claims.IAMUserID, "error", authErr)
+				s.writeIAMError(w, authErr)
+				return
+			}
+			if claims.IAMUserID <= 0 || iamUserID != claims.IAMUserID || user.IAMUserID == nil || *user.IAMUserID != iamUserID {
+				writeIAMCode(w, 519002, "IAM 登录身份与本地账号不一致")
+				return
+			}
+			ctx = context.WithValue(ctx, iamTokenKey, iamToken)
+		}
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
-func (s *Server) roles(roles ...domain.Role) func(http.Handler) http.Handler {
+
+func (s *Server) permission(permission string, roles ...domain.Role) func(http.Handler) http.Handler {
+	return s.permissions([]string{permission}, roles...)
+}
+
+func (s *Server) permissions(permissionKeys []string, roles ...domain.Role) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if normalizedAuthSource(currentClaims(r).AuthSource) != "iam" {
+				if !currentUser(r).HasRole(roles...) {
+					writeError(w, http.StatusForbidden, "没有访问权限", nil)
+					return
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
+			for _, permissionKey := range permissionKeys {
+				iamUserID, err := s.iam.Authenticate(r.Context(), currentIAMToken(r), permissionKey, nil)
+				if err == nil && iamUserID == currentClaims(r).IAMUserID {
+					slog.Debug("IAM route permission allowed", "permission_key", permissionKey, "iam_user_id", iamUserID)
+					next.ServeHTTP(w, r)
+					return
+				}
+				if code, ok := iamintegration.ErrorCode(err); ok && code == iamintegration.CodePermissionDenied {
+					slog.Info("IAM route permission denied", "permission_key", permissionKey, "iam_user_id", currentClaims(r).IAMUserID)
+					continue
+				}
+				if err != nil {
+					s.writeIAMError(w, err)
+					return
+				}
+				writeIAMCode(w, 519002, "IAM 登录身份与本地账号不一致")
+				return
+			}
+			if len(permissionKeys) > 0 {
+				writeIAMCode(w, iamintegration.CodePermissionDenied, "权限不足")
+				return
+			}
 			if !currentUser(r).HasRole(roles...) {
 				writeError(w, 403, "没有访问权限", nil)
 				return
@@ -874,6 +1069,41 @@ func (s *Server) roles(roles ...domain.Role) func(http.Handler) http.Handler {
 func currentUser(r *http.Request) domain.User {
 	value, _ := r.Context().Value(userKey).(domain.User)
 	return value
+}
+func currentClaims(r *http.Request) security.Claims {
+	value, _ := r.Context().Value(claimsKey).(security.Claims)
+	return value
+}
+func currentIAMToken(r *http.Request) string {
+	value, _ := r.Context().Value(iamTokenKey).(string)
+	return value
+}
+func normalizedAuthSource(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "feishu"
+	}
+	return value
+}
+func readIAMToken(r *http.Request) (string, bool) {
+	cookie, err := r.Cookie("iam_user_token")
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return "", false
+	}
+	return strings.TrimSpace(cookie.Value), true
+}
+func setSessionCookie(w http.ResponseWriter, token string, secure bool) {
+	http.SetCookie(w, &http.Cookie{Name: "ai_agent_session", Value: token, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, MaxAge: 43200})
+}
+func (s *Server) writeIAMError(w http.ResponseWriter, err error) {
+	if code, ok := iamintegration.ErrorCode(err); ok {
+		writeIAMCode(w, code, strings.TrimPrefix(err.Error(), fmt.Sprintf("iam error %d: ", code)))
+		return
+	}
+	writeIAMCode(w, iamintegration.CodeUnavailable, "IAM 服务暂时不可用")
+}
+func writeIAMCode(w http.ResponseWriter, code int, message string) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"code": code, "message": message})
 }
 func readMultipart(file multipart.File, limit int64) ([]byte, error) {
 	reader := http.MaxBytesReader(nil, file, limit)

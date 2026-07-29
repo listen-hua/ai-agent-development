@@ -8,6 +8,7 @@ import (
 
 type contactUserPayload struct {
 	OpenID        string   `json:"open_id"`
+	UserID        string   `json:"user_id"`
 	Name          string   `json:"name"`
 	DepartmentIDs []string `json:"department_ids"`
 	JobTitle      string   `json:"job_title"`
@@ -208,7 +209,7 @@ func (c *Client) ListContactUsers(ctx context.Context) ([]ContactUser, error) {
 				if item.Status.IsResigned || item.Status.IsExited {
 					status = "inactive"
 				}
-				values = append(values, ContactUser{OpenID: item.OpenID, Name: item.Name, AvatarURL: item.Avatar.Avatar72, DepartmentIDs: item.DepartmentIDs, JobTitle: item.JobTitle, JobLevelID: item.JobLevelID, JobFamilyID: item.JobFamilyID, EmployeeType: item.EmployeeType, Status: status})
+				values = append(values, ContactUser{OpenID: item.OpenID, UserID: item.UserID, Name: item.Name, AvatarURL: item.Avatar.Avatar72, DepartmentIDs: item.DepartmentIDs, JobTitle: item.JobTitle, JobLevelID: item.JobLevelID, JobFamilyID: item.JobFamilyID, EmployeeType: item.EmployeeType, Status: status})
 			}
 			if !output.Data.HasMore || output.Data.PageToken == "" {
 				break

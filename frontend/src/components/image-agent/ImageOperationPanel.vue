@@ -17,6 +17,7 @@ const props = defineProps<{
   actions: ImagePromptAction[]
   references: ImageAsset[]
   busy?: boolean
+  locked?: boolean
   uploading?: boolean
 }>()
 const emit = defineEmits<{
@@ -66,7 +67,7 @@ function updateStrength(value: number) {
       <p>后续可在画布上编排生图、重绘、放大和批处理节点。首期仅开放文生图。</p>
     </div>
 
-    <div v-else class="text-to-image-form">
+    <div v-else class="text-to-image-form" :class="{ locked }" :aria-busy="locked">
       <section class="form-section description-section">
         <header><strong>文本描述</strong><div>
           <el-select :model-value="modelValue.relayId" placeholder="选择中转站" @update:model-value="update({ relayId: String($event) })">
@@ -97,7 +98,7 @@ function updateStrength(value: number) {
 
       <ReferenceImageSlots
         :assets="references"
-        :disabled="uploading"
+        :disabled="uploading || locked"
         @upload="emit('upload', $event)"
         @remove="emit('remove-reference', $event)"
         @canvas-drop="(assetId, index) => emit('canvas-reference', assetId, index)"
@@ -174,6 +175,7 @@ function updateStrength(value: number) {
 .module-tabs button { position: relative; height: 42px; border: 0; border-radius: 10px; color: #878090; background: transparent; display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 14px; cursor: pointer; }
 .module-tabs button.active { color: #6d479a; background: #f2ebf9; font-weight: 650; }.module-tabs small { position: absolute; top: 3px; right: 5px; color: #b0a9b8; font-size: 10px; }
 .text-to-image-form { padding: 15px; display: grid; gap: 17px; }
+.text-to-image-form.locked { pointer-events: none; opacity: .72; transition: opacity .18s ease; }
 .form-section { display: grid; gap: 8px; }
 .form-section > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .form-section > header > strong { color: #3d4657; font-size: 14px; }.form-section > header > small { color: #9ba2ae; font-size: 11px; }

@@ -205,6 +205,38 @@ func (m *Memory) UpdateImageCanvas(_ context.Context, value domain.ImageCanvas, 
 	return existing, nil
 }
 
+func (m *Memory) ImportImageCanvasAsset(_ context.Context, canvas domain.ImageCanvas, expectedVersion int64, asset domain.ImageAsset, node domain.ImageCanvasNode) (domain.ImageCanvas, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := canvasMemoryKey(canvas.UserID, canvas.ProjectID)
+	existing, ok := m.imageCanvases[key]
+	if !ok {
+		return canvas, ErrNotFound
+	}
+	if existing.ID != canvas.ID || existing.Version != expectedVersion {
+		return canvas, ErrConflict
+	}
+	if _, exists := m.imageAssets[asset.ID]; exists {
+		return canvas, ErrConflict
+	}
+	maxZ := 0
+	for _, current := range existing.Nodes {
+		if current.ID == node.ID {
+			return canvas, ErrConflict
+		}
+		if current.ZIndex > maxZ {
+			maxZ = current.ZIndex
+		}
+	}
+	node.ZIndex = maxZ + 1
+	existing.Nodes = append(existing.Nodes, node)
+	existing.Version++
+	existing.UpdatedAt = time.Now()
+	m.imageAssets[asset.ID] = asset
+	m.imageCanvases[key] = existing
+	return existing, nil
+}
+
 func (m *Memory) CreateImageAsset(_ context.Context, value domain.ImageAsset) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -222,7 +254,7 @@ func (m *Memory) GetImageAsset(_ context.Context, id string) (domain.ImageAsset,
 	return value, nil
 }
 
-func (m *Memory) CreateImageJob(_ context.Context, value domain.ImageJob, nodes []domain.ImageCanvasNode) (domain.ImageJob, error) {
+func (m *Memory) CreateImageJob(_ context.Context, value domain.ImageJob, nodes []domain.ImageCanvasNode, expectedCanvasVersion int64) (domain.ImageJob, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.imageJobs {
@@ -230,14 +262,21 @@ func (m *Memory) CreateImageJob(_ context.Context, value domain.ImageJob, nodes 
 			return existing, nil
 		}
 	}
+	key := canvasMemoryKey(value.UserID, value.ProjectID)
+	canvas := m.imageCanvases[key]
+	if len(nodes) > 0 {
+		if canvas.ID != value.CanvasID || canvas.Version != expectedCanvasVersion {
+			return value, ErrConflict
+		}
+		canvas.Version++
+		canvas.UpdatedAt = time.Now()
+	}
 	value.Outputs = make([]domain.ImageJobOutput, value.Count)
 	for index := range value.Outputs {
 		value.Outputs[index] = domain.ImageJobOutput{ID: ids.New("output"), JobID: value.ID, OutputIndex: index,
 			Status: "pending", CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt}
 	}
 	m.imageJobs[value.ID] = value
-	key := canvasMemoryKey(value.UserID, value.ProjectID)
-	canvas := m.imageCanvases[key]
 	canvas.Nodes = append(canvas.Nodes, nodes...)
 	m.imageCanvases[key] = canvas
 	return value, nil

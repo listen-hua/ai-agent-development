@@ -3,6 +3,9 @@ import { ElMessage } from 'element-plus'
 import { ApiError } from '@/services/api'
 import { imageAgentService } from '@/services/image-agent'
 import { hasCartoonStrength } from '@/utils/imagePrompt'
+import {
+  canvasImportPositions, validateCanvasImportFiles, type CanvasImportOrigin,
+} from '@/utils/imageCanvasImport'
 import type {
   ImageAgentOptions, ImageAsset, ImageCanvas, ImageFormState, ImageJob, ImagePromptAction, ImageViewport,
   ImageCanvasNode,
@@ -26,6 +29,8 @@ export function useImageWorkspace() {
   })
   const loading = ref(true)
   const uploading = ref(false)
+  const importing = ref(false)
+  const importProgress = ref('')
   const generating = ref(false)
   const currentJob = ref<ImageJob>()
   const selectedProject = computed(() => options.value.projects.find((item) => item.id === form.value.projectId))
@@ -33,6 +38,7 @@ export function useImageWorkspace() {
   let saveTimer: number | undefined
   let pollTimer: number | undefined
   let saveInFlight = false
+  let savePromise: Promise<void> | undefined
   let pendingCanvasPatch: { viewport: ImageViewport; nodes: ImageCanvasNode[] } | undefined
   let projectWatchReady = false
 
@@ -168,40 +174,121 @@ export function useImageWorkspace() {
   }
 
   function scheduleCanvasSave(value: { viewport: ImageViewport; nodes: ImageCanvasNode[] }) {
-    if (!canvas.value || !selectedProject.value?.enabled) return
+    if (!canvas.value || !selectedProject.value?.enabled || importing.value) return
     pendingCanvasPatch = value
     window.clearTimeout(saveTimer)
     saveTimer = window.setTimeout(flushCanvasSave, 550)
   }
 
-  async function flushCanvasSave() {
-    if (saveInFlight || !pendingCanvasPatch || !canvas.value) return
+  function flushCanvasSave(): Promise<void> {
+    if (savePromise) return savePromise
+    if (!pendingCanvasPatch || !canvas.value) return Promise.resolve()
     saveInFlight = true
     const patch = pendingCanvasPatch
     pendingCanvasPatch = undefined
-    try {
-      const saved = await imageAgentService.saveCanvas(form.value.projectId, {
-        viewport: patch.viewport,
-        nodes: patch.nodes,
-        version: canvas.value.version,
-      })
-      canvas.value.version = saved.version
-      canvas.value.viewport = patch.viewport
-      canvas.value.nodes = patch.nodes
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 409) {
-        canvas.value = await imageAgentService.canvas(form.value.projectId)
-        ElMessage.warning('画布已在其他页面更新，已加载最新版本')
-      } else {
-        showError(error, '保存画布位置失败')
+    savePromise = (async () => {
+      try {
+        const saved = await imageAgentService.saveCanvas(form.value.projectId, {
+          viewport: patch.viewport,
+          nodes: patch.nodes,
+          version: canvas.value!.version,
+        })
+        canvas.value!.version = saved.version
+        canvas.value!.viewport = patch.viewport
+        canvas.value!.nodes = patch.nodes
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          canvas.value = await imageAgentService.canvas(form.value.projectId)
+          ElMessage.warning('画布已在其他页面更新，已加载最新版本')
+        } else {
+          showError(error, '保存画布位置失败')
+        }
       }
-    } finally {
+    })().finally(() => {
       saveInFlight = false
+      savePromise = undefined
       if (pendingCanvasPatch) saveTimer = window.setTimeout(flushCanvasSave, 100)
+    })
+    return savePromise
+  }
+
+  async function drainCanvasSave() {
+    window.clearTimeout(saveTimer)
+    while (savePromise || pendingCanvasPatch || saveInFlight) {
+      if (savePromise) await savePromise
+      else await flushCanvasSave()
+      window.clearTimeout(saveTimer)
     }
   }
 
-  async function submit(center = { x: 0, y: 0 }) {
+  async function importToCanvas(files: File[], point: { x: number; y: number }, origin: CanvasImportOrigin) {
+    if (importing.value) {
+      ElMessage.info('图片正在导入，请稍候')
+      return
+    }
+    if (!form.value.projectId || !canvas.value) {
+      ElMessage.warning('请先选择一个生图项目')
+      return
+    }
+    if (!selectedProject.value?.enabled) {
+      ElMessage.warning('项目已停用，历史画布只读')
+      return
+    }
+    const { accepted, rejected } = validateCanvasImportFiles(files)
+    if (!accepted.length) {
+      ElMessage.warning(importRejectionMessage(rejected))
+      return
+    }
+    importing.value = true
+    const projectID = form.value.projectId
+    let succeeded = 0
+    let failed = rejected.length
+    let lastError: unknown
+    try {
+      await drainCanvasSave()
+      const positions = canvasImportPositions(point, accepted.length)
+      let stop = false
+      for (let index = 0; index < accepted.length && !stop; index++) {
+        importProgress.value = `正在导入 ${index + 1}/${accepted.length}`
+        let retryConflict = true
+        while (true) {
+          try {
+            canvas.value = await imageAgentService.importCanvasAsset(projectID, accepted[index], {
+              ...positions[index],
+              version: canvas.value!.version,
+              origin,
+            })
+            succeeded++
+            break
+          } catch (error) {
+            if (error instanceof ApiError && error.status === 409 && retryConflict) {
+              canvas.value = await imageAgentService.canvas(projectID)
+              retryConflict = false
+              continue
+            }
+            lastError = error
+            failed++
+            if (error instanceof ApiError && error.status === 409) {
+              failed += accepted.length - index - 1
+              stop = true
+              ElMessage.warning('画布持续发生版本冲突，已停止导入剩余图片')
+            }
+            break
+          }
+        }
+      }
+      if (succeeded && failed) ElMessage.warning(`已导入 ${succeeded} 张，${failed} 张未导入`)
+      else if (succeeded) ElMessage.success(`已将 ${succeeded} 张图片添加到画布`)
+      else showError(lastError, '图片导入失败')
+    } catch (error) {
+      showError(error, '准备画布导入失败')
+    } finally {
+      importing.value = false
+      importProgress.value = ''
+    }
+  }
+
+  async function submit(center: { x: number; y: number; anchorNodeId?: string } = { x: 0, y: 0 }) {
     if (generating.value || !form.value.projectId || !form.value.modelId || !form.value.relayId) return
     if (!selectedProject.value?.enabled) {
       ElMessage.warning('项目已停用，历史画布仅可查看')
@@ -210,6 +297,7 @@ export function useImageWorkspace() {
     generating.value = true
     window.clearTimeout(pollTimer)
     try {
+      if (!form.value.reversePrompt) await drainCanvasSave()
       currentJob.value = await imageAgentService.createJob({
         project_id: form.value.projectId,
         relay_id: form.value.relayId,
@@ -223,6 +311,7 @@ export function useImageWorkspace() {
         idempotency_key: crypto.randomUUID(),
         placement_x: center.x,
         placement_y: center.y,
+        anchor_node_id: center.anchorNodeId || undefined,
       })
       if (!form.value.reversePrompt) canvas.value = await imageAgentService.canvas(form.value.projectId)
       pollJob(currentJob.value.id)
@@ -258,7 +347,10 @@ export function useImageWorkspace() {
     }
   }
 
-  async function applyAction(action: ImagePromptAction, center = { x: 0, y: 0 }) {
+  async function applyAction(
+    action: ImagePromptAction,
+    center: { x: number; y: number; anchorNodeId?: string } = { x: 0, y: 0 },
+  ) {
     form.value.prompt = action.prompt_template
     if (!form.value.reversePrompt && !hasCartoonStrength(action.prompt_template)) {
       await submit(center)
@@ -271,9 +363,15 @@ export function useImageWorkspace() {
   })
 
   return {
-    options, canvas, references, form, loading, uploading, generating, currentJob, selectedProject,
-    initialize, upload, addCanvasReference, removeReference, scheduleCanvasSave, submit, applyAction,
+    options, canvas, references, form, loading, uploading, importing, importProgress, generating, currentJob, selectedProject,
+    initialize, upload, importToCanvas, addCanvasReference, removeReference, scheduleCanvasSave, submit, applyAction,
   }
+}
+
+function importRejectionMessage(rejected: ReturnType<typeof validateCanvasImportFiles>['rejected']) {
+  if (rejected.some((item) => item.reason === 'limit')) return '每次最多导入 20 张图片'
+  if (rejected.some((item) => item.reason === 'size')) return '单张图片不能超过 10 MB'
+  return '只支持 JPG、PNG 和 WEBP 图片文件'
 }
 
 function showError(error: unknown, fallback: string) {

@@ -8,6 +8,7 @@ import (
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
+	"math"
 	"mime"
 	"net/http"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	_ "golang.org/x/image/webp"
 	"internal-ai-agent/backend/internal/blob"
 	"internal-ai-agent/backend/internal/domain"
 	"internal-ai-agent/backend/internal/ids"
@@ -76,6 +78,16 @@ type ImageCanvasPatch struct {
 	Version  int64
 }
 
+type ImageCanvasImport struct {
+	FileName     string
+	DeclaredMIME string
+	Data         []byte
+	X            float64
+	Y            float64
+	Version      int64
+	Origin       string
+}
+
 type ImageJobInput struct {
 	ProjectID         string
 	RelayID           string
@@ -89,6 +101,7 @@ type ImageJobInput struct {
 	IdempotencyKey    string
 	PlacementX        float64
 	PlacementY        float64
+	AnchorNodeID      string
 }
 
 type ImageAgent struct {
@@ -487,13 +500,80 @@ func (s *ImageAgent) UpdateCanvas(ctx context.Context, user domain.User, project
 }
 
 func (s *ImageAgent) UploadAsset(ctx context.Context, user domain.User, projectID, fileName, declaredMIME string, data []byte) (domain.ImageAsset, error) {
-	project, err := s.authorizedProject(ctx, user, projectID, true)
+	if _, err := s.authorizedProject(ctx, user, projectID, true); err != nil {
+		return domain.ImageAsset{}, err
+	}
+	value, err := s.prepareUploadedImage(ctx, user, projectID, fileName, declaredMIME, data)
 	if err != nil {
 		return domain.ImageAsset{}, err
 	}
-	_ = project
+	if err = s.blobs.Put(ctx, value.ObjectKey, data, value.MIMEType); err != nil {
+		return value, err
+	}
+	if err = s.repo.CreateImageAsset(ctx, value); err != nil {
+		_ = s.blobs.Delete(ctx, value.ObjectKey)
+		return value, err
+	}
+	s.appendAudit(ctx, user, "image.asset.upload", "image_asset", value.ID, map[string]any{"project_id": projectID, "size": len(data)})
+	return value, nil
+}
+
+func (s *ImageAgent) ImportCanvasAsset(ctx context.Context, user domain.User, projectID string, input ImageCanvasImport) (domain.ImageCanvas, error) {
+	if _, err := s.authorizedProject(ctx, user, projectID, true); err != nil {
+		return domain.ImageCanvas{}, err
+	}
+	input.Origin = strings.TrimSpace(input.Origin)
+	if input.Origin != "paste" && input.Origin != "drop" {
+		return domain.ImageCanvas{}, errors.New("图片导入来源只能是 paste 或 drop")
+	}
+	if input.Version < 1 {
+		return domain.ImageCanvas{}, errors.New("画布版本无效")
+	}
+	if math.IsNaN(input.X) || math.IsNaN(input.Y) || math.IsInf(input.X, 0) || math.IsInf(input.Y, 0) {
+		return domain.ImageCanvas{}, errors.New("图片位置无效")
+	}
+	canvas, err := s.repo.GetOrCreateImageCanvas(ctx, user.ID, projectID)
+	if err != nil {
+		return canvas, err
+	}
+	asset, err := s.prepareUploadedImage(ctx, user, projectID, input.FileName, input.DeclaredMIME, input.Data)
+	if err != nil {
+		return canvas, err
+	}
+	width, height := importedNodeDimensions(asset.Width, asset.Height)
+	now := time.Now()
+	node := domain.ImageCanvasNode{
+		ID:        ids.New("node"),
+		CanvasID:  canvas.ID,
+		AssetID:   asset.ID,
+		Status:    "ready",
+		X:         input.X - width/2,
+		Y:         input.Y - height/2,
+		Width:     width,
+		Height:    height,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err = s.blobs.Put(ctx, asset.ObjectKey, input.Data, asset.MIMEType); err != nil {
+		return canvas, err
+	}
+	updated, err := s.repo.ImportImageCanvasAsset(ctx, canvas, input.Version, asset, node)
+	if err != nil {
+		_ = s.blobs.Delete(ctx, asset.ObjectKey)
+		return canvas, err
+	}
+	s.appendAudit(ctx, user, "image.asset.canvas_import", "image_asset", asset.ID, map[string]any{
+		"project_id": projectID,
+		"origin":     input.Origin,
+		"size":       len(input.Data),
+		"node_id":    node.ID,
+	})
+	return updated, nil
+}
+
+func (s *ImageAgent) prepareUploadedImage(ctx context.Context, user domain.User, projectID, fileName, declaredMIME string, data []byte) (domain.ImageAsset, error) {
 	if len(data) == 0 || len(data) > 10<<20 {
-		return domain.ImageAsset{}, errors.New("单张参考图不能超过 10 MB")
+		return domain.ImageAsset{}, errors.New("单张图片不能超过 10 MB")
 	}
 	detected := http.DetectContentType(data)
 	if detected != "image/jpeg" && detected != "image/png" && detected != "image/webp" {
@@ -502,10 +582,13 @@ func (s *ImageAgent) UploadAsset(ctx context.Context, user domain.User, projectI
 	if declaredMIME != "" && !strings.HasPrefix(declaredMIME, "image/") {
 		return domain.ImageAsset{}, errors.New("上传文件不是图片")
 	}
-	if err = s.scanner.Scan(ctx, data); err != nil {
+	if err := s.scanner.Scan(ctx, data); err != nil {
 		return domain.ImageAsset{}, fmt.Errorf("图片安全扫描失败: %w", err)
 	}
 	width, height := imageDimensions(data)
+	if width <= 0 || height <= 0 {
+		return domain.ImageAsset{}, errors.New("无法读取图片尺寸")
+	}
 	now := time.Now()
 	extension, _ := mime.ExtensionsByType(detected)
 	suffix := ".bin"
@@ -516,14 +599,6 @@ func (s *ImageAgent) UploadAsset(ctx context.Context, user domain.User, projectI
 		ObjectKey: "image-agent/" + user.ID + "/" + ids.New("object") + suffix, MIMEType: detected,
 		FileName: filepath.Base(fileName), Width: width, Height: height, SizeBytes: int64(len(data)),
 		Source: "upload", CreatedAt: now}
-	if err = s.blobs.Put(ctx, value.ObjectKey, data, value.MIMEType); err != nil {
-		return value, err
-	}
-	if err = s.repo.CreateImageAsset(ctx, value); err != nil {
-		_ = s.blobs.Delete(ctx, value.ObjectKey)
-		return value, err
-	}
-	s.appendAudit(ctx, user, "image.asset.upload", "image_asset", value.ID, map[string]any{"project_id": projectID, "size": len(data)})
 	return value, nil
 }
 
@@ -608,20 +683,28 @@ func (s *ImageAgent) CreateJob(ctx context.Context, user domain.User, input Imag
 	if referenceBytes > 30<<20 {
 		return domain.ImageJob{}, errors.New("参考图总大小不能超过 30 MB")
 	}
-	canvas, err := s.repo.GetOrCreateImageCanvas(ctx, user.ID, input.ProjectID)
-	if err != nil {
-		return domain.ImageJob{}, err
-	}
 	now := time.Now()
-	job := domain.ImageJob{ID: ids.New("job"), UserID: user.ID, ProjectID: input.ProjectID, CanvasID: canvas.ID,
+	job := domain.ImageJob{ID: ids.New("job"), UserID: user.ID, ProjectID: input.ProjectID,
 		RelayID: relay.ID, ModelID: model.ID, Kind: input.Kind, Prompt: input.Prompt, AspectRatio: input.AspectRatio,
 		ImageSize: input.ImageSize, Count: input.Count, ReferenceAssetIDs: input.ReferenceAssetIDs, Status: "pending",
 		NextAttemptAt: now, IdempotencyKey: input.IdempotencyKey, CreatedAt: now, UpdatedAt: now}
-	nodes := []domain.ImageCanvasNode{}
-	if input.Kind == "generate" {
-		nodes = placeholderNodes(canvas, job, input.PlacementX, input.PlacementY)
+	var created domain.ImageJob
+	for attempt := 0; attempt < 2; attempt++ {
+		var canvas domain.ImageCanvas
+		canvas, err = s.repo.GetOrCreateImageCanvas(ctx, user.ID, input.ProjectID)
+		if err != nil {
+			return domain.ImageJob{}, err
+		}
+		job.CanvasID = canvas.ID
+		nodes := []domain.ImageCanvasNode{}
+		if input.Kind == "generate" {
+			nodes = placeholderNodes(canvas, job, input.AnchorNodeID, input.PlacementX, input.PlacementY)
+		}
+		created, err = s.repo.CreateImageJob(ctx, job, nodes, canvas.Version)
+		if !errors.Is(err, store.ErrConflict) || input.Kind != "generate" {
+			break
+		}
 	}
-	created, err := s.repo.CreateImageJob(ctx, job, nodes)
 	if err == nil {
 		s.appendAudit(ctx, user, "image.job.create", "image_job", created.ID, map[string]any{
 			"project_id": input.ProjectID, "relay_id": relay.ID, "model_id": model.ID, "kind": input.Kind, "count": input.Count,
@@ -702,7 +785,16 @@ func (s *ImageAgent) appendAudit(ctx context.Context, actor domain.User, action,
 		Action: action, ResourceType: resourceType, ResourceID: resourceID, Metadata: metadata, CreatedAt: time.Now()})
 }
 
-func placeholderNodes(canvas domain.ImageCanvas, job domain.ImageJob, x, y float64) []domain.ImageCanvasNode {
+const imageCanvasNodeGap = 24.0
+
+type imageCanvasRect struct {
+	x      float64
+	y      float64
+	width  float64
+	height float64
+}
+
+func placeholderNodes(canvas domain.ImageCanvas, job domain.ImageJob, anchorNodeID string, x, y float64) []domain.ImageCanvasNode {
 	if x == 0 && y == 0 {
 		zoom := canvas.Viewport.Zoom
 		if zoom <= 0 {
@@ -712,24 +804,85 @@ func placeholderNodes(canvas domain.ImageCanvas, job domain.ImageJob, x, y float
 	}
 	width, height := nodeDimensions(job.AspectRatio)
 	result := make([]domain.ImageCanvasNode, 0, job.Count)
+	columns := 2
+	if job.Count == 1 {
+		columns = 1
+	}
+	rows := (job.Count + columns - 1) / columns
+	block := imageCanvasRect{
+		width:  float64(min(job.Count, columns))*width + float64(min(job.Count, columns)-1)*imageCanvasNodeGap,
+		height: float64(rows)*height + float64(rows-1)*imageCanvasNodeGap,
+	}
+	if len(canvas.Nodes) == 0 {
+		block.x, block.y = x-block.width/2, y-block.height/2
+	} else {
+		anchor := nearestImageCanvasNode(canvas.Nodes, anchorNodeID, x, y)
+		block.x, block.y = anchor.X+anchor.Width+imageCanvasNodeGap, anchor.Y
+		block.x = firstFreeCanvasBlockX(block, canvas.Nodes)
+	}
 	maxZ := 0
 	for _, node := range canvas.Nodes {
 		if node.ZIndex > maxZ {
 			maxZ = node.ZIndex
 		}
 	}
-	columns := 2
-	if job.Count == 1 {
-		columns = 1
-	}
 	for index := 0; index < job.Count; index++ {
 		column, row := index%columns, index/columns
 		now := time.Now()
 		result = append(result, domain.ImageCanvasNode{ID: ids.New("node"), CanvasID: canvas.ID, JobID: job.ID,
-			OutputIndex: index, Status: "pending", X: x + float64(column)*(width+32), Y: y + float64(row)*(height+32),
+			OutputIndex: index, Status: "pending",
+			X:     block.x + float64(column)*(width+imageCanvasNodeGap),
+			Y:     block.y + float64(row)*(height+imageCanvasNodeGap),
 			Width: width, Height: height, ZIndex: maxZ + index + 1, CreatedAt: now, UpdatedAt: now})
 	}
 	return result
+}
+
+func nearestImageCanvasNode(nodes []domain.ImageCanvasNode, preferredID string, x, y float64) domain.ImageCanvasNode {
+	for _, node := range nodes {
+		if preferredID != "" && node.ID == preferredID {
+			return node
+		}
+	}
+	nearest := nodes[0]
+	nearestDistance := math.MaxFloat64
+	for _, node := range nodes {
+		centerX, centerY := node.X+node.Width/2, node.Y+node.Height/2
+		distance := (centerX-x)*(centerX-x) + (centerY-y)*(centerY-y)
+		if distance < nearestDistance {
+			nearest, nearestDistance = node, distance
+		}
+	}
+	return nearest
+}
+
+func firstFreeCanvasBlockX(block imageCanvasRect, nodes []domain.ImageCanvasNode) float64 {
+	for attempt := 0; attempt <= len(nodes); attempt++ {
+		nextX := block.x
+		collided := false
+		for _, node := range nodes {
+			target := imageCanvasRect{x: node.X, y: node.Y, width: node.Width, height: node.Height}
+			if canvasRectsRespectGap(block, target, imageCanvasNodeGap) {
+				continue
+			}
+			collided = true
+			if candidate := node.X + node.Width + imageCanvasNodeGap; candidate > nextX {
+				nextX = candidate
+			}
+		}
+		if !collided {
+			return block.x
+		}
+		block.x = nextX
+	}
+	return block.x
+}
+
+func canvasRectsRespectGap(left, right imageCanvasRect, gap float64) bool {
+	return left.x+left.width+gap <= right.x ||
+		right.x+right.width+gap <= left.x ||
+		left.y+left.height+gap <= right.y ||
+		right.y+right.height+gap <= left.y
 }
 
 func nodeDimensions(ratio string) (float64, float64) {
@@ -743,6 +896,15 @@ func nodeDimensions(ratio string) (float64, float64) {
 		return 360, 360 * heightRatio / widthRatio
 	}
 	return 360 * widthRatio / heightRatio, 360
+}
+
+func importedNodeDimensions(pixelWidth, pixelHeight int) (float64, float64) {
+	if pixelWidth <= 0 || pixelHeight <= 0 {
+		return 360, 360
+	}
+	width, height := float64(pixelWidth), float64(pixelHeight)
+	scale := 360 / math.Max(width, height)
+	return width * scale, height * scale
 }
 
 func imageDimensions(data []byte) (int, int) {

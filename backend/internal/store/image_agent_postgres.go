@@ -309,6 +309,46 @@ func (p *Postgres) UpdateImageCanvas(ctx context.Context, value domain.ImageCanv
 	return value, nil
 }
 
+func (p *Postgres) ImportImageCanvasAsset(ctx context.Context, canvas domain.ImageCanvas, expectedVersion int64, asset domain.ImageAsset, node domain.ImageCanvasNode) (domain.ImageCanvas, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return canvas, err
+	}
+	defer tx.Rollback(ctx)
+	var version int64
+	err = tx.QueryRow(ctx, `UPDATE image_canvases SET version=version+1,updated_at=now()
+		WHERE id=$1 AND user_id=$2 AND project_id=$3 AND version=$4 RETURNING version`,
+		canvas.ID, canvas.UserID, canvas.ProjectID, expectedVersion).Scan(&version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return canvas, ErrConflict
+	}
+	if err != nil {
+		return canvas, err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO image_assets(id,owner_id,project_id,object_key,mime_type,file_name,width,height,size_bytes,source,created_at)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		asset.ID, asset.OwnerID, asset.ProjectID, asset.ObjectKey, asset.MIMEType, asset.FileName,
+		asset.Width, asset.Height, asset.SizeBytes, asset.Source, asset.CreatedAt); err != nil {
+		return canvas, err
+	}
+	err = tx.QueryRow(ctx, `INSERT INTO image_canvas_nodes(id,canvas_id,asset_id,output_index,status,x,y,width,height,z_index,error,created_at,updated_at)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,
+			(SELECT COALESCE(MAX(z_index),0)+1 FROM image_canvas_nodes WHERE canvas_id=$2),$10,$11,$12)
+		RETURNING z_index`,
+		node.ID, canvas.ID, asset.ID, node.OutputIndex, node.Status, node.X, node.Y, node.Width, node.Height,
+		node.Error, node.CreatedAt, node.UpdatedAt).Scan(&node.ZIndex)
+	if err != nil {
+		return canvas, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return canvas, err
+	}
+	canvas.Version = version
+	canvas.UpdatedAt = time.Now()
+	canvas.Nodes = append(canvas.Nodes, node)
+	return canvas, nil
+}
+
 func (p *Postgres) CreateImageAsset(ctx context.Context, value domain.ImageAsset) error {
 	_, err := p.pool.Exec(ctx, `INSERT INTO image_assets(id,owner_id,project_id,object_key,mime_type,file_name,width,height,size_bytes,source,created_at)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
@@ -328,7 +368,7 @@ func (p *Postgres) GetImageAsset(ctx context.Context, id string) (domain.ImageAs
 	return value, err
 }
 
-func (p *Postgres) CreateImageJob(ctx context.Context, value domain.ImageJob, nodes []domain.ImageCanvasNode) (domain.ImageJob, error) {
+func (p *Postgres) CreateImageJob(ctx context.Context, value domain.ImageJob, nodes []domain.ImageCanvasNode, expectedCanvasVersion int64) (domain.ImageJob, error) {
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return value, err
@@ -348,6 +388,16 @@ func (p *Postgres) CreateImageJob(ctx context.Context, value domain.ImageJob, no
 	if tag.RowsAffected() == 0 {
 		tx.Rollback(ctx)
 		return p.getImageJobByIdempotency(ctx, value.UserID, value.IdempotencyKey)
+	}
+	if len(nodes) > 0 {
+		tag, err = tx.Exec(ctx, `UPDATE image_canvases SET version=version+1,updated_at=now()
+			WHERE id=$1 AND version=$2`, value.CanvasID, expectedCanvasVersion)
+		if err != nil {
+			return value, err
+		}
+		if tag.RowsAffected() == 0 {
+			return value, ErrConflict
+		}
 	}
 	for index := 0; index < value.Count; index++ {
 		if _, err = tx.Exec(ctx, `INSERT INTO image_job_outputs(id,job_id,output_index,status,created_at,updated_at)

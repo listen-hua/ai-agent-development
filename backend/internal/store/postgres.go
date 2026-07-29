@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"internal-ai-agent/backend/internal/domain"
 	"internal-ai-agent/backend/internal/ids"
@@ -61,20 +62,22 @@ func (p *Postgres) UpsertUser(ctx context.Context, u domain.User) (domain.User, 
 	}
 	defer tx.Rollback(ctx)
 	orgSynced := u.OrganizationSyncedAt != nil
-	err = tx.QueryRow(ctx, `INSERT INTO users(id,feishu_open_id,name,avatar_url,department_ids,job_title,job_level_id,job_family_id,employee_type,status,organization_synced_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+	err = tx.QueryRow(ctx, `INSERT INTO users(id,feishu_open_id,feishu_user_id,iam_user_id,name,avatar_url,department_ids,job_title,job_level_id,job_family_id,employee_type,status,organization_synced_at)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		ON CONFLICT(feishu_open_id) DO UPDATE SET
 			name=excluded.name,
 			avatar_url=CASE WHEN excluded.avatar_url<>'' THEN excluded.avatar_url ELSE users.avatar_url END,
-			department_ids=CASE WHEN $12 THEN excluded.department_ids ELSE users.department_ids END,
-			job_title=CASE WHEN $12 THEN excluded.job_title ELSE users.job_title END,
-			job_level_id=CASE WHEN $12 THEN excluded.job_level_id ELSE users.job_level_id END,
-			job_family_id=CASE WHEN $12 THEN excluded.job_family_id ELSE users.job_family_id END,
-			employee_type=CASE WHEN $12 THEN excluded.employee_type ELSE users.employee_type END,
-			status=CASE WHEN $12 THEN excluded.status ELSE users.status END,
-			organization_synced_at=CASE WHEN $12 THEN excluded.organization_synced_at ELSE users.organization_synced_at END,
+			feishu_user_id=COALESCE(NULLIF(excluded.feishu_user_id,''),users.feishu_user_id),
+			iam_user_id=COALESCE(excluded.iam_user_id,users.iam_user_id),
+			department_ids=CASE WHEN $14 THEN excluded.department_ids ELSE users.department_ids END,
+			job_title=CASE WHEN $14 THEN excluded.job_title ELSE users.job_title END,
+			job_level_id=CASE WHEN $14 THEN excluded.job_level_id ELSE users.job_level_id END,
+			job_family_id=CASE WHEN $14 THEN excluded.job_family_id ELSE users.job_family_id END,
+			employee_type=CASE WHEN $14 THEN excluded.employee_type ELSE users.employee_type END,
+			status=CASE WHEN $14 THEN excluded.status ELSE users.status END,
+			organization_synced_at=CASE WHEN $14 THEN excluded.organization_synced_at ELSE users.organization_synced_at END,
 			updated_at=now()
-		RETURNING id`, u.ID, u.FeishuOpenID, u.Name, u.AvatarURL, u.DepartmentIDs, u.JobTitle, u.JobLevelID, u.JobFamilyID, u.EmployeeType, u.Status, u.OrganizationSyncedAt, orgSynced).Scan(&u.ID)
+		RETURNING id`, u.ID, u.FeishuOpenID, u.FeishuUserID, u.IAMUserID, u.Name, u.AvatarURL, u.DepartmentIDs, u.JobTitle, u.JobLevelID, u.JobFamilyID, u.EmployeeType, u.Status, u.OrganizationSyncedAt, orgSynced).Scan(&u.ID)
 	if err != nil {
 		return u, err
 	}
@@ -91,16 +94,106 @@ func (p *Postgres) UpsertUser(ctx context.Context, u domain.User) (domain.User, 
 	}
 	return p.GetUser(ctx, u.ID)
 }
+
+func (p *Postgres) UpsertIAMUser(ctx context.Context, u domain.User) (domain.User, error) {
+	if u.IAMUserID == nil || *u.IAMUserID <= 0 || strings.TrimSpace(u.FeishuOpenID) == "" || strings.TrimSpace(u.FeishuUserID) == "" {
+		return domain.User{}, ErrConflict
+	}
+	if u.ID == "" {
+		u.ID = ids.New("usr")
+	}
+	if u.DepartmentIDs == nil {
+		u.DepartmentIDs = []string{}
+	}
+	if u.Status == "" {
+		u.Status = "active"
+	}
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return domain.User{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var existingID, existingFeishuUserID string
+	var existingIAMUserID *int64
+	err = tx.QueryRow(ctx, `SELECT id,iam_user_id,COALESCE(feishu_user_id,'') FROM users WHERE feishu_open_id=$1 FOR UPDATE`, u.FeishuOpenID).
+		Scan(&existingID, &existingIAMUserID, &existingFeishuUserID)
+	switch {
+	case err == nil:
+		if existingIAMUserID != nil && *existingIAMUserID != *u.IAMUserID {
+			return domain.User{}, ErrConflict
+		}
+		if existingFeishuUserID != "" && existingFeishuUserID != u.FeishuUserID {
+			return domain.User{}, ErrConflict
+		}
+		u.ID = existingID
+	case errors.Is(err, pgx.ErrNoRows):
+		var conflicting bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(
+			SELECT 1 FROM users
+			WHERE iam_user_id=$1 OR (feishu_user_id IS NOT NULL AND feishu_user_id=$2)
+		)`, *u.IAMUserID, u.FeishuUserID).Scan(&conflicting); err != nil {
+			return domain.User{}, err
+		}
+		if conflicting {
+			return domain.User{}, ErrConflict
+		}
+	default:
+		return domain.User{}, err
+	}
+
+	if existingID == "" {
+		_, err = tx.Exec(ctx, `INSERT INTO users(id,feishu_open_id,feishu_user_id,iam_user_id,name,avatar_url,department_ids,job_title,job_level_id,job_family_id,employee_type,status,organization_synced_at)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+			u.ID, u.FeishuOpenID, u.FeishuUserID, u.IAMUserID, u.Name, u.AvatarURL, u.DepartmentIDs, u.JobTitle, u.JobLevelID, u.JobFamilyID, u.EmployeeType, u.Status, u.OrganizationSyncedAt)
+		if err == nil {
+			_, err = tx.Exec(ctx, `INSERT INTO role_assignments(user_id,role) VALUES($1,$2)`, u.ID, domain.RoleEmployee)
+		}
+	} else {
+		var conflicting bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(
+			SELECT 1 FROM users
+			WHERE id<>$1 AND (iam_user_id=$2 OR (feishu_user_id IS NOT NULL AND feishu_user_id=$3))
+		)`, u.ID, *u.IAMUserID, u.FeishuUserID).Scan(&conflicting); err != nil {
+			return domain.User{}, err
+		}
+		if conflicting {
+			return domain.User{}, ErrConflict
+		}
+		_, err = tx.Exec(ctx, `UPDATE users SET
+			iam_user_id=$2,feishu_user_id=$3,name=$4,
+			avatar_url=CASE WHEN $5<>'' THEN $5 ELSE avatar_url END,
+			department_ids=$6,job_title=$7,job_level_id=$8,job_family_id=$9,
+			employee_type=$10,status=$11,organization_synced_at=$12,updated_at=now()
+			WHERE id=$1`,
+			u.ID, u.IAMUserID, u.FeishuUserID, u.Name, u.AvatarURL, u.DepartmentIDs, u.JobTitle, u.JobLevelID, u.JobFamilyID, u.EmployeeType, u.Status, u.OrganizationSyncedAt)
+	}
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return domain.User{}, ErrConflict
+		}
+		return domain.User{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return domain.User{}, err
+	}
+	return p.GetUser(ctx, u.ID)
+}
+
 func (p *Postgres) GetUser(ctx context.Context, id string) (domain.User, error) {
 	return p.user(ctx, `WHERE u.id=$1`, id)
 }
 func (p *Postgres) GetUserByOpenID(ctx context.Context, id string) (domain.User, error) {
 	return p.user(ctx, `WHERE u.feishu_open_id=$1`, id)
 }
+func (p *Postgres) GetUserByIAMID(ctx context.Context, iamUserID int64) (domain.User, error) {
+	return p.user(ctx, `WHERE u.iam_user_id=$1`, iamUserID)
+}
 func (p *Postgres) user(ctx context.Context, clause string, arg any) (domain.User, error) {
 	var u domain.User
 	var roles []string
-	err := p.pool.QueryRow(ctx, `SELECT u.id,u.feishu_open_id,u.name,u.avatar_url,u.department_ids,u.job_title,u.job_level_id,u.job_family_id,u.employee_type,u.status,u.organization_synced_at,ARRAY(SELECT role FROM role_assignments WHERE user_id=u.id) FROM users u `+clause, arg).Scan(&u.ID, &u.FeishuOpenID, &u.Name, &u.AvatarURL, &u.DepartmentIDs, &u.JobTitle, &u.JobLevelID, &u.JobFamilyID, &u.EmployeeType, &u.Status, &u.OrganizationSyncedAt, &roles)
+	err := p.pool.QueryRow(ctx, `SELECT u.id,u.feishu_open_id,COALESCE(u.feishu_user_id,''),u.iam_user_id,u.name,u.avatar_url,u.department_ids,u.job_title,u.job_level_id,u.job_family_id,u.employee_type,u.status,u.organization_synced_at,ARRAY(SELECT role FROM role_assignments WHERE user_id=u.id) FROM users u `+clause, arg).Scan(&u.ID, &u.FeishuOpenID, &u.FeishuUserID, &u.IAMUserID, &u.Name, &u.AvatarURL, &u.DepartmentIDs, &u.JobTitle, &u.JobLevelID, &u.JobFamilyID, &u.EmployeeType, &u.Status, &u.OrganizationSyncedAt, &roles)
 	if err == pgx.ErrNoRows {
 		return u, ErrNotFound
 	}
@@ -108,7 +201,7 @@ func (p *Postgres) user(ctx context.Context, clause string, arg any) (domain.Use
 	return u, err
 }
 func (p *Postgres) ListUsers(ctx context.Context) ([]domain.User, error) {
-	rows, err := p.pool.Query(ctx, `SELECT u.id,u.feishu_open_id,u.name,u.avatar_url,u.department_ids,u.job_title,u.job_level_id,u.job_family_id,u.employee_type,u.status,u.organization_synced_at,ARRAY(SELECT role FROM role_assignments WHERE user_id=u.id) FROM users u ORDER BY u.name`)
+	rows, err := p.pool.Query(ctx, `SELECT u.id,u.feishu_open_id,COALESCE(u.feishu_user_id,''),u.iam_user_id,u.name,u.avatar_url,u.department_ids,u.job_title,u.job_level_id,u.job_family_id,u.employee_type,u.status,u.organization_synced_at,ARRAY(SELECT role FROM role_assignments WHERE user_id=u.id) FROM users u ORDER BY u.name`)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +210,7 @@ func (p *Postgres) ListUsers(ctx context.Context) ([]domain.User, error) {
 	for rows.Next() {
 		var u domain.User
 		var roles []string
-		if err = rows.Scan(&u.ID, &u.FeishuOpenID, &u.Name, &u.AvatarURL, &u.DepartmentIDs, &u.JobTitle, &u.JobLevelID, &u.JobFamilyID, &u.EmployeeType, &u.Status, &u.OrganizationSyncedAt, &roles); err != nil {
+		if err = rows.Scan(&u.ID, &u.FeishuOpenID, &u.FeishuUserID, &u.IAMUserID, &u.Name, &u.AvatarURL, &u.DepartmentIDs, &u.JobTitle, &u.JobLevelID, &u.JobFamilyID, &u.EmployeeType, &u.Status, &u.OrganizationSyncedAt, &roles); err != nil {
 			return nil, err
 		}
 		u.Roles = toRoles(roles)

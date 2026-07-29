@@ -13,8 +13,10 @@ var ErrConflict = errors.New("conflict")
 
 type Repository interface {
 	UpsertUser(context.Context, domain.User) (domain.User, error)
+	UpsertIAMUser(context.Context, domain.User) (domain.User, error)
 	GetUser(context.Context, string) (domain.User, error)
 	GetUserByOpenID(context.Context, string) (domain.User, error)
+	GetUserByIAMID(context.Context, int64) (domain.User, error)
 	ListUsers(context.Context) ([]domain.User, error)
 	UpdateUserRoles(context.Context, string, []domain.Role) (domain.User, error)
 	UpdateUserStatus(context.Context, string, string) error
@@ -124,9 +126,10 @@ type ImageRepository interface {
 	DeleteImagePromptAction(context.Context, string) error
 	GetOrCreateImageCanvas(context.Context, string, string) (domain.ImageCanvas, error)
 	UpdateImageCanvas(context.Context, domain.ImageCanvas, int64) (domain.ImageCanvas, error)
+	ImportImageCanvasAsset(context.Context, domain.ImageCanvas, int64, domain.ImageAsset, domain.ImageCanvasNode) (domain.ImageCanvas, error)
 	CreateImageAsset(context.Context, domain.ImageAsset) error
 	GetImageAsset(context.Context, string) (domain.ImageAsset, error)
-	CreateImageJob(context.Context, domain.ImageJob, []domain.ImageCanvasNode) (domain.ImageJob, error)
+	CreateImageJob(context.Context, domain.ImageJob, []domain.ImageCanvasNode, int64) (domain.ImageJob, error)
 	GetImageJob(context.Context, string) (domain.ImageJob, error)
 	ListImageJobs(context.Context, string, string, int) ([]domain.ImageJob, error)
 	ClaimImageJobs(context.Context, time.Time, time.Duration, int) ([]domain.ImageJob, error)

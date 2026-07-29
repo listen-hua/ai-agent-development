@@ -23,6 +23,12 @@ type Config struct {
 	MinIOSecure                bool
 	TikaURL                    string
 	ClamAVAddr                 string
+	IAMEnabled                 bool
+	IAMBaseURL                 string
+	IAMAppID                   string
+	IAMAppSecret               string
+	IAMAuthCacheSeconds        int
+	IAMHTTPTimeoutSeconds      int
 	FeishuAppID                string
 	FeishuAppSecret            string
 	FeishuRedirectURI          string
@@ -62,6 +68,12 @@ func Load() Config {
 		MinIOSecure:                envBool("MINIO_SECURE", false),
 		TikaURL:                    os.Getenv("TIKA_URL"),
 		ClamAVAddr:                 os.Getenv("CLAMAV_ADDR"),
+		IAMEnabled:                 envBool("IAM_ENABLED", false),
+		IAMBaseURL:                 env("IAM_BASE_URL", "https://iam.shimmergames.com"),
+		IAMAppID:                   os.Getenv("IAM_APP_ID"),
+		IAMAppSecret:               os.Getenv("IAM_APP_SECRET"),
+		IAMAuthCacheSeconds:        envInt("IAM_AUTH_CACHE_SECONDS", 30),
+		IAMHTTPTimeoutSeconds:      envInt("IAM_HTTP_TIMEOUT_SECONDS", 5),
 		FeishuAppID:                os.Getenv("FEISHU_APP_ID"),
 		FeishuAppSecret:            os.Getenv("FEISHU_APP_SECRET"),
 		FeishuRedirectURI:          os.Getenv("FEISHU_REDIRECT_URI"),
@@ -103,6 +115,19 @@ func (c Config) Validate() error {
 	}
 	if weakSecret(c.AgentSecretEncryptionKey) {
 		problems = append(problems, "AGENT_SECRET_ENCRYPTION_KEY must be a non-placeholder value with at least 32 characters")
+	}
+	if c.IAMEnabled {
+		if strings.TrimSpace(c.IAMBaseURL) == "" {
+			problems = append(problems, "IAM_BASE_URL is required when IAM_ENABLED=true")
+		} else if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.IAMBaseURL)), "https://") {
+			problems = append(problems, "IAM_BASE_URL must use HTTPS in production")
+		}
+		if strings.TrimSpace(c.IAMAppID) == "" {
+			problems = append(problems, "IAM_APP_ID is required when IAM_ENABLED=true")
+		}
+		if strings.TrimSpace(c.IAMAppSecret) == "" {
+			problems = append(problems, "IAM_APP_SECRET is required when IAM_ENABLED=true")
+		}
 	}
 	required := []struct {
 		name  string

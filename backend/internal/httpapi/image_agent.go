@@ -73,6 +73,54 @@ func (s *Server) uploadImageAsset(w http.ResponseWriter, r *http.Request) {
 	respondImage(w, value, err)
 }
 
+func (s *Server) importImageCanvasAsset(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 12<<20)
+	if err := r.ParseMultipartForm(12 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "上传内容不能超过 10 MB", err)
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "请选择图片", err)
+		return
+	}
+	defer file.Close()
+	x, err := strconv.ParseFloat(strings.TrimSpace(r.FormValue("x")), 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "图片横坐标无效", err)
+		return
+	}
+	y, err := strconv.ParseFloat(strings.TrimSpace(r.FormValue("y")), 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "图片纵坐标无效", err)
+		return
+	}
+	version, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("version")), 10, 64)
+	if err != nil || version < 1 {
+		writeError(w, http.StatusBadRequest, "画布版本无效", err)
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(file, (10<<20)+1))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "读取图片失败", err)
+		return
+	}
+	value, err := s.imageAgent.ImportCanvasAsset(r.Context(), currentUser(r), r.PathValue("id"), service.ImageCanvasImport{
+		FileName:     header.Filename,
+		DeclaredMIME: header.Header.Get("Content-Type"),
+		Data:         data,
+		X:            x,
+		Y:            y,
+		Version:      version,
+		Origin:       r.FormValue("origin"),
+	})
+	if err != nil {
+		respondImage(w, value, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, value)
+}
+
 func (s *Server) imageAssetContent(w http.ResponseWriter, r *http.Request) {
 	asset, data, err := s.imageAgent.AssetContent(r.Context(), currentUser(r), r.PathValue("id"))
 	if err != nil {
@@ -101,6 +149,7 @@ func (s *Server) createImageJob(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKey    string   `json:"idempotency_key"`
 		PlacementX        float64  `json:"placement_x"`
 		PlacementY        float64  `json:"placement_y"`
+		AnchorNodeID      string   `json:"anchor_node_id"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -109,7 +158,7 @@ func (s *Server) createImageJob(w http.ResponseWriter, r *http.Request) {
 		ProjectID: input.ProjectID, RelayID: input.RelayID, ModelID: input.ModelID, Kind: input.Kind,
 		Prompt: input.Prompt, AspectRatio: input.AspectRatio, ImageSize: input.ImageSize, Count: input.Count,
 		ReferenceAssetIDs: input.ReferenceAssetIDs, IdempotencyKey: input.IdempotencyKey,
-		PlacementX: input.PlacementX, PlacementY: input.PlacementY,
+		PlacementX: input.PlacementX, PlacementY: input.PlacementY, AnchorNodeID: input.AnchorNodeID,
 	})
 	if err != nil {
 		respondImage(w, value, err)

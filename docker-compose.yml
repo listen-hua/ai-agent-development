@@ -22,12 +22,26 @@ services:
       - ./backend/migrations/011_image_agent.sql:/docker-entrypoint-initdb.d/011_image_agent.sql:ro
       - ./backend/migrations/012_comfly_image_output_host.sql:/docker-entrypoint-initdb.d/012_comfly_image_output_host.sql:ro
       - ./backend/migrations/013_message_feedback.sql:/docker-entrypoint-initdb.d/013_message_feedback.sql:ro
+      - ./backend/migrations/014_iam_identity.sql:/docker-entrypoint-initdb.d/014_iam_identity.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ai_agent -d ai_agent"]
       interval: 5s
       timeout: 3s
       retries: 20
     restart: unless-stopped
+
+  migrate:
+    image: pgvector/pgvector:pg17
+    entrypoint: ["/bin/sh", "/ops/migrate.sh"]
+    environment:
+      PGPASSWORD: ai_agent
+    volumes:
+      - ./backend/migrations:/migrations:ro
+      - ./ops/migrate.sh:/ops/migrate.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   redis:
     image: redis:7.4-alpine
@@ -50,7 +64,7 @@ services:
     volumes:
       - minio_data:/data
     ports:
-      - "9001:9001"
+      - "127.0.0.1:9001:9001"
     restart: unless-stopped
 
   tika:
@@ -75,6 +89,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     expose:
@@ -94,6 +110,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     restart: unless-stopped
@@ -105,7 +123,7 @@ services:
     depends_on:
       - api
     ports:
-      - "127.0.0.1:8088:80"
+      - "${WEB_BIND_ADDRESS:-0.0.0.0}:${WEB_PORT:-8088}:80"
     restart: unless-stopped
 
 volumes:

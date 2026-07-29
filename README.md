@@ -1,11 +1,12 @@
-# 知行 · 公司内部行政 AI Agent
+# 微光 Shimmer · 公司内部 AI Agent 平台
 
-一个面向公司内部员工的制度问答与飞书通知系统。员工可在飞书 H5 或机器人中提问；管理人员可以管理制度版本、模型配置、通知审批和审计指标。系统默认执行严格 RAG：没有可靠制度依据就拒绝回答。
+一个通过飞书和公司 IAM 统一集成多个专业 AI Agent 的公司内部平台。当前包含行政助手、个人提醒、智能会议室、通知中心和 AI 生图，后续可继续按业务场景接入新的 Agent。管理人员可以统一治理身份权限、知识、模型、项目、通知和审计；制度问答默认执行严格 RAG，没有可靠依据就拒绝回答。
 
 ## 已实现能力
 
 - Vue 3 + TypeScript 响应式员工端和同应用管理后台，包含 `/chat`、知识库、Agent 配置、通知、质量与审计页面。
 - Go 模块化后端，提供飞书免登、HttpOnly 会话、RBAC、会话和 SSE 流式事件。
+- 公司 IAM 微前端登录：浏览器使用 IAM 权限，飞书内保留免登和本地角色；两种入口绑定到同一个内部用户。
 - 用户与权限后台：超级管理员显式授予知识管理员、通知管理员和审计员；管理员身份不会根据飞书职务自动推导。
 - 飞书通讯录组织属性同步：部门、职务、职级、序列和人员类型可用于文档 ACL；同组条件为 AND，多组规则为 OR。
 - 阿里云百炼 OpenAI 兼容适配：`qwen-plus`、`text-embedding-v4`、`qwen3-rerank`；未配置密钥时自动使用可重复的本地演示模型。
@@ -63,6 +64,8 @@ docker compose up --build
 4. 设置 `APP_ENV=production` 和 `DEV_AUTH_ENABLED=false`。生产模式会校验会话与加密密钥、PostgreSQL、MinIO、百炼和飞书配置；缺失、不安全或连接失败都会阻止服务启动。
 5. 数据服务只加入内部 Docker 网络；公网网关只暴露 Nginx 的 H5/API。
 
+公司 IAM 应用、权限键、域名、环境变量和验收步骤见 [docs/IAM_SETUP.md](docs/IAM_SETUP.md)。
+
 ### 飞书最小能力清单
 
 - 网页免登：获取用户身份基本信息；需要持续用户授权时再申请 `offline_access`。
@@ -87,13 +90,10 @@ docker compose up --build
 
 在 `.env` 的 `BOOTSTRAP_SUPER_ADMIN_OPEN_IDS` 中填写首位管理员的飞书 `open_id`。API 启动时会为数据库中已有的对应用户补授 `super_admin`；如果用户尚未首次登录，则在首次登录时授予。随后可在“用户与权限”页面分配其他后台角色。完成初始化后建议清空该变量并重建 API 容器，数据库中已授予的角色不会被登录同步覆盖。
 
-已有数据库升级时先执行：
+Compose 中的 `migrate` 服务会在 API 和 Worker 启动前自动执行所有幂等迁移。需要手动升级时可执行：
 
 ```powershell
-docker compose cp backend/migrations/002_identity_acl.sql postgres:/tmp/002_identity_acl.sql
-docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U ai_agent -d ai_agent -f /tmp/002_identity_acl.sql
-docker compose cp backend/migrations/013_message_feedback.sql postgres:/tmp/013_message_feedback.sql
-docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U ai_agent -d ai_agent -f /tmp/013_message_feedback.sql
+docker compose run --rm migrate
 ```
 
 不要通过 PowerShell 文本管道把含中文的 SQL 传给 `psql`；部分 Windows 环境会把 UTF-8 中文转换成字面量 `?`。先复制文件再由容器内的 `psql -f` 读取可保留原始字节。

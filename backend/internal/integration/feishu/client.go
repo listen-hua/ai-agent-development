@@ -24,6 +24,7 @@ type UserInfo struct {
 }
 type ContactUser struct {
 	OpenID        string
+	UserID        string
 	Name          string
 	AvatarURL     string
 	DepartmentIDs []string
@@ -146,6 +147,14 @@ func (c *Client) getUserInfo(ctx context.Context, accessToken string) (UserInfo,
 }
 
 func (c *Client) GetContactUser(ctx context.Context, openID string) (ContactUser, error) {
+	return c.getContactUser(ctx, openID, "open_id")
+}
+
+func (c *Client) GetContactUserByUserID(ctx context.Context, userID string) (ContactUser, error) {
+	return c.getContactUser(ctx, userID, "user_id")
+}
+
+func (c *Client) getContactUser(ctx context.Context, identifier, userIDType string) (ContactUser, error) {
 	if !c.Configured() {
 		return ContactUser{}, errors.New("feishu is not configured")
 	}
@@ -153,13 +162,14 @@ func (c *Client) GetContactUser(ctx context.Context, openID string) (ContactUser
 	if err != nil {
 		return ContactUser{}, err
 	}
-	endpoint := c.baseURL + "/open-apis/contact/v3/users/" + url.PathEscape(openID) + "?user_id_type=open_id&department_id_type=open_department_id"
+	endpoint := c.baseURL + "/open-apis/contact/v3/users/" + url.PathEscape(identifier) + "?user_id_type=" + url.QueryEscape(userIDType) + "&department_id_type=open_department_id"
 	var output struct {
 		Code int    `json:"code"`
 		Msg  string `json:"msg"`
 		Data struct {
 			User struct {
 				OpenID        string   `json:"open_id"`
+				UserID        string   `json:"user_id"`
 				Name          string   `json:"name"`
 				DepartmentIDs []string `json:"department_ids"`
 				JobTitle      string   `json:"job_title"`
@@ -192,7 +202,7 @@ func (c *Client) GetContactUser(ctx context.Context, openID string) (ContactUser
 	if value.Status.IsResigned || value.Status.IsExited {
 		status = "inactive"
 	}
-	return ContactUser{OpenID: value.OpenID, Name: value.Name, AvatarURL: value.Avatar.Avatar72, DepartmentIDs: value.DepartmentIDs, JobTitle: value.JobTitle, JobLevelID: value.JobLevelID, JobFamilyID: value.JobFamilyID, EmployeeType: value.EmployeeType, Status: status}, nil
+	return ContactUser{OpenID: value.OpenID, UserID: value.UserID, Name: value.Name, AvatarURL: value.Avatar.Avatar72, DepartmentIDs: value.DepartmentIDs, JobTitle: value.JobTitle, JobLevelID: value.JobLevelID, JobFamilyID: value.JobFamilyID, EmployeeType: value.EmployeeType, Status: status}, nil
 }
 
 func (c *Client) getAppToken(ctx context.Context) (string, error) {

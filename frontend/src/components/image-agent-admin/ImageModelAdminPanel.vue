@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
-import { Edit } from '@element-plus/icons-vue'
+import { Edit, Search } from '@element-plus/icons-vue'
 import type { ImageCount, ImageModel, ImageModelInput, ImageRelay, ImageSize } from '@/types/image-agent'
+import { filterImageModels } from '@/utils/imageModelSearch'
 
 const props = defineProps<{ relays: ImageRelay[]; models: ImageModel[]; loading: boolean; saving: boolean }>()
 const emit = defineEmits<{ save: [id: string, input: ImageModelInput] }>()
 const filterRelay = ref('')
+const searchQuery = ref('')
 const dialog = ref(false)
 const editingId = ref('')
 const form = reactive<ImageModelInput>({
   display_name: '', protocol: 'chat_completions', enabled: false, supports_reference: false,
   supports_reverse: true, supported_sizes: ['1K'], max_count: 1,
 })
-const visible = computed(() => props.models.filter((item) => !filterRelay.value || item.relay_id === filterRelay.value))
+const visible = computed(() => filterImageModels(props.models, props.relays, filterRelay.value, searchQuery.value))
 const relayName = (id: string) => props.relays.find((item) => item.id === id)?.name || id
 
 function open(model: ImageModel) {
@@ -30,9 +32,13 @@ function save() { emit('save', editingId.value, { ...form }); dialog.value = fal
 <template>
   <section class="admin-feature-panel">
     <header><div><h3>模型</h3><p>从中转站同步模型后，必须明确启用并配置生图协议与能力。</p></div>
-      <el-select v-model="filterRelay" clearable placeholder="全部中转站" style="width:180px"><el-option v-for="relay in relays" :key="relay.id" :label="relay.name" :value="relay.id" /></el-select>
+      <div class="model-filters">
+        <el-input v-model="searchQuery" clearable :prefix-icon="Search" class="model-search" placeholder="搜索模型名称或模型 ID" />
+        <el-select v-model="filterRelay" clearable placeholder="全部中转站" class="relay-filter"><el-option v-for="relay in relays" :key="relay.id" :label="relay.name" :value="relay.id" /></el-select>
+      </div>
     </header>
-    <el-table v-loading="loading" :data="visible" border>
+    <div v-if="searchQuery || filterRelay" class="model-result-count">找到 {{ visible.length }} 个模型，共 {{ models.length }} 个</div>
+    <el-table v-loading="loading" :data="visible" empty-text="没有找到匹配的模型" border>
       <el-table-column prop="display_name" label="模型" min-width="220" show-overflow-tooltip />
       <el-table-column label="中转站" width="130"><template #default="{ row }">{{ relayName(row.relay_id) }}</template></el-table-column>
       <el-table-column label="协议" width="150"><template #default="{ row }">{{ row.protocol === 'chat_completions' ? 'Chat Completions' : 'Images Generations' }}</template></el-table-column>
@@ -53,3 +59,15 @@ function save() { emit('save', editingId.value, { ...form }); dialog.value = fal
     </el-dialog>
   </section>
 </template>
+
+<style scoped>
+.model-filters { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.model-search { width: 300px; }
+.relay-filter { width: 180px; }
+.model-result-count { margin: -4px 0 10px; color: #8d95a3; font-size: 11px; text-align: right; }
+@media (max-width: 820px) {
+  .model-filters { width: 100%; align-items: stretch; flex-direction: column; }
+  .model-search, .relay-filter { width: 100%; }
+  .model-result-count { text-align: left; }
+}
+</style>

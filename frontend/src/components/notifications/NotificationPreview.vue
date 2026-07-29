@@ -20,7 +20,7 @@ const html = computed(() => renderNotificationMarkdown(props.content || '通知�
           <span v-else><el-icon><Picture /></el-icon>{{ image.name }}</span>
         </div>
       </div>
-      <footer>来自：知行 · 行政 AI 助手</footer>
+      <footer>来自：微光 Shimmer · 企业 AI Agent 平台</footer>
     </article>
   </div>
 </template>

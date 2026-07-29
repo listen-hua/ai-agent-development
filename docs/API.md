@@ -2,10 +2,17 @@
 
 所有 `/api/v1` 员工及管理接口使用 `ai_agent_session` HttpOnly Cookie。生产写操作应由同源 Nginx 提供服务。
 
+## 身份认证
+
+- `GET /api/v1/auth/iam/config`：返回公开的 IAM 开关和 `app_id`，不返回密钥。
+- `POST /api/v1/auth/iam/exchange`：读取 `iam_user_token` Cookie，校验 `agent_use`、绑定飞书身份并签发本系统会话。
+- `POST /api/v1/auth/feishu/exchange`：飞书客户端用免登 code 换取本系统会话。
+- `GET /api/v1/me`：返回当前用户、`auth_source`和 IAM 模式下的当前模块权限。
+
+IAM 错误使用 HTTP 200 和 `{code,message}`；`510000`表示登录失效，`510001`表示权限不足。其他业务 HTTP 错误维持现有状态码和 `{error,detail}`格式。
+
 ## 员工端
 
-- `POST /api/v1/auth/feishu/exchange`：用飞书 code 换取本系统会话。
-- `GET /api/v1/me`：当前用户与角色。
 - `GET|POST /api/v1/conversations`：会话列表与创建。
 - `GET|DELETE /api/v1/conversations/{id}`：读取消息或删除自己的会话。
 - `POST /api/v1/conversations/{id}/messages`：提交问题，返回 `run_id`。
@@ -45,7 +52,7 @@
 - `/api/v1/admin/image-agent/projects`：配置项目状态及飞书组织 ACL。
 - `/api/v1/admin/image-agent/prompt-actions`：管理全局和项目级功能按键。
 
-管理接口由后端再次检查 `knowledge_admin`、`notification_admin`、`image_admin`、`auditor` 或 `super_admin`，不依赖前端菜单隐藏。
+IAM 登录的管理接口由后端再次检查 `knowledge_manage`、`agent_manage`、`image_manage`、`notification_manage`、`calendar_manage`、`audit_view`或 `user_manage`。飞书登录继续检查 `knowledge_admin`、`notification_admin`、`image_admin`、`auditor`或 `super_admin`，两种模式都不依赖前端菜单隐藏。
 
 受限文档 ACL 使用规则组；单组字段是 AND，多组是 OR：
 

@@ -117,3 +117,34 @@ func TestMessageFeedbackAndMetricsUseStoredData(t *testing.T) {
 		t.Fatalf("unexpected metrics: %#v", metrics)
 	}
 }
+
+func TestUpsertIAMUserMergesWithExistingFeishuIdentity(t *testing.T) {
+	repo := NewMemory(domain.AgentConfig{})
+	existing, err := repo.UpsertUser(context.Background(), domain.User{
+		FeishuOpenID: "ou_existing",
+		Name:         "Existing",
+		Status:       "active",
+		Roles:        []domain.Role{domain.RoleEmployee, domain.RoleKnowledgeAdmin},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	iamUserID := int64(18)
+	merged, err := repo.UpsertIAMUser(context.Background(), domain.User{
+		FeishuOpenID: "ou_existing",
+		FeishuUserID: "feishu-user-18",
+		IAMUserID:    &iamUserID,
+		Name:         "Updated",
+		Status:       "active",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged.ID != existing.ID || !merged.HasRole(domain.RoleKnowledgeAdmin) {
+		t.Fatalf("IAM identity did not preserve the Feishu account: %#v", merged)
+	}
+	byIAM, err := repo.GetUserByIAMID(context.Background(), iamUserID)
+	if err != nil || byIAM.ID != existing.ID {
+		t.Fatalf("IAM lookup failed: %#v error=%v", byIAM, err)
+	}
+}

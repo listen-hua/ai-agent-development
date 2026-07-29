@@ -20,6 +20,8 @@ const (
 type User struct {
 	ID                   string     `json:"id"`
 	FeishuOpenID         string     `json:"feishu_open_id"`
+	FeishuUserID         string     `json:"feishu_user_id,omitempty"`
+	IAMUserID            *int64     `json:"iam_user_id,omitempty"`
 	Name                 string     `json:"name"`
 	AvatarURL            string     `json:"avatar_url"`
 	DepartmentIDs        []string   `json:"department_ids"`

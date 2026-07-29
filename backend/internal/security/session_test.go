@@ -26,3 +26,18 @@ func TestSessionRejectsTampering(t *testing.T) {
 		t.Fatal("expected tampered token to fail")
 	}
 }
+
+func TestIAMSessionRoundTrip(t *testing.T) {
+	sessions := NewSessions("a-secret-long-enough-for-tests")
+	token, err := sessions.IssueFor("user-1", "iam", 18, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := sessions.Verify(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims.AuthSource != "iam" || claims.IAMUserID != 18 {
+		t.Fatalf("unexpected IAM claims: %#v", claims)
+	}
+}

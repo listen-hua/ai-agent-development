@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { Connection, Picture, Refresh } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import InfiniteImageCanvas from '@/components/image-agent/InfiniteImageCanvas.vue'
 import ImageOperationPanel from '@/components/image-agent/ImageOperationPanel.vue'
 import { useImageWorkspace } from '@/composables/image-agent/useImageWorkspace'
 import type { ImagePromptAction } from '@/types/image-agent'
 
 const {
-  options, canvas, references, form, loading, uploading, generating, currentJob, selectedProject,
-  initialize, upload, addCanvasReference, removeReference, scheduleCanvasSave, submit, applyAction,
+  options, canvas, references, form, loading, uploading, importing, importProgress, generating, currentJob, selectedProject,
+  initialize, upload, importToCanvas, addCanvasReference, removeReference, scheduleCanvasSave, submit, applyAction,
 } = useImageWorkspace()
 const canvasRef = ref<InstanceType<typeof InfiniteImageCanvas>>()
 const statusText = computed(() => {
+  if (importing.value) return importProgress.value || '正在导入图片'
   if (!currentJob.value) return '画布已同步'
   const labels: Record<string, string> = {
     pending: '任务排队中', running: 'AI 正在生成', retry: '任务自动重试中', partial: '部分生成成功',
@@ -20,16 +22,26 @@ const statusText = computed(() => {
   return labels[currentJob.value.status] || currentJob.value.status
 })
 
-function center() {
-  return canvasRef.value?.contentCenter() || { x: 0, y: 0 }
+function generationContext() {
+  return canvasRef.value?.generationContext() || { x: 0, y: 0, anchorNodeId: '' }
 }
 
 function submitCurrent() {
-  return submit(center())
+  return submit(generationContext())
 }
 
 function useAction(action: ImagePromptAction) {
-  return applyAction(action, center())
+  return applyAction(action, generationContext())
+}
+
+function notifyImportBlocked() {
+  if (importing.value) ElMessage.info('图片正在导入，请稍候')
+  else if (!selectedProject.value) ElMessage.warning('请先选择一个生图项目')
+  else ElMessage.warning('当前项目不可导入图片')
+}
+
+function notifyUnsupportedDrop() {
+  ElMessage.warning('请拖入本地 JPG、PNG 或 WEBP 图片文件，不支持网页图片链接')
 }
 
 onMounted(initialize)
@@ -43,9 +55,9 @@ onMounted(initialize)
         <div><small>IMAGE GENERATION AGENT</small><h1>AI 无限画布</h1></div>
       </div>
       <div class="image-runtime">
-        <span><i :class="{ working: generating }" />{{ statusText }}</span>
+        <span><i :class="{ working: generating || importing }" />{{ statusText }}</span>
         <span><el-icon><Connection /></el-icon>{{ options.relays.length }} 个中转站 · {{ options.models.length }} 个可用模型</span>
-        <el-button text :icon="Refresh" :loading="loading" @click="initialize">刷新</el-button>
+        <el-button text :icon="Refresh" :loading="loading" :disabled="importing" @click="initialize">刷新</el-button>
       </div>
     </header>
 
@@ -55,7 +67,12 @@ onMounted(initialize)
         :canvas="canvas"
         :loading="loading"
         :readonly="!selectedProject?.enabled"
+        :importing="importing"
+        :import-progress="importProgress"
         @change="scheduleCanvasSave"
+        @import-images="({ files, point, origin }) => importToCanvas(files, point, origin)"
+        @import-blocked="notifyImportBlocked"
+        @unsupported-drop="notifyUnsupportedDrop"
       />
       <ImageOperationPanel
         v-model="form"
@@ -64,7 +81,8 @@ onMounted(initialize)
         :projects="options.projects"
         :actions="options.prompt_actions"
         :references="references"
-        :busy="generating"
+        :busy="generating || importing"
+        :locked="importing"
         :uploading="uploading"
         @upload="upload"
         @remove-reference="removeReference"

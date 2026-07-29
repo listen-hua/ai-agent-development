@@ -1,6 +1,7 @@
 export type Role = 'employee' | 'knowledge_admin' | 'notification_admin' | 'image_admin' | 'auditor' | 'super_admin'
+export type AuthSource = 'feishu' | 'iam' | 'dev'
 
-export interface User { id: string; feishu_open_id: string; name: string; avatar_url: string; department_ids: string[]; job_title: string; job_level_id: string; job_family_id: string; employee_type: number; status: string; organization_synced_at?: string; roles: Role[] }
+export interface User { id: string; feishu_open_id: string; feishu_user_id?: string; iam_user_id?: number; name: string; avatar_url: string; department_ids: string[]; job_title: string; job_level_id: string; job_family_id: string; employee_type: number; status: string; organization_synced_at?: string; roles: Role[]; auth_source?: AuthSource; iam_permissions?: string[] }
 export interface ACLRule { department_ids?: string[]; job_titles?: string[]; job_level_ids?: string[]; job_family_ids?: string[]; employee_types?: number[]; user_ids?: string[] }
 export interface ACL { scope: 'all' | 'restricted'; rules?: ACLRule[]; department_ids?: string[]; role_names?: Role[]; user_ids?: string[] }
 export interface DirectoryOptions { departments: Array<{ id: string; name: string; parent_id?: string; path: string; depth: number }>; job_titles: string[]; users: Array<{ id: string; name: string; department_ids: string[]; job_title: string }> }

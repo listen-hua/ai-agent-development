@@ -51,3 +51,24 @@ func TestSecureProductionConfigurationIsAccepted(t *testing.T) {
 		t.Fatalf("unexpected validation error: %v", err)
 	}
 }
+
+func TestIAMProductionConfigurationRequiresAppCredentials(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("DEV_AUTH_ENABLED", "false")
+	t.Setenv("SESSION_SECRET", "session-secret-with-at-least-32-characters")
+	t.Setenv("AGENT_SECRET_ENCRYPTION_KEY", "agent-secret-with-at-least-32-characters")
+	t.Setenv("DATABASE_URL", "postgres://example")
+	t.Setenv("MINIO_ENDPOINT", "minio:9000")
+	t.Setenv("MINIO_ACCESS_KEY", "access")
+	t.Setenv("MINIO_SECRET_KEY", "minio-secret-with-at-least-32-characters")
+	t.Setenv("DASHSCOPE_API_KEY", "dashscope")
+	t.Setenv("FEISHU_APP_ID", "app")
+	t.Setenv("FEISHU_APP_SECRET", "secret")
+	t.Setenv("IAM_ENABLED", "true")
+	t.Setenv("IAM_APP_ID", "")
+	t.Setenv("IAM_APP_SECRET", "")
+	err := Load().Validate()
+	if err == nil || !strings.Contains(err.Error(), "IAM_APP_ID") || !strings.Contains(err.Error(), "IAM_APP_SECRET") {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+}

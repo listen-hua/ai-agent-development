@@ -7,6 +7,11 @@ export interface FeishuAuthConfig {
   dev_auth_enabled: boolean
 }
 
+export interface IAMAuthConfig {
+  app_id: string
+  enabled: boolean
+}
+
 export interface FeishuLoginCode {
   code: string
   auth_method: 'request_access' | 'request_auth_code'
@@ -70,6 +75,8 @@ function reportClientFailure(stage: string, error: unknown): void {
 
 export const authService = {
   me: () => api.get<User>('/api/v1/me'),
+  iamConfig: () => api.get<IAMAuthConfig>('/api/v1/auth/iam/config'),
+  iamExchange: () => api.post<User>('/api/v1/auth/iam/exchange'),
   feishuConfig: () => api.get<FeishuAuthConfig>('/api/v1/auth/feishu/config'),
   exchange: (loginCode: FeishuLoginCode | string) => api.post<User>(
     '/api/v1/auth/feishu/exchange',

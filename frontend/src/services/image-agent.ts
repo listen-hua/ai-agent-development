@@ -1,17 +1,26 @@
-import { api } from './api'
+import { api, resolveApiURL } from './api'
 import type {
   ImageAgentOptions, ImageAsset, ImageCanvas, ImageCanvasNode, ImageJob, ImageProjectInput,
   ImagePromptAction, ImagePromptActionInput, ImageRelay, ImageRelayInput, ImageModel, ImageModelInput,
   ImageProject, ImageRatio, ImageSize, ImageCount, ImageViewport,
 } from '@/types/image-agent'
 
-export const imageAssetURL = (id: string) => `/api/v1/image-agent/assets/${id}/content`
+export const imageAssetURL = (id: string) => resolveApiURL(`/api/v1/image-agent/assets/${id}/content`)
 
 export const imageAgentService = {
   options: (projectId?: string) => api.get<ImageAgentOptions>(`/api/v1/image-agent/options${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
   canvas: (projectId: string) => api.get<ImageCanvas>(`/api/v1/image-agent/projects/${projectId}/canvas`),
   saveCanvas: (projectId: string, input: { viewport: ImageViewport; nodes: ImageCanvasNode[]; version: number }) =>
     api.patch<ImageCanvas>(`/api/v1/image-agent/projects/${projectId}/canvas`, input),
+  importCanvasAsset(projectId: string, file: File, input: { x: number; y: number; version: number; origin: 'paste' | 'drop' }) {
+    const body = new FormData()
+    body.set('file', file)
+    body.set('x', String(input.x))
+    body.set('y', String(input.y))
+    body.set('version', String(input.version))
+    body.set('origin', input.origin)
+    return api.upload<ImageCanvas>(`/api/v1/image-agent/projects/${projectId}/canvas/imports`, body)
+  },
   uploadAsset(file: File, projectId: string) {
     const body = new FormData()
     body.set('file', file)
@@ -31,6 +40,7 @@ export const imageAgentService = {
     idempotency_key: string
     placement_x: number
     placement_y: number
+    anchor_node_id?: string
   }) => api.post<ImageJob>('/api/v1/image-agent/jobs', input),
   job: (id: string) => api.get<ImageJob>(`/api/v1/image-agent/jobs/${id}`),
   jobs: (projectId: string) => api.get<ImageJob[]>(`/api/v1/image-agent/jobs?project_id=${encodeURIComponent(projectId)}`),

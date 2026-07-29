@@ -16,6 +16,7 @@ import (
 	"internal-ai-agent/backend/internal/domain"
 	"internal-ai-agent/backend/internal/httpapi"
 	"internal-ai-agent/backend/internal/integration/feishu"
+	iamintegration "internal-ai-agent/backend/internal/integration/iam"
 	"internal-ai-agent/backend/internal/model"
 	"internal-ai-agent/backend/internal/parser"
 	"internal-ai-agent/backend/internal/security"
@@ -72,6 +73,15 @@ func run() error {
 		slog.Warn("DASHSCOPE_API_KEY is not configured; using deterministic demo provider")
 	}
 	feishuClient := feishu.New(cfg.FeishuAppID, cfg.FeishuAppSecret, cfg.FeishuRedirectURI)
+	iamClient := iamintegration.New(
+		cfg.IAMBaseURL,
+		cfg.IAMAppID,
+		cfg.IAMAppSecret,
+		cfg.RedisAddr,
+		time.Duration(cfg.IAMAuthCacheSeconds)*time.Second,
+		time.Duration(cfg.IAMHTTPTimeoutSeconds)*time.Second,
+	)
+	defer iamClient.Close()
 	directory := service.NewDirectory(repo, feishuClient)
 	agents, err := service.NewAgentRegistry(repo, cfg.AgentSecretEncryptionKey, cfg.DashScopeAPIKey, cfg.GeminiAPIKey, cfg.GenerationModel, cfg.GeminiImageModel)
 	if err != nil {
@@ -122,7 +132,7 @@ func run() error {
 	sessions := security.NewSessions(cfg.SessionSecret)
 	seed(context.Background(), repo, knowledge)
 	go knowledge.RunSourceScheduler(rootCtx, 15*time.Minute)
-	handler := httpapi.New(cfg, repo, sessions, chat, knowledge, notifications, reminders, feishuClient, directory, agents, meetings, imageAgent).Handler()
+	handler := httpapi.New(cfg, repo, sessions, chat, knowledge, notifications, reminders, feishuClient, directory, agents, meetings, imageAgent, iamClient).Handler()
 	server := &http.Server{Addr: cfg.HTTPAddr, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 1 << 20}
 
 	var longConnectionErr <-chan error
