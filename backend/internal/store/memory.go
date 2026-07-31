@@ -13,42 +13,44 @@ import (
 )
 
 type Memory struct {
-	mu                     sync.RWMutex
-	users                  map[string]domain.User
-	openIDs                map[string]string
-	iamUserIDs             map[int64]string
-	feishuUserIDs          map[string]string
-	conversations          map[string]domain.Conversation
-	messages               map[string][]domain.Message
-	messageFeedback        map[string]bool
-	conversationContexts   map[string]domain.ConversationContext
-	conversationBindings   map[string]domain.ConversationBinding
-	sources                map[string]domain.KnowledgeSource
-	documents              map[string]domain.Document
-	chunks                 []domain.Chunk
-	configs                []domain.AgentConfigVersion
-	agentProfiles          map[string]domain.AgentProfile
-	notifications          map[string]domain.NotificationDraft
-	notificationDeliveries map[string]string
-	reminders              map[string]domain.Reminder
-	reminderActions        map[string]domain.ReminderActionDraft
-	reminderDeliveries     map[string]domain.ReminderDelivery
-	workdayOverrides       map[string]domain.WorkdayOverride
-	reminderBotJobs        map[string]domain.ReminderBotJob
-	meetingRooms           map[string]domain.MeetingRoom
-	meetingSettings        domain.MeetingSettings
-	meetingActions         map[string]domain.MeetingBookingAction
-	meetingBookings        map[string]domain.MeetingBooking
-	meetingDeliveries      map[string]domain.MeetingBookingDelivery
-	imageRelays            map[string]domain.ImageRelay
-	imageModels            map[string]domain.ImageModel
-	imageProjects          map[string]domain.ImageProject
-	imagePromptActions     map[string]domain.ImagePromptAction
-	imageCanvases          map[string]domain.ImageCanvas
-	imageAssets            map[string]domain.ImageAsset
-	imageJobs              map[string]domain.ImageJob
-	audits                 []domain.AuditEvent
-	events                 map[string]struct{}
+	mu                      sync.RWMutex
+	users                   map[string]domain.User
+	openIDs                 map[string]string
+	iamUserIDs              map[int64]string
+	feishuUserIDs           map[string]string
+	localPermissionPolicies map[string]domain.LocalPermissionPolicy
+	iamPermissionSnapshots  map[string]domain.IAMPermissionSnapshot
+	conversations           map[string]domain.Conversation
+	messages                map[string][]domain.Message
+	messageFeedback         map[string]bool
+	conversationContexts    map[string]domain.ConversationContext
+	conversationBindings    map[string]domain.ConversationBinding
+	sources                 map[string]domain.KnowledgeSource
+	documents               map[string]domain.Document
+	chunks                  []domain.Chunk
+	configs                 []domain.AgentConfigVersion
+	agentProfiles           map[string]domain.AgentProfile
+	notifications           map[string]domain.NotificationDraft
+	notificationDeliveries  map[string]string
+	reminders               map[string]domain.Reminder
+	reminderActions         map[string]domain.ReminderActionDraft
+	reminderDeliveries      map[string]domain.ReminderDelivery
+	workdayOverrides        map[string]domain.WorkdayOverride
+	reminderBotJobs         map[string]domain.ReminderBotJob
+	meetingRooms            map[string]domain.MeetingRoom
+	meetingSettings         domain.MeetingSettings
+	meetingActions          map[string]domain.MeetingBookingAction
+	meetingBookings         map[string]domain.MeetingBooking
+	meetingDeliveries       map[string]domain.MeetingBookingDelivery
+	imageRelays             map[string]domain.ImageRelay
+	imageModels             map[string]domain.ImageModel
+	imageProjects           map[string]domain.ImageProject
+	imagePromptActions      map[string]domain.ImagePromptAction
+	imageCanvases           map[string]domain.ImageCanvas
+	imageAssets             map[string]domain.ImageAsset
+	imageJobs               map[string]domain.ImageJob
+	audits                  []domain.AuditEvent
+	events                  map[string]struct{}
 }
 
 const DemoAdminID = "00000000-0000-4000-8000-000000000001"
@@ -62,7 +64,18 @@ func NewMemory(defaultConfig domain.AgentConfig) *Memory {
 	return &Memory{
 		users: map[string]domain.User{admin.ID: admin, employee.ID: employee}, openIDs: map[string]string{admin.FeishuOpenID: admin.ID, employee.FeishuOpenID: employee.ID},
 		iamUserIDs: map[int64]string{}, feishuUserIDs: map[string]string{},
-		conversations: map[string]domain.Conversation{}, messages: map[string][]domain.Message{}, messageFeedback: map[string]bool{}, conversationContexts: map[string]domain.ConversationContext{}, conversationBindings: map[string]domain.ConversationBinding{}, sources: map[string]domain.KnowledgeSource{}, documents: map[string]domain.Document{},
+		localPermissionPolicies: map[string]domain.LocalPermissionPolicy{
+			admin.ID: {
+				UserID: admin.ID, AllowKeys: append([]domain.PermissionKey(nil), domain.AllPermissionKeys...),
+				DenyKeys: []domain.PermissionKey{}, Version: 1, Reason: "Development seed", CreatedAt: now, UpdatedAt: now,
+			},
+			employee.ID: {
+				UserID: employee.ID, AllowKeys: []domain.PermissionKey{domain.PermissionAgentUse},
+				DenyKeys: []domain.PermissionKey{}, Version: 1, Reason: "Development seed", CreatedAt: now, UpdatedAt: now,
+			},
+		},
+		iamPermissionSnapshots: map[string]domain.IAMPermissionSnapshot{},
+		conversations:          map[string]domain.Conversation{}, messages: map[string][]domain.Message{}, messageFeedback: map[string]bool{}, conversationContexts: map[string]domain.ConversationContext{}, conversationBindings: map[string]domain.ConversationBinding{}, sources: map[string]domain.KnowledgeSource{}, documents: map[string]domain.Document{},
 		configs: []domain.AgentConfigVersion{config}, agentProfiles: map[string]domain.AgentProfile{}, notifications: map[string]domain.NotificationDraft{}, notificationDeliveries: map[string]string{},
 		reminders: map[string]domain.Reminder{}, reminderActions: map[string]domain.ReminderActionDraft{}, reminderDeliveries: map[string]domain.ReminderDelivery{},
 		workdayOverrides: map[string]domain.WorkdayOverride{}, reminderBotJobs: map[string]domain.ReminderBotJob{},
@@ -246,6 +259,79 @@ func (m *Memory) UpdateUserRoles(_ context.Context, userID string, roles []domai
 	user.Roles = normalized
 	m.users[userID] = user
 	return user, nil
+}
+func (m *Memory) GetLocalPermissionPolicy(_ context.Context, userID string) (domain.LocalPermissionPolicy, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	value, ok := m.localPermissionPolicies[userID]
+	if !ok {
+		return domain.LocalPermissionPolicy{}, ErrNotFound
+	}
+	value.AllowKeys = append([]domain.PermissionKey(nil), value.AllowKeys...)
+	value.DenyKeys = append([]domain.PermissionKey(nil), value.DenyKeys...)
+	return value, nil
+}
+func (m *Memory) UpdateLocalPermissionPolicy(_ context.Context, policy domain.LocalPermissionPolicy, expectedVersion int64) (domain.LocalPermissionPolicy, error) {
+	allowKeys, err := domain.NormalizePermissionKeys(policy.AllowKeys)
+	if err != nil {
+		return domain.LocalPermissionPolicy{}, err
+	}
+	denyKeys, err := domain.NormalizePermissionKeys(policy.DenyKeys)
+	if err != nil {
+		return domain.LocalPermissionPolicy{}, err
+	}
+	for _, allow := range allowKeys {
+		for _, deny := range denyKeys {
+			if allow == deny {
+				return domain.LocalPermissionPolicy{}, ErrConflict
+			}
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.users[policy.UserID]; !ok {
+		return domain.LocalPermissionPolicy{}, ErrNotFound
+	}
+	now := time.Now()
+	existing, exists := m.localPermissionPolicies[policy.UserID]
+	if exists {
+		if expectedVersion != existing.Version {
+			return domain.LocalPermissionPolicy{}, ErrConflict
+		}
+		policy.Version = existing.Version + 1
+		policy.CreatedAt = existing.CreatedAt
+	} else {
+		if expectedVersion != 0 {
+			return domain.LocalPermissionPolicy{}, ErrConflict
+		}
+		policy.Version = 1
+		policy.CreatedAt = now
+	}
+	policy.AllowKeys = allowKeys
+	policy.DenyKeys = denyKeys
+	policy.UpdatedAt = now
+	m.localPermissionPolicies[policy.UserID] = policy
+	return policy, nil
+}
+func (m *Memory) GetIAMPermissionSnapshot(_ context.Context, userID string) (domain.IAMPermissionSnapshot, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	value, ok := m.iamPermissionSnapshots[userID]
+	if !ok {
+		return domain.IAMPermissionSnapshot{}, ErrNotFound
+	}
+	value.PermissionKeys = append([]domain.PermissionKey(nil), value.PermissionKeys...)
+	return value, nil
+}
+func (m *Memory) SaveIAMPermissionSnapshot(_ context.Context, snapshot domain.IAMPermissionSnapshot) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.users[snapshot.UserID]; !ok {
+		return ErrNotFound
+	}
+	snapshot.PermissionKeys = append([]domain.PermissionKey(nil), snapshot.PermissionKeys...)
+	m.iamPermissionSnapshots[snapshot.UserID] = snapshot
+	return nil
 }
 func (m *Memory) UpdateUserStatus(_ context.Context, openID, status string) error {
 	m.mu.Lock()

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -13,6 +14,32 @@ import (
 	"internal-ai-agent/backend/internal/security"
 	"internal-ai-agent/backend/internal/store"
 )
+
+func TestEnsureDefaultsAllowsKnownComflyImageHosts(t *testing.T) {
+	ctx := context.Background()
+	repo := store.NewMemory(domain.AgentConfig{})
+	agent, err := NewImageAgent(repo, repo, blob.Noop{}, security.NoopScanner{}, "test-image-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = agent.EnsureDefaults(ctx); err != nil {
+		t.Fatal(err)
+	}
+	relays, err := repo.ListImageRelays(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, relay := range relays {
+		if relay.RelayKey != "comfly" {
+			continue
+		}
+		if !slices.Contains(relay.AllowedOutputHosts, "webstatic.apiproxy.vip") {
+			t.Fatalf("Comfly output host allowlist was not initialized: %#v", relay.AllowedOutputHosts)
+		}
+		return
+	}
+	t.Fatal("Comfly relay was not initialized")
+}
 
 func TestValidateCartoonStrength(t *testing.T) {
 	valid := []string{
@@ -134,6 +161,133 @@ func TestPromptActionNameDoesNotRequireSeparateEmployeeLabel(t *testing.T) {
 	if got := promptActionName("  新名称  ", "cartoonize", "旧名称"); got != "新名称" {
 		t.Fatalf("an explicitly provided name should still be honored, got %q", got)
 	}
+}
+
+func TestPromptActionPreviewLifecycleAndAuthorization(t *testing.T) {
+	ctx := context.Background()
+	repo := store.NewMemory(domain.AgentConfig{})
+	admin, _ := repo.GetUser(ctx, store.DemoAdminID)
+	admin.Permissions = append([]domain.PermissionKey(nil), domain.AllPermissionKeys...)
+	employee, _ := repo.GetUser(ctx, store.DemoEmployeeID)
+	project := domain.ImageProject{
+		ID: "project-preview", ProjectKey: "preview", Name: "Preview", ACL: domain.ACL{Scope: "all"},
+		Enabled: true, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	if err := repo.UpsertImageProject(ctx, project); err != nil {
+		t.Fatal(err)
+	}
+	blobs := newImageTestBlob()
+	agent, err := NewImageAgent(repo, repo, blobs, security.NoopScanner{}, "test-image-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	action, err := agent.SavePromptAction(ctx, admin, "", ImagePromptActionInput{
+		ActionKey: "preview-action", PromptTemplate: "portrait", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	png, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAADUlEQVR42mNk+M/wHwAEAQH/5agzWQAAAABJRU5ErkJggg==")
+
+	withPreview, err := agent.SavePromptActionPreview(ctx, admin, action.ID, ImagePromptActionPreviewInput{
+		FileName: "preview.png", DeclaredMIME: "image/png", Data: png,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !withPreview.HasPreview || withPreview.PreviewMIMEType != "image/png" || withPreview.PreviewWidth != 2 || withPreview.PreviewHeight != 1 {
+		t.Fatalf("unexpected preview metadata: %+v", withPreview)
+	}
+	if _, ok := blobs.objects[withPreview.PreviewObjectKey]; !ok {
+		t.Fatal("preview was not written to object storage")
+	}
+	loaded, content, err := agent.PromptActionPreviewContent(ctx, employee, action.ID)
+	if err != nil || loaded.ID != action.ID || string(content) != string(png) {
+		t.Fatalf("employee should read an enabled global preview: action=%+v err=%v", loaded, err)
+	}
+
+	oldObjectKey := withPreview.PreviewObjectKey
+	replaced, err := agent.SavePromptActionPreview(ctx, admin, action.ID, ImagePromptActionPreviewInput{
+		FileName: "replacement.png", DeclaredMIME: "image/png", Data: png,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replaced.PreviewObjectKey == oldObjectKey || !blobs.deleted[oldObjectKey] {
+		t.Fatal("replacing a preview must delete the old object")
+	}
+
+	_, err = agent.SavePromptAction(ctx, admin, action.ID, ImagePromptActionInput{
+		ActionKey: action.ActionKey, PromptTemplate: action.PromptTemplate, Enabled: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = agent.PromptActionPreviewContent(ctx, employee, action.ID); !errors.Is(err, store.ErrForbidden) {
+		t.Fatalf("employee must not read a disabled action preview, got %v", err)
+	}
+	if _, _, err = agent.PromptActionPreviewContent(ctx, admin, action.ID); err != nil {
+		t.Fatalf("image administrators should preview disabled actions: %v", err)
+	}
+
+	removed, err := agent.RemovePromptActionPreview(ctx, admin, action.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed.HasPreview || removed.PreviewObjectKey != "" || !blobs.deleted[replaced.PreviewObjectKey] {
+		t.Fatalf("preview was not removed cleanly: %+v", removed)
+	}
+}
+
+func TestPromptActionPreviewRejectsInvalidFiles(t *testing.T) {
+	ctx := context.Background()
+	repo := store.NewMemory(domain.AgentConfig{})
+	admin, _ := repo.GetUser(ctx, store.DemoAdminID)
+	agent, _ := NewImageAgent(repo, repo, newImageTestBlob(), security.NoopScanner{}, "test-image-secret")
+	action, err := agent.SavePromptAction(ctx, admin, "", ImagePromptActionInput{
+		ActionKey: "invalid-preview", PromptTemplate: "portrait", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = agent.SavePromptActionPreview(ctx, admin, action.ID, ImagePromptActionPreviewInput{
+		FileName: "fake.png", DeclaredMIME: "image/png", Data: []byte("not an image"),
+	}); err == nil {
+		t.Fatal("content detection must reject a fake image")
+	}
+	if _, err = agent.SavePromptActionPreview(ctx, admin, action.ID, ImagePromptActionPreviewInput{
+		FileName: "large.png", DeclaredMIME: "image/png", Data: make([]byte, (5<<20)+1),
+	}); err == nil {
+		t.Fatal("oversized preview must be rejected")
+	}
+}
+
+type imageTestBlob struct {
+	objects map[string][]byte
+	deleted map[string]bool
+}
+
+func newImageTestBlob() *imageTestBlob {
+	return &imageTestBlob{objects: map[string][]byte{}, deleted: map[string]bool{}}
+}
+
+func (b *imageTestBlob) Put(_ context.Context, key string, data []byte, _ string) error {
+	b.objects[key] = append([]byte(nil), data...)
+	return nil
+}
+
+func (b *imageTestBlob) Get(_ context.Context, key string) ([]byte, error) {
+	data, ok := b.objects[key]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return append([]byte(nil), data...), nil
+}
+
+func (b *imageTestBlob) Delete(_ context.Context, key string) error {
+	delete(b.objects, key)
+	b.deleted[key] = true
+	return nil
 }
 
 func TestImportCanvasAssetCreatesReadyCenteredNode(t *testing.T) {

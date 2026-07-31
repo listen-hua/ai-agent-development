@@ -1,14 +1,7 @@
 import type { IamInitSuccessState } from '@shimmer/iam-page-sdk'
+import type { PermissionKey } from '@/types/domain'
 
-export type IAMPermission =
-  | 'agent_use'
-  | 'knowledge_manage'
-  | 'agent_manage'
-  | 'image_manage'
-  | 'notification_manage'
-  | 'calendar_manage'
-  | 'audit_view'
-  | 'user_manage'
+export type IAMPermission = PermissionKey
 
 export interface IAMBootstrapResult {
   apiURL: string

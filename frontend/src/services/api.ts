@@ -72,6 +72,6 @@ export const api = {
   post: <T>(path: string, body?: unknown) => request<T>(path, { method: 'POST', data: body }),
   put: <T>(path: string, body: unknown) => request<T>(path, { method: 'PUT', data: body }),
   patch: <T>(path: string, body: unknown) => request<T>(path, { method: 'PATCH', data: body }),
-  upload: <T>(path: string, body: FormData) => request<T>(path, { method: 'POST', data: body }),
-  delete: (path: string) => request<void>(path, { method: 'DELETE' }),
+  upload: <T>(path: string, body: FormData, method: 'POST' | 'PUT' = 'POST') => request<T>(path, { method, data: body }),
+  delete: <T = void>(path: string) => request<T>(path, { method: 'DELETE' }),
 }

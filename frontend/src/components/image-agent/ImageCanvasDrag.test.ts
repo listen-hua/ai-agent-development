@@ -15,6 +15,26 @@ function transfer(initial: Record<string, string> = {}) {
 }
 
 describe('image canvas reference drag and drop', () => {
+  it('emits a delete command from the canvas node action', async () => {
+    const wrapper = mount(ImageCanvasNode, {
+      props: { data: { assetId: 'asset-delete', status: 'ready' } },
+      global: { stubs: { ElIcon: true } },
+    })
+
+    await wrapper.get('.node-delete-button').trigger('click')
+
+    expect(wrapper.emitted('delete')).toHaveLength(1)
+  })
+
+  it('does not expose deletion for a read-only project', () => {
+    const wrapper = mount(ImageCanvasNode, {
+      props: { data: { assetId: 'asset-readonly', status: 'ready' }, readonly: true },
+      global: { stubs: { ElIcon: true } },
+    })
+
+    expect(wrapper.find('.node-delete-button').exists()).toBe(false)
+  })
+
   it('writes both the custom and browser-compatible drag payloads', async () => {
     const dataTransfer = transfer()
     const wrapper = mount(ImageCanvasNode, {

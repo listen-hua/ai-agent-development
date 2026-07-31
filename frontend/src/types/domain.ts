@@ -1,9 +1,33 @@
 export type Role = 'employee' | 'knowledge_admin' | 'notification_admin' | 'image_admin' | 'auditor' | 'super_admin'
 export type AuthSource = 'feishu' | 'iam' | 'dev'
+export type PermissionKey = 'agent_use' | 'knowledge_manage' | 'agent_manage' | 'image_manage' | 'notification_manage' | 'calendar_manage' | 'audit_view' | 'user_manage'
 
-export interface User { id: string; feishu_open_id: string; feishu_user_id?: string; iam_user_id?: number; name: string; avatar_url: string; department_ids: string[]; job_title: string; job_level_id: string; job_family_id: string; employee_type: number; status: string; organization_synced_at?: string; roles: Role[]; auth_source?: AuthSource; iam_permissions?: string[] }
+export interface PermissionSources { iam: PermissionKey[]; local_allow: PermissionKey[]; local_deny: PermissionKey[] }
+export interface LocalPermissionPolicy { user_id: string; allow_keys: PermissionKey[]; deny_keys: PermissionKey[]; version: number; updated_by?: string; reason?: string; created_at?: string; updated_at?: string }
+export interface User {
+  id: string
+  feishu_open_id: string
+  feishu_user_id?: string
+  iam_user_id?: number
+  name: string
+  avatar_url: string
+  department_ids: string[]
+  job_title: string
+  job_level_id: string
+  job_family_id: string
+  employee_type: number
+  status: string
+  organization_synced_at?: string
+  roles: Role[]
+  auth_source?: AuthSource
+  permissions: PermissionKey[]
+  permission_sources: PermissionSources
+  permission_synced_at?: string
+  permission_error?: string
+  local_permission_policy?: LocalPermissionPolicy
+}
 export interface ACLRule { department_ids?: string[]; job_titles?: string[]; job_level_ids?: string[]; job_family_ids?: string[]; employee_types?: number[]; user_ids?: string[] }
-export interface ACL { scope: 'all' | 'restricted'; rules?: ACLRule[]; department_ids?: string[]; role_names?: Role[]; user_ids?: string[] }
+export interface ACL { scope: 'all' | 'restricted'; rules?: ACLRule[]; department_ids?: string[]; role_names?: Role[]; permission_keys?: PermissionKey[]; user_ids?: string[] }
 export interface DirectoryOptions { departments: Array<{ id: string; name: string; parent_id?: string; path: string; depth: number }>; job_titles: string[]; users: Array<{ id: string; name: string; department_ids: string[]; job_title: string }> }
 export interface Citation { id: string; document_id: string; version_id: string; title: string; version: string; heading: string; page: number; excerpt: string; source_url?: string }
 export type ReminderScheduleType = 'once' | 'daily' | 'workday' | 'weekly'

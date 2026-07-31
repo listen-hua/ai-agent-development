@@ -1,5 +1,6 @@
 import { api } from './api'
 import type { User } from '@/types/domain'
+import { createSecureClientUUID } from '@/utils/clientId'
 
 export interface FeishuAuthConfig {
   app_id: string
@@ -57,9 +58,7 @@ function sdkError(error: unknown): Error {
 }
 
 function createState(): string {
-  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID()
-  const bytes = crypto.getRandomValues(new Uint8Array(16))
-  return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('')
+  return createSecureClientUUID()
 }
 
 function reportClientFailure(stage: string, error: unknown): void {
@@ -76,7 +75,7 @@ function reportClientFailure(stage: string, error: unknown): void {
 export const authService = {
   me: () => api.get<User>('/api/v1/me'),
   iamConfig: () => api.get<IAMAuthConfig>('/api/v1/auth/iam/config'),
-  iamExchange: () => api.post<User>('/api/v1/auth/iam/exchange'),
+  iamExchange: (iamUserID?: number) => api.post<User>('/api/v1/auth/iam/exchange', iamUserID ? { iam_user_id: iamUserID } : {}),
   feishuConfig: () => api.get<FeishuAuthConfig>('/api/v1/auth/feishu/config'),
   exchange: (loginCode: FeishuLoginCode | string) => api.post<User>(
     '/api/v1/auth/feishu/exchange',

@@ -12,14 +12,14 @@ const navItems = computed(() => [
   { path: '/chat', label: '行政助手', icon: ChatDotRound, show: true },
 	{ path: '/image-agent', label: 'AI 画图', icon: Picture, show: true },
 	{ path: '/reminders', label: '我的提醒', icon: AlarmClock, show: true },
-  { path: '/admin/knowledge', label: '制度知识库', icon: Collection, show: auth.can('knowledge_manage', 'knowledge_admin') },
-  { path: '/admin/agent', label: 'Agent 配置', icon: MagicStick, show: auth.can('agent_manage', 'knowledge_admin') },
-  { path: '/admin/image-agent', label: '生图管理', icon: Setting, show: auth.can('image_manage', 'image_admin') },
-  { path: '/admin/notifications', label: '通知中心', icon: Message, show: auth.can('notification_manage', 'notification_admin') },
-	{ path: '/admin/work-calendar', label: '工作日历', icon: Calendar, show: auth.can('calendar_manage', 'notification_admin') },
-  { path: '/admin/meeting-rooms', label: '会议室管理', icon: OfficeBuilding, show: auth.can('calendar_manage', 'notification_admin') },
-  { path: '/admin/audit', label: '质量与审计', icon: DataAnalysis, show: auth.can('audit_view', 'auditor', 'knowledge_admin', 'notification_admin') },
-  { path: '/admin/users', label: '用户与权限', icon: UserFilled, show: auth.can('user_manage', 'super_admin') },
+  { path: '/admin/knowledge', label: '制度知识库', icon: Collection, show: auth.can('knowledge_manage') },
+  { path: '/admin/agent', label: 'Agent 配置', icon: MagicStick, show: auth.can('agent_manage') },
+  { path: '/admin/image-agent', label: '生图管理', icon: Setting, show: auth.can('image_manage') },
+  { path: '/admin/notifications', label: '通知中心', icon: Message, show: auth.can('notification_manage') },
+	{ path: '/admin/work-calendar', label: '工作日历', icon: Calendar, show: auth.can('calendar_manage') },
+  { path: '/admin/meeting-rooms', label: '会议室管理', icon: OfficeBuilding, show: auth.can('calendar_manage') },
+  { path: '/admin/audit', label: '质量与审计', icon: DataAnalysis, show: auth.can('audit_view') },
+  { path: '/admin/users', label: '用户与权限', icon: UserFilled, show: auth.can('user_manage') },
 ].filter((item) => item.show))
 const topbarCopy = computed(() => {
   if (route.path === '/chat') return '行政助手 · 制度与行政服务'

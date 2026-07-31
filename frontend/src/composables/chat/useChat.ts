@@ -4,6 +4,7 @@ import { chatService } from '@/services/chat'
 import { reminderService } from '@/services/reminder'
 import { meetingService } from '@/services/meeting'
 import type { Citation, Conversation, Message, RunEvent } from '@/types/domain'
+import { createClientUUID } from '@/utils/clientId'
 import { createTextStreamController, type TextStreamController } from '@/utils/textStream'
 
 export function useChat() {
@@ -50,9 +51,9 @@ export function useChat() {
     if (!activeId.value) await newConversation()
     const conversationId = activeId.value
     const now = new Date().toISOString()
-    messages.value.push({ id: crypto.randomUUID(), conversation_id: conversationId, role: 'user', content, citations: [], created_at: now })
+    messages.value.push({ id: createClientUUID(), conversation_id: conversationId, role: 'user', content, citations: [], created_at: now })
     const assistant: Message = {
-      id: crypto.randomUUID(), conversation_id: conversationId, role: 'assistant', content: '', citations: [], created_at: now, pending: true,
+      id: createClientUUID(), conversation_id: conversationId, role: 'assistant', content: '', citations: [], created_at: now, pending: true,
     }
     messages.value.push(assistant)
     sending.value = true

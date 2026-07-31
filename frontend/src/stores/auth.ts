@@ -2,8 +2,8 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { ApiError, setApiBaseURL } from '@/services/api'
 import { authService, FeishuClientUnavailableError, type FeishuAuthConfig } from '@/services/auth'
-import { initializeIAM, isFeishuClient, type IAMPermission } from '@/services/iam'
-import type { AuthSource, Role, User } from '@/types/domain'
+import { initializeIAM, isFeishuClient } from '@/services/iam'
+import type { AuthSource, PermissionKey, User } from '@/types/domain'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
@@ -14,22 +14,21 @@ export const useAuthStore = defineStore('auth', () => {
   const devAuthEnabled = ref(false)
   const iamConfigured = ref(false)
   const authSource = ref<AuthSource | ''>('')
-  const iamPermissions = ref<IAMPermission[]>([])
+  const permissions = ref<PermissionKey[]>([])
   let initializationPromise: Promise<void> | null = null
 
   const isIAM = computed(() => authSource.value === 'iam')
-  const isAdmin = computed(() => {
-    if (isIAM.value) return iamPermissions.value.some((permission) => permission !== 'agent_use')
-    return Boolean(user.value?.roles.some((role) => role !== 'employee'))
-  })
-
-  const hasRole = (...roles: Role[]) => Boolean(
-    user.value?.roles.includes('super_admin') || roles.some((role) => user.value?.roles.includes(role)),
-  )
-  const hasPermission = (permission: IAMPermission) => iamPermissions.value.includes(permission)
-  const can = (permission: IAMPermission, ...fallbackRoles: Role[]) => (
-    isIAM.value ? hasPermission(permission) : (permission === 'agent_use' || hasRole(...fallbackRoles))
-  )
+  const isAdmin = computed(() => permissions.value.some((permission) => permission !== 'agent_use'))
+  const hasPermission = (permission: PermissionKey) => permissions.value.includes(permission)
+  const can = (permission: PermissionKey) => hasPermission(permission)
+  function applyUser(value: User, fallbackSource: AuthSource) {
+    user.value = value
+    authSource.value = value.auth_source || fallbackSource
+    permissions.value = (value.permissions || []).filter(isPermissionKey)
+  }
+  function acceptResolvedUser(value: User) {
+    applyUser(value, (authSource.value || value.auth_source || 'feishu') as AuthSource)
+  }
 
   async function signInWithFeishu(authConfig?: FeishuAuthConfig) {
     isAuthenticating.value = true
@@ -39,9 +38,7 @@ export const useAuthStore = defineStore('auth', () => {
       devAuthEnabled.value = config.dev_auth_enabled
       if (!config.enabled || !config.app_id) throw new Error('服务端尚未配置飞书应用凭证')
       const code = await authService.requestFeishuCode(config.app_id)
-      user.value = await authService.exchange(code)
-      authSource.value = user.value.auth_source || 'feishu'
-      iamPermissions.value = []
+      applyUser(await authService.exchange(code), 'feishu')
       document.body.classList.remove('iam-mode')
     } finally {
       isAuthenticating.value = false
@@ -55,14 +52,11 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const state = await initializeIAM(appID)
       setApiBaseURL(state.apiURL)
-      const authenticatedUser = await authService.iamExchange()
+      const authenticatedUser = await authService.iamExchange(state.userID)
       if (authenticatedUser.iam_user_id && authenticatedUser.iam_user_id !== state.userID) {
         throw new Error('IAM 页面身份与服务端身份不一致，请重新登录')
       }
-      user.value = authenticatedUser
-      authSource.value = 'iam'
-      const backendPermissions = (authenticatedUser.iam_permissions || []).filter(isIAMPermission)
-      iamPermissions.value = backendPermissions.length > 0 ? backendPermissions : state.permissions
+      applyUser(authenticatedUser, 'iam')
     } finally {
       isIAMInitializing.value = false
       isAuthenticating.value = false
@@ -91,8 +85,7 @@ export const useAuthStore = defineStore('auth', () => {
         return config
       }).catch(() => undefined)
       try {
-        user.value = await authService.me()
-        authSource.value = user.value.auth_source || 'feishu'
+        applyUser(await authService.me(), 'feishu')
         await configPromise
         return
       } catch (error) {
@@ -119,9 +112,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function devLogin(asEmployee = false) {
-    user.value = await authService.exchange(asEmployee ? 'dev:employee' : 'dev:admin')
-    authSource.value = 'dev'
-    iamPermissions.value = []
+    applyUser(await authService.exchange(asEmployee ? 'dev:employee' : 'dev:admin'), 'dev')
     authError.value = ''
     initialized.value = true
   }
@@ -135,7 +126,7 @@ export const useAuthStore = defineStore('auth', () => {
     await authService.logout()
     user.value = null
     authSource.value = ''
-    iamPermissions.value = []
+    permissions.value = []
   }
 
   return {
@@ -147,12 +138,12 @@ export const useAuthStore = defineStore('auth', () => {
     devAuthEnabled,
     iamConfigured,
     authSource,
-    iamPermissions,
+    permissions,
     isIAM,
     isAdmin,
-    hasRole,
     hasPermission,
     can,
+    acceptResolvedUser,
     initialize,
     devLogin,
     feishuLogin,
@@ -160,7 +151,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 })
 
-function isIAMPermission(value: string): value is IAMPermission {
+function isPermissionKey(value: string): value is PermissionKey {
   return [
     'agent_use',
     'knowledge_manage',

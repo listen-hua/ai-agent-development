@@ -17,21 +17,112 @@ const (
 	RoleSuperAdmin        Role = "super_admin"
 )
 
+type PermissionKey string
+
+const (
+	PermissionAgentUse           PermissionKey = "agent_use"
+	PermissionKnowledgeManage    PermissionKey = "knowledge_manage"
+	PermissionAgentManage        PermissionKey = "agent_manage"
+	PermissionImageManage        PermissionKey = "image_manage"
+	PermissionNotificationManage PermissionKey = "notification_manage"
+	PermissionCalendarManage     PermissionKey = "calendar_manage"
+	PermissionAuditView          PermissionKey = "audit_view"
+	PermissionUserManage         PermissionKey = "user_manage"
+)
+
+var AllPermissionKeys = []PermissionKey{
+	PermissionAgentUse,
+	PermissionKnowledgeManage,
+	PermissionAgentManage,
+	PermissionImageManage,
+	PermissionNotificationManage,
+	PermissionCalendarManage,
+	PermissionAuditView,
+	PermissionUserManage,
+}
+
+func ValidPermissionKey(key PermissionKey) bool {
+	for _, candidate := range AllPermissionKeys {
+		if key == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func NormalizePermissionKeys(keys []PermissionKey) ([]PermissionKey, error) {
+	seen := make(map[PermissionKey]bool, len(keys))
+	out := make([]PermissionKey, 0, len(keys))
+	for _, key := range keys {
+		if !ValidPermissionKey(key) {
+			return nil, fmt.Errorf("invalid permission key: %s", key)
+		}
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, key)
+		}
+	}
+	return out, nil
+}
+
+type PermissionSources struct {
+	IAM        []PermissionKey `json:"iam"`
+	LocalAllow []PermissionKey `json:"local_allow"`
+	LocalDeny  []PermissionKey `json:"local_deny"`
+}
+
+type LocalPermissionPolicy struct {
+	UserID    string          `json:"user_id"`
+	AllowKeys []PermissionKey `json:"allow_keys"`
+	DenyKeys  []PermissionKey `json:"deny_keys"`
+	Version   int64           `json:"version"`
+	UpdatedBy string          `json:"updated_by,omitempty"`
+	Reason    string          `json:"reason,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+type IAMPermissionSnapshot struct {
+	UserID          string          `json:"user_id"`
+	IAMUserID       *int64          `json:"iam_user_id,omitempty"`
+	PermissionKeys  []PermissionKey `json:"permission_keys"`
+	PolicyVersion   string          `json:"policy_version,omitempty"`
+	SourceUpdatedAt *time.Time      `json:"source_updated_at,omitempty"`
+	SyncedAt        time.Time       `json:"synced_at"`
+	LastError       string          `json:"last_error,omitempty"`
+}
+
 type User struct {
-	ID                   string     `json:"id"`
-	FeishuOpenID         string     `json:"feishu_open_id"`
-	FeishuUserID         string     `json:"feishu_user_id,omitempty"`
-	IAMUserID            *int64     `json:"iam_user_id,omitempty"`
-	Name                 string     `json:"name"`
-	AvatarURL            string     `json:"avatar_url"`
-	DepartmentIDs        []string   `json:"department_ids"`
-	JobTitle             string     `json:"job_title"`
-	JobLevelID           string     `json:"job_level_id"`
-	JobFamilyID          string     `json:"job_family_id"`
-	EmployeeType         int        `json:"employee_type"`
-	Status               string     `json:"status"`
-	OrganizationSyncedAt *time.Time `json:"organization_synced_at,omitempty"`
-	Roles                []Role     `json:"roles"`
+	ID                    string                 `json:"id"`
+	FeishuOpenID          string                 `json:"feishu_open_id"`
+	FeishuUserID          string                 `json:"feishu_user_id,omitempty"`
+	IAMUserID             *int64                 `json:"iam_user_id,omitempty"`
+	Name                  string                 `json:"name"`
+	AvatarURL             string                 `json:"avatar_url"`
+	DepartmentIDs         []string               `json:"department_ids"`
+	JobTitle              string                 `json:"job_title"`
+	JobLevelID            string                 `json:"job_level_id"`
+	JobFamilyID           string                 `json:"job_family_id"`
+	EmployeeType          int                    `json:"employee_type"`
+	Status                string                 `json:"status"`
+	OrganizationSyncedAt  *time.Time             `json:"organization_synced_at,omitempty"`
+	Permissions           []PermissionKey        `json:"permissions"`
+	PermissionSources     PermissionSources      `json:"permission_sources"`
+	PermissionSyncedAt    *time.Time             `json:"permission_synced_at,omitempty"`
+	PermissionError       string                 `json:"permission_error,omitempty"`
+	LocalPermissionPolicy *LocalPermissionPolicy `json:"local_permission_policy,omitempty"`
+	Roles                 []Role                 `json:"roles"`
+}
+
+func (u User) HasPermission(keys ...PermissionKey) bool {
+	for _, owned := range u.Permissions {
+		for _, wanted := range keys {
+			if owned == wanted {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (u User) HasRole(roles ...Role) bool {
@@ -82,15 +173,16 @@ type ACLRule struct {
 }
 
 type ACL struct {
-	Scope         string    `json:"scope"`
-	DepartmentIDs []string  `json:"department_ids,omitempty"`
-	RoleNames     []Role    `json:"role_names,omitempty"`
-	UserIDs       []string  `json:"user_ids,omitempty"`
-	Rules         []ACLRule `json:"rules,omitempty"`
+	Scope          string          `json:"scope"`
+	DepartmentIDs  []string        `json:"department_ids,omitempty"`
+	RoleNames      []Role          `json:"role_names,omitempty"`
+	PermissionKeys []PermissionKey `json:"permission_keys,omitempty"`
+	UserIDs        []string        `json:"user_ids,omitempty"`
+	Rules          []ACLRule       `json:"rules,omitempty"`
 }
 
 func (a ACL) Allows(user User) bool {
-	if a.Scope == "all" || user.HasRole(RoleSuperAdmin) {
+	if a.Scope == "all" {
 		return true
 	}
 	for _, rule := range a.Rules {
@@ -112,11 +204,35 @@ func (a ACL) Allows(user User) bool {
 		}
 	}
 	for _, role := range a.RoleNames {
-		if user.HasRole(role) {
+		if permission, ok := legacyRolePermission(role); ok && user.HasPermission(permission) {
+			return true
+		}
+	}
+	for _, permission := range a.PermissionKeys {
+		if user.HasPermission(permission) {
 			return true
 		}
 	}
 	return false
+}
+
+func legacyRolePermission(role Role) (PermissionKey, bool) {
+	switch role {
+	case RoleEmployee:
+		return PermissionAgentUse, true
+	case RoleKnowledgeAdmin:
+		return PermissionKnowledgeManage, true
+	case RoleNotificationAdmin:
+		return PermissionNotificationManage, true
+	case RoleImageAdmin:
+		return PermissionImageManage, true
+	case RoleAuditor:
+		return PermissionAuditView, true
+	case RoleSuperAdmin:
+		return PermissionUserManage, true
+	default:
+		return "", false
+	}
 }
 
 func (r ACLRule) matches(user User) bool {
@@ -138,8 +254,13 @@ func (a ACL) Validate() error {
 	if a.Scope == "all" {
 		return nil
 	}
-	if len(a.Rules) == 0 && len(a.DepartmentIDs) == 0 && len(a.RoleNames) == 0 && len(a.UserIDs) == 0 {
+	if len(a.Rules) == 0 && len(a.DepartmentIDs) == 0 && len(a.RoleNames) == 0 && len(a.PermissionKeys) == 0 && len(a.UserIDs) == 0 {
 		return errorsNew("restricted ACL must contain at least one rule")
+	}
+	for _, permission := range a.PermissionKeys {
+		if !ValidPermissionKey(permission) {
+			return fmt.Errorf("invalid ACL permission key: %s", permission)
+		}
 	}
 	for _, rule := range a.Rules {
 		if len(rule.DepartmentIDs)+len(rule.JobTitles)+len(rule.JobLevelIDs)+len(rule.JobFamilyIDs)+len(rule.EmployeeTypes)+len(rule.UserIDs) == 0 {

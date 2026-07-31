@@ -52,6 +52,22 @@ func (s *Server) updateImageCanvas(w http.ResponseWriter, r *http.Request) {
 	respondImage(w, value, err)
 }
 
+func (s *Server) deleteImageCanvasNode(w http.ResponseWriter, r *http.Request) {
+	version, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("version")), 10, 64)
+	if err != nil || version < 1 {
+		writeError(w, http.StatusBadRequest, "画布版本无效", err)
+		return
+	}
+	value, err := s.imageAgent.DeleteCanvasNode(
+		r.Context(),
+		currentUser(r),
+		r.PathValue("id"),
+		r.PathValue("nodeID"),
+		version,
+	)
+	respondImage(w, value, err)
+}
+
 func (s *Server) uploadImageAsset(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 31<<20)
 	if err := r.ParseMultipartForm(31 << 20); err != nil {
@@ -325,6 +341,47 @@ func (s *Server) updateImagePromptAction(w http.ResponseWriter, r *http.Request)
 		ProjectID: input.ProjectID, Enabled: input.Enabled, SortOrder: input.SortOrder,
 	})
 	respondImage(w, value, err)
+}
+
+func (s *Server) updateImagePromptActionPreview(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 6<<20)
+	if err := r.ParseMultipartForm(6 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "预览图不能超过 5 MB", err)
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "请选择预览图", err)
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, (5<<20)+1))
+	if err != nil || len(data) > 5<<20 {
+		writeError(w, http.StatusBadRequest, "读取预览图失败或图片超过 5 MB", err)
+		return
+	}
+	value, err := s.imageAgent.SavePromptActionPreview(r.Context(), currentUser(r), r.PathValue("id"), service.ImagePromptActionPreviewInput{
+		FileName: header.Filename, DeclaredMIME: header.Header.Get("Content-Type"), Data: data,
+	})
+	respondImage(w, value, err)
+}
+
+func (s *Server) deleteImagePromptActionPreview(w http.ResponseWriter, r *http.Request) {
+	value, err := s.imageAgent.RemovePromptActionPreview(r.Context(), currentUser(r), r.PathValue("id"))
+	respondImage(w, value, err)
+}
+
+func (s *Server) imagePromptActionPreviewContent(w http.ResponseWriter, r *http.Request) {
+	action, data, err := s.imageAgent.PromptActionPreviewContent(r.Context(), currentUser(r), r.PathValue("id"))
+	if err != nil {
+		respondImage(w, nil, err)
+		return
+	}
+	w.Header().Set("Content-Type", action.PreviewMIMEType)
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 func (s *Server) deleteImagePromptAction(w http.ResponseWriter, r *http.Request) {

@@ -70,3 +70,22 @@ func TestLookupUserFindsExpectedIdentity(t *testing.T) {
 		t.Fatalf("unexpected result: %+v error=%v", value, err)
 	}
 }
+
+func TestEffectivePermissionsUsesServiceCredentials(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v2/app-user-effective-permissions" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("X-IAM-App-ID") != "app" || r.Header.Get("X-IAM-App-Secret") != "secret" {
+			t.Fatal("missing IAM application credentials")
+		}
+		_, _ = w.Write([]byte(`{"code":0,"data":{"iam_user_id":18,"permission_keys":["agent_use","audit_view"],"policy_version":9}}`))
+	}))
+	defer server.Close()
+	client := New(server.URL, "app", "secret", "", time.Second, time.Second)
+	iamID := int64(18)
+	value, err := client.EffectivePermissions(context.Background(), &iamID, "", false)
+	if err != nil || value.PolicyVersion != "9" || len(value.PermissionKeys) != 2 {
+		t.Fatalf("unexpected result: %+v error=%v", value, err)
+	}
+}

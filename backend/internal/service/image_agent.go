@@ -8,6 +8,7 @@ import (
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
+	"log/slog"
 	"math"
 	"mime"
 	"net/http"
@@ -72,6 +73,12 @@ type ImagePromptActionInput struct {
 	SortOrder      int
 }
 
+type ImagePromptActionPreviewInput struct {
+	FileName     string
+	DeclaredMIME string
+	Data         []byte
+}
+
 type ImageCanvasPatch struct {
 	Viewport domain.ImageViewport
 	Nodes    []domain.ImageCanvasNode
@@ -133,7 +140,7 @@ func (s *ImageAgent) EnsureDefaults(ctx context.Context) error {
 	}
 	defaults := []domain.ImageRelay{
 		{ID: "00000000-0000-4000-8000-000000000201", RelayKey: "xgapi", Name: "XGAPI", BaseURL: "https://api.xgapi.top/v1", Enabled: true, TimeoutSeconds: 120, AllowedOutputHosts: []string{"api.xgapi.top"}, CreatedAt: now, UpdatedAt: now},
-		{ID: "00000000-0000-4000-8000-000000000202", RelayKey: "comfly", Name: "Comfly AI", BaseURL: "https://ai.comfly.org/v1", Enabled: true, TimeoutSeconds: 120, AllowedOutputHosts: []string{"ai.comfly.org"}, CreatedAt: now, UpdatedAt: now},
+		{ID: "00000000-0000-4000-8000-000000000202", RelayKey: "comfly", Name: "Comfly AI", BaseURL: "https://ai.comfly.org/v1", Enabled: true, TimeoutSeconds: 120, AllowedOutputHosts: []string{"ai.comfly.org", "files.closeai.fans", "webstatic.apiproxy.vip"}, CreatedAt: now, UpdatedAt: now},
 	}
 	existing := map[string]bool{}
 	for _, relay := range relays {
@@ -434,12 +441,154 @@ func (s *ImageAgent) SavePromptAction(ctx context.Context, actor domain.User, id
 		value.ID, value.CreatedBy, value.CreatedAt = ids.New("action"), actor.ID, now
 	} else {
 		value.CreatedBy, value.CreatedAt = existing.CreatedBy, existing.CreatedAt
+		value.HasPreview = existing.HasPreview
+		value.PreviewObjectKey = existing.PreviewObjectKey
+		value.PreviewMIMEType = existing.PreviewMIMEType
+		value.PreviewSizeBytes = existing.PreviewSizeBytes
+		value.PreviewWidth = existing.PreviewWidth
+		value.PreviewHeight = existing.PreviewHeight
 	}
 	if err := s.repo.UpsertImagePromptAction(ctx, value); err != nil {
 		return value, err
 	}
 	s.appendAudit(ctx, actor, "image.prompt_action.save", "image_prompt_action", value.ID, map[string]any{"action_key": value.ActionKey})
 	return value, nil
+}
+
+func (s *ImageAgent) SavePromptActionPreview(ctx context.Context, actor domain.User, id string, input ImagePromptActionPreviewInput) (domain.ImagePromptAction, error) {
+	value, err := s.repo.GetImagePromptAction(ctx, id)
+	if err != nil {
+		return value, err
+	}
+	mimeType, width, height, extension, err := s.validatePromptActionPreview(ctx, input)
+	if err != nil {
+		return value, err
+	}
+	objectKey := "image-agent/prompt-actions/" + value.ID + "/" + ids.New("preview") + extension
+	if err = s.blobs.Put(ctx, objectKey, input.Data, mimeType); err != nil {
+		return value, err
+	}
+	previousObjectKey := value.PreviewObjectKey
+	now := time.Now()
+	value.PreviewObjectKey = objectKey
+	value.PreviewMIMEType = mimeType
+	value.PreviewSizeBytes = int64(len(input.Data))
+	value.PreviewWidth = width
+	value.PreviewHeight = height
+	value.HasPreview = true
+	value.UpdatedBy = actor.ID
+	value.UpdatedAt = now
+	if err = s.repo.UpdateImagePromptActionPreview(ctx, value); err != nil {
+		_ = s.blobs.Delete(ctx, objectKey)
+		return value, err
+	}
+	if previousObjectKey != "" && previousObjectKey != objectKey {
+		s.cleanupPromptActionPreview(ctx, actor, value.ID, previousObjectKey)
+	}
+	s.appendAudit(ctx, actor, "image.prompt_action.preview.save", "image_prompt_action", value.ID, map[string]any{
+		"mime_type": mimeType, "size_bytes": len(input.Data), "width": width, "height": height,
+	})
+	return value, nil
+}
+
+func (s *ImageAgent) RemovePromptActionPreview(ctx context.Context, actor domain.User, id string) (domain.ImagePromptAction, error) {
+	value, err := s.repo.GetImagePromptAction(ctx, id)
+	if err != nil {
+		return value, err
+	}
+	previousObjectKey := value.PreviewObjectKey
+	if previousObjectKey == "" {
+		return value, nil
+	}
+	value.PreviewObjectKey = ""
+	value.PreviewMIMEType = ""
+	value.PreviewSizeBytes = 0
+	value.PreviewWidth = 0
+	value.PreviewHeight = 0
+	value.HasPreview = false
+	value.UpdatedBy = actor.ID
+	value.UpdatedAt = time.Now()
+	if err = s.repo.UpdateImagePromptActionPreview(ctx, value); err != nil {
+		return value, err
+	}
+	s.cleanupPromptActionPreview(ctx, actor, value.ID, previousObjectKey)
+	s.appendAudit(ctx, actor, "image.prompt_action.preview.remove", "image_prompt_action", value.ID, nil)
+	return value, nil
+}
+
+func (s *ImageAgent) PromptActionPreviewContent(ctx context.Context, user domain.User, id string) (domain.ImagePromptAction, []byte, error) {
+	value, err := s.repo.GetImagePromptAction(ctx, id)
+	if err != nil {
+		return value, nil, err
+	}
+	if value.PreviewObjectKey == "" {
+		return value, nil, store.ErrNotFound
+	}
+	if !user.HasPermission(domain.PermissionImageManage) {
+		if !value.Enabled {
+			return value, nil, store.ErrForbidden
+		}
+		if value.ProjectID != "" {
+			if _, err = s.authorizedProject(ctx, user, value.ProjectID, false); err != nil {
+				return value, nil, err
+			}
+		} else {
+			projects, listErr := s.repo.ListImageProjects(ctx)
+			if listErr != nil {
+				return value, nil, listErr
+			}
+			allowed := false
+			for _, project := range projects {
+				if project.ACL.Allows(user) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				return value, nil, store.ErrForbidden
+			}
+		}
+	}
+	data, err := s.blobs.Get(ctx, value.PreviewObjectKey)
+	return value, data, err
+}
+
+func (s *ImageAgent) validatePromptActionPreview(ctx context.Context, input ImagePromptActionPreviewInput) (string, int, int, string, error) {
+	if len(input.Data) == 0 || len(input.Data) > 5<<20 {
+		return "", 0, 0, "", errors.New("功能按键预览图不能超过 5 MB")
+	}
+	detected := http.DetectContentType(input.Data)
+	if detected != "image/jpeg" && detected != "image/png" && detected != "image/webp" {
+		return "", 0, 0, "", errors.New("功能按键预览图只支持 JPG、PNG 和 WEBP")
+	}
+	if input.DeclaredMIME != "" && !strings.HasPrefix(input.DeclaredMIME, "image/") {
+		return "", 0, 0, "", errors.New("上传文件不是图片")
+	}
+	if err := s.scanner.Scan(ctx, input.Data); err != nil {
+		return "", 0, 0, "", fmt.Errorf("预览图安全扫描失败: %w", err)
+	}
+	width, height := imageDimensions(input.Data)
+	if width <= 0 || height <= 0 {
+		return "", 0, 0, "", errors.New("无法读取预览图尺寸")
+	}
+	extensions, _ := mime.ExtensionsByType(detected)
+	extension := ".bin"
+	if len(extensions) > 0 {
+		extension = extensions[0]
+	}
+	return detected, width, height, extension, nil
+}
+
+func (s *ImageAgent) cleanupPromptActionPreview(ctx context.Context, actor domain.User, actionID, objectKey string) {
+	if objectKey == "" {
+		return
+	}
+	if err := s.blobs.Delete(ctx, objectKey); err != nil {
+		slog.Warn("image prompt action preview cleanup failed", "action_id", actionID, "error", err)
+		s.appendAudit(ctx, actor, "image.prompt_action.preview.cleanup_failed", "image_prompt_action", actionID, map[string]any{
+			"error": err.Error(),
+		})
+	}
 }
 
 func promptActionName(provided, actionKey, existing string) string {
@@ -453,9 +602,14 @@ func promptActionName(provided, actionKey, existing string) string {
 }
 
 func (s *ImageAgent) DeletePromptAction(ctx context.Context, actor domain.User, id string) error {
+	value, err := s.repo.GetImagePromptAction(ctx, id)
+	if err != nil {
+		return err
+	}
 	if err := s.repo.DeleteImagePromptAction(ctx, id); err != nil {
 		return err
 	}
+	s.cleanupPromptActionPreview(ctx, actor, id, value.PreviewObjectKey)
 	s.appendAudit(ctx, actor, "image.prompt_action.delete", "image_prompt_action", id, nil)
 	return nil
 }
@@ -497,6 +651,42 @@ func (s *ImageAgent) UpdateCanvas(ctx context.Context, user domain.User, project
 	}
 	canvas.Viewport, canvas.Nodes = input.Viewport, input.Nodes
 	return s.repo.UpdateImageCanvas(ctx, canvas, input.Version)
+}
+
+func (s *ImageAgent) DeleteCanvasNode(ctx context.Context, user domain.User, projectID, nodeID string, version int64) (domain.ImageCanvas, error) {
+	if _, err := s.authorizedProject(ctx, user, projectID, true); err != nil {
+		return domain.ImageCanvas{}, err
+	}
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" || version < 1 {
+		return domain.ImageCanvas{}, errors.New("画布节点或版本无效")
+	}
+	canvas, err := s.repo.GetOrCreateImageCanvas(ctx, user.ID, projectID)
+	if err != nil {
+		return canvas, err
+	}
+	var deleted domain.ImageCanvasNode
+	found := false
+	for _, node := range canvas.Nodes {
+		if node.ID == nodeID {
+			deleted, found = node, true
+			break
+		}
+	}
+	if !found {
+		return canvas, store.ErrNotFound
+	}
+	updated, err := s.repo.DeleteImageCanvasNode(ctx, canvas, nodeID, version)
+	if err != nil {
+		return canvas, err
+	}
+	s.appendAudit(ctx, user, "image.canvas_node.delete", "image_canvas_node", nodeID, map[string]any{
+		"project_id": projectID,
+		"asset_id":   deleted.AssetID,
+		"job_id":     deleted.JobID,
+		"status":     deleted.Status,
+	})
+	return updated, nil
 }
 
 func (s *ImageAgent) UploadAsset(ctx context.Context, user domain.User, projectID, fileName, declaredMIME string, data []byte) (domain.ImageAsset, error) {
@@ -607,7 +797,7 @@ func (s *ImageAgent) AssetContent(ctx context.Context, user domain.User, id stri
 	if err != nil {
 		return value, nil, err
 	}
-	if value.OwnerID != user.ID && !user.HasRole(domain.RoleSuperAdmin) {
+	if value.OwnerID != user.ID {
 		return value, nil, store.ErrForbidden
 	}
 	if _, err = s.authorizedProject(ctx, user, value.ProjectID, false); err != nil {
@@ -732,7 +922,7 @@ func (s *ImageAgent) Job(ctx context.Context, user domain.User, id string) (doma
 	if err != nil {
 		return value, err
 	}
-	if value.UserID != user.ID && !user.HasRole(domain.RoleSuperAdmin) {
+	if value.UserID != user.ID {
 		return value, store.ErrForbidden
 	}
 	return value, nil

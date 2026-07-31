@@ -15,7 +15,7 @@ func TestACLRuleRequiresAllConfiguredDimensions(t *testing.T) {
 	}
 }
 
-func TestACLRulesUseOrSemanticsAndOnlySuperAdminBypasses(t *testing.T) {
+func TestACLRulesUseOrSemanticsAndAdministratorsDoNotBypass(t *testing.T) {
 	acl := ACL{Scope: "restricted", Rules: []ACLRule{{UserIDs: []string{"special"}}, {JobTitles: []string{"法务"}}}}
 	if !acl.Allows(User{ID: "special", Roles: []Role{RoleEmployee}}) || !acl.Allows(User{ID: "other", JobTitle: "法务", Roles: []Role{RoleEmployee}}) {
 		t.Fatal("expected either rule to allow access")
@@ -23,8 +23,8 @@ func TestACLRulesUseOrSemanticsAndOnlySuperAdminBypasses(t *testing.T) {
 	if acl.Allows(User{ID: "auditor", Roles: []Role{RoleAuditor}}) {
 		t.Fatal("auditors must not implicitly bypass document ACLs")
 	}
-	if !acl.Allows(User{ID: "root", Roles: []Role{RoleSuperAdmin}}) {
-		t.Fatal("super admin should retain emergency access")
+	if acl.Allows(User{ID: "root", Roles: []Role{RoleSuperAdmin}, Permissions: AllPermissionKeys}) {
+		t.Fatal("administrative permissions must not bypass document ACLs")
 	}
 }
 

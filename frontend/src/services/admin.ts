@@ -1,5 +1,5 @@
 import { api } from './api'
-import type { ACL, AgentConfig, AgentConfigVersion, AgentProfile, AgentProfileInput, AuditEvent, ConnectedKnowledgeSourceType, DirectoryOptions, KnowledgeDocument, KnowledgeSource, Metrics, NotificationCreateInput, NotificationDraft, NotificationImage, NotificationTargets, Role, User, WorkdayOverride } from '@/types/domain'
+import type { ACL, AgentConfig, AgentConfigVersion, AgentProfile, AgentProfileInput, AuditEvent, ConnectedKnowledgeSourceType, DirectoryOptions, KnowledgeDocument, KnowledgeSource, Metrics, NotificationCreateInput, NotificationDraft, NotificationImage, NotificationTargets, PermissionKey, User, WorkdayOverride } from '@/types/domain'
 
 export const knowledgeService = {
   listSources: () => api.get<KnowledgeSource[]>('/api/v1/admin/knowledge/sources'),
@@ -15,7 +15,9 @@ export const directoryService = {
 }
 export const userAdminService = {
   list: () => api.get<User[]>('/api/v1/admin/users'),
-  updateRoles: (id: string, roles: Role[]) => api.put<User>(`/api/v1/admin/users/${id}/roles`, { roles }),
+  permissions: (id: string) => api.get<User>(`/api/v1/admin/users/${id}/permissions`),
+  updatePermissions: (id: string, input: { allow_keys: PermissionKey[]; deny_keys: PermissionKey[]; version: number; reason: string }) => api.put<User>(`/api/v1/admin/users/${id}/permissions`, input),
+  refreshPermissions: (id: string) => api.post<User>(`/api/v1/admin/users/${id}/permissions/refresh`),
   sync: () => api.post<{ succeeded: number; failed: number }>('/api/v1/admin/users/sync'),
 }
 export const configService = {

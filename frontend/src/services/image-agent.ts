@@ -6,12 +6,20 @@ import type {
 } from '@/types/image-agent'
 
 export const imageAssetURL = (id: string) => resolveApiURL(`/api/v1/image-agent/assets/${id}/content`)
+export const imagePromptActionPreviewURL = (id: string, version?: string) => {
+  const query = version ? `?v=${encodeURIComponent(version)}` : ''
+  return resolveApiURL(`/api/v1/image-agent/prompt-actions/${encodeURIComponent(id)}/preview${query}`)
+}
 
 export const imageAgentService = {
   options: (projectId?: string) => api.get<ImageAgentOptions>(`/api/v1/image-agent/options${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
   canvas: (projectId: string) => api.get<ImageCanvas>(`/api/v1/image-agent/projects/${projectId}/canvas`),
   saveCanvas: (projectId: string, input: { viewport: ImageViewport; nodes: ImageCanvasNode[]; version: number }) =>
     api.patch<ImageCanvas>(`/api/v1/image-agent/projects/${projectId}/canvas`, input),
+  deleteCanvasNode: (projectId: string, nodeId: string, version: number) =>
+    api.delete<ImageCanvas>(
+      `/api/v1/image-agent/projects/${encodeURIComponent(projectId)}/canvas/nodes/${encodeURIComponent(nodeId)}?version=${version}`,
+    ),
   importCanvasAsset(projectId: string, file: File, input: { x: number; y: number; version: number; origin: 'paste' | 'drop' }) {
     const body = new FormData()
     body.set('file', file)
@@ -60,5 +68,11 @@ export const imageAgentAdminService = {
   promptActions: (projectId?: string) => api.get<ImagePromptAction[]>(`/api/v1/admin/image-agent/prompt-actions${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
   createPromptAction: (input: ImagePromptActionInput) => api.post<ImagePromptAction>('/api/v1/admin/image-agent/prompt-actions', input),
   updatePromptAction: (id: string, input: ImagePromptActionInput) => api.put<ImagePromptAction>(`/api/v1/admin/image-agent/prompt-actions/${id}`, input),
+  updatePromptActionPreview(id: string, file: File) {
+    const body = new FormData()
+    body.set('file', file)
+    return api.upload<ImagePromptAction>(`/api/v1/admin/image-agent/prompt-actions/${encodeURIComponent(id)}/preview`, body, 'PUT')
+  },
+  deletePromptActionPreview: (id: string) => api.delete<ImagePromptAction>(`/api/v1/admin/image-agent/prompt-actions/${encodeURIComponent(id)}/preview`),
   deletePromptAction: (id: string) => api.delete(`/api/v1/admin/image-agent/prompt-actions/${id}`),
 }

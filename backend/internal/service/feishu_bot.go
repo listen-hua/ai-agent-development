@@ -30,13 +30,14 @@ type FeishuMeetingSender interface {
 }
 
 type FeishuBot struct {
-	repo      store.Repository
-	chat      *Chat
-	sender    FeishuMessageSender
-	appLink   string
-	reminders *Reminder
-	meetings  *Meeting
-	turns     *conversationLocks
+	repo        store.Repository
+	chat        *Chat
+	sender      FeishuMessageSender
+	appLink     string
+	reminders   *Reminder
+	meetings    *Meeting
+	permissions *PermissionResolver
+	turns       *conversationLocks
 }
 
 func NewFeishuBot(repo store.Repository, chat *Chat, sender FeishuMessageSender, appLink string, features ...any) *FeishuBot {
@@ -47,6 +48,8 @@ func NewFeishuBot(repo store.Repository, chat *Chat, sender FeishuMessageSender,
 			bot.reminders = value
 		case *Meeting:
 			bot.meetings = value
+		case *PermissionResolver:
+			bot.permissions = value
 		}
 	}
 	return bot
@@ -120,6 +123,9 @@ func (b *FeishuBot) handleMeetingCardAction(ctx context.Context, event feishu.Ca
 	if err != nil {
 		return feishu.CardActionResult{ToastType: "error", ToastContent: "无法识别当前用户"}, nil
 	}
+	if user, err = b.authorizedUser(ctx, user); err != nil {
+		return feishu.CardActionResult{ToastType: "error", ToastContent: "当前账号没有使用微光的权限"}, nil
+	}
 	if event.Name == "meeting_booking_cancel" {
 		if _, err = b.meetings.CancelAction(ctx, user, actionID); err != nil && !errors.Is(err, store.ErrConflict) {
 			return feishu.CardActionResult{}, err
@@ -160,6 +166,9 @@ func (b *FeishuBot) handleReminderCardAction(ctx context.Context, event feishu.C
 	if err != nil {
 		return feishu.CardActionResult{ToastType: "error", ToastContent: "无法识别当前用户"}, nil
 	}
+	if user, err = b.authorizedUser(ctx, user); err != nil {
+		return feishu.CardActionResult{ToastType: "error", ToastContent: "当前账号没有使用微光的权限"}, nil
+	}
 	if event.Name == "reminder_cancel" {
 		if _, err = b.reminders.CancelAction(ctx, user, actionID); err != nil && !errors.Is(err, store.ErrConflict) {
 			return feishu.CardActionResult{}, err
@@ -188,6 +197,14 @@ func (b *FeishuBot) answer(event feishu.MessageEvent, question string, ticket *c
 	}
 	if err != nil {
 		slog.Error("upsert feishu user failed", "event_id", event.EventID, "error", err)
+		return
+	}
+	user, err = b.authorizedUser(ctx, user)
+	if err != nil {
+		slog.Info("feishu bot permission denied", "event_id", event.EventID, "open_id", event.OpenID, "error", err)
+		if b.sender.Configured() {
+			_, _ = b.sender.SendText(ctx, "chat_id", event.ChatID, "当前账号没有使用微光的权限，请联系管理员。", "permission-denied-"+event.EventID)
+		}
 		return
 	}
 	if isContextResetText(question) {
@@ -282,6 +299,20 @@ func meetingActionSummary(action domain.MeetingBookingAction) string {
 	}
 	lines = append(lines, "点击对应候选按钮确认；也可以在 Agent 页面查看并选择。")
 	return strings.Join(lines, "\n")
+}
+
+func (b *FeishuBot) authorizedUser(ctx context.Context, user domain.User) (domain.User, error) {
+	if b.permissions == nil {
+		return user, nil
+	}
+	resolved, err := b.permissions.Resolve(ctx, user, "")
+	if err != nil {
+		return domain.User{}, err
+	}
+	if !resolved.HasPermission(domain.PermissionAgentUse) {
+		return domain.User{}, ErrPermissionDenied
+	}
+	return resolved, nil
 }
 
 func parseFeishuText(content string, mentionKeys []string) (string, error) {

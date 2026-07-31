@@ -15,4 +15,11 @@ describe('ACL utilities', () => {
     expect(original.rules[0].job_titles).toHaveLength(2)
     expect(aclSummary(normalized)).toBe('1 组权限规则')
   })
+
+  it('preserves and validates explicit permission-key ACLs', () => {
+    const acl = cloneACL({ scope: 'restricted', role_names: ['knowledge_admin'] })
+    expect(acl.permission_keys).toEqual(['knowledge_manage'])
+    expect(isACLValid(acl)).toBe(true)
+    expect(normalizeACL(acl).rules).toEqual([])
+  })
 })

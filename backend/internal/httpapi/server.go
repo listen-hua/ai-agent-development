@@ -24,20 +24,21 @@ import (
 )
 
 type Server struct {
-	cfg           config.Config
-	repo          store.Repository
-	sessions      *security.Sessions
-	chat          *service.Chat
-	knowledge     *service.Knowledge
-	notifications *service.Notification
-	reminders     *service.Reminder
-	meetings      *service.Meeting
-	directory     *service.Directory
-	agents        *service.AgentRegistry
-	imageAgent    *service.ImageAgent
-	feishu        *feishu.Client
-	iam           *iamintegration.Client
-	mux           *http.ServeMux
+	cfg                config.Config
+	repo               store.Repository
+	sessions           *security.Sessions
+	chat               *service.Chat
+	knowledge          *service.Knowledge
+	notifications      *service.Notification
+	reminders          *service.Reminder
+	meetings           *service.Meeting
+	directory          *service.Directory
+	agents             *service.AgentRegistry
+	imageAgent         *service.ImageAgent
+	feishu             *feishu.Client
+	iam                *iamintegration.Client
+	permissionResolver *service.PermissionResolver
+	mux                *http.ServeMux
 }
 type contextKey string
 
@@ -58,17 +59,6 @@ const (
 	permissionUserManage         = "user_manage"
 )
 
-var allIAMPermissions = []string{
-	permissionAgentUse,
-	permissionKnowledgeManage,
-	permissionAgentManage,
-	permissionImageManage,
-	permissionNotificationManage,
-	permissionCalendarManage,
-	permissionAuditView,
-	permissionUserManage,
-}
-
 func New(cfg config.Config, repo store.Repository, sessions *security.Sessions, chat *service.Chat, knowledge *service.Knowledge, notifications *service.Notification, reminders *service.Reminder, feishuClient *feishu.Client, directory *service.Directory, agents *service.AgentRegistry, features ...any) *Server {
 	s := &Server{cfg: cfg, repo: repo, sessions: sessions, chat: chat, knowledge: knowledge, notifications: notifications, reminders: reminders, directory: directory, agents: agents, feishu: feishuClient, mux: http.NewServeMux()}
 	for _, feature := range features {
@@ -79,7 +69,12 @@ func New(cfg config.Config, repo store.Repository, sessions *security.Sessions, 
 			s.imageAgent = value
 		case *iamintegration.Client:
 			s.iam = value
+		case *service.PermissionResolver:
+			s.permissionResolver = value
 		}
+	}
+	if s.permissionResolver == nil {
+		s.permissionResolver = service.NewPermissionResolver(repo, s.iam)
 	}
 	s.routes()
 	return s
@@ -121,8 +116,10 @@ func (s *Server) routes() {
 	}
 	if s.imageAgent != nil {
 		s.mux.Handle("GET /api/v1/image-agent/options", s.auth(http.HandlerFunc(s.imageAgentOptions)))
+		s.mux.Handle("GET /api/v1/image-agent/prompt-actions/{id}/preview", s.auth(http.HandlerFunc(s.imagePromptActionPreviewContent)))
 		s.mux.Handle("GET /api/v1/image-agent/projects/{id}/canvas", s.auth(http.HandlerFunc(s.imageCanvas)))
 		s.mux.Handle("PATCH /api/v1/image-agent/projects/{id}/canvas", s.auth(http.HandlerFunc(s.updateImageCanvas)))
+		s.mux.Handle("DELETE /api/v1/image-agent/projects/{id}/canvas/nodes/{nodeID}", s.auth(http.HandlerFunc(s.deleteImageCanvasNode)))
 		s.mux.Handle("POST /api/v1/image-agent/projects/{id}/canvas/imports", s.auth(http.HandlerFunc(s.importImageCanvasAsset)))
 		s.mux.Handle("POST /api/v1/image-agent/assets", s.auth(http.HandlerFunc(s.uploadImageAsset)))
 		s.mux.Handle("GET /api/v1/image-agent/assets/{id}/content", s.auth(http.HandlerFunc(s.imageAssetContent)))
@@ -131,13 +128,13 @@ func (s *Server) routes() {
 		s.mux.Handle("GET /api/v1/image-agent/jobs/{id}", s.auth(http.HandlerFunc(s.getImageJob)))
 	}
 
-	knowledgeAdmin := s.permission(permissionKnowledgeManage, domain.RoleKnowledgeAdmin)
-	agentAdmin := s.permission(permissionAgentManage, domain.RoleKnowledgeAdmin)
-	directoryAdmin := s.permissions([]string{permissionKnowledgeManage, permissionImageManage}, domain.RoleKnowledgeAdmin, domain.RoleImageAdmin)
-	notificationAdmin := s.permission(permissionNotificationManage, domain.RoleNotificationAdmin)
-	calendarAdmin := s.permission(permissionCalendarManage, domain.RoleNotificationAdmin)
-	auditor := s.permission(permissionAuditView, domain.RoleAuditor, domain.RoleKnowledgeAdmin, domain.RoleNotificationAdmin)
-	superAdmin := s.permission(permissionUserManage, domain.RoleSuperAdmin)
+	knowledgeAdmin := s.permission(permissionKnowledgeManage)
+	agentAdmin := s.permission(permissionAgentManage)
+	directoryAdmin := s.permissions([]string{permissionKnowledgeManage, permissionImageManage})
+	notificationAdmin := s.permission(permissionNotificationManage)
+	calendarAdmin := s.permission(permissionCalendarManage)
+	auditor := s.permission(permissionAuditView)
+	superAdmin := s.permission(permissionUserManage)
 	s.mux.Handle("GET /api/v1/admin/knowledge/sources", s.auth(knowledgeAdmin(http.HandlerFunc(s.listSources))))
 	s.mux.Handle("POST /api/v1/admin/knowledge/sources", s.auth(knowledgeAdmin(http.HandlerFunc(s.createSource))))
 	s.mux.Handle("POST /api/v1/admin/knowledge/sources/{id}/sync", s.auth(knowledgeAdmin(http.HandlerFunc(s.syncSource))))
@@ -168,6 +165,9 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/admin/metrics", s.auth(auditor(http.HandlerFunc(s.metrics))))
 	s.mux.Handle("GET /api/v1/admin/users", s.auth(superAdmin(http.HandlerFunc(s.listUsers))))
 	s.mux.Handle("PUT /api/v1/admin/users/{id}/roles", s.auth(superAdmin(http.HandlerFunc(s.updateUserRoles))))
+	s.mux.Handle("GET /api/v1/admin/users/{id}/permissions", s.auth(superAdmin(http.HandlerFunc(s.getUserPermissions))))
+	s.mux.Handle("PUT /api/v1/admin/users/{id}/permissions", s.auth(superAdmin(http.HandlerFunc(s.updateUserPermissions))))
+	s.mux.Handle("POST /api/v1/admin/users/{id}/permissions/refresh", s.auth(superAdmin(http.HandlerFunc(s.refreshUserPermissions))))
 	s.mux.Handle("POST /api/v1/admin/users/sync", s.auth(superAdmin(http.HandlerFunc(s.syncUsers))))
 	if s.meetings != nil {
 		s.mux.Handle("GET /api/v1/admin/meeting-rooms", s.auth(calendarAdmin(http.HandlerFunc(s.listMeetingRooms))))
@@ -175,7 +175,7 @@ func (s *Server) routes() {
 		s.mux.Handle("POST /api/v1/admin/meeting-rooms/calendar", s.auth(calendarAdmin(http.HandlerFunc(s.initializeMeetingCalendar))))
 	}
 	if s.imageAgent != nil {
-		imageAdmin := s.permission(permissionImageManage, domain.RoleImageAdmin)
+		imageAdmin := s.permission(permissionImageManage)
 		s.mux.Handle("GET /api/v1/admin/image-agent/relays", s.auth(imageAdmin(http.HandlerFunc(s.listImageRelays))))
 		s.mux.Handle("POST /api/v1/admin/image-agent/relays", s.auth(imageAdmin(http.HandlerFunc(s.createImageRelay))))
 		s.mux.Handle("PUT /api/v1/admin/image-agent/relays/{id}", s.auth(imageAdmin(http.HandlerFunc(s.updateImageRelay))))
@@ -189,6 +189,8 @@ func (s *Server) routes() {
 		s.mux.Handle("GET /api/v1/admin/image-agent/prompt-actions", s.auth(imageAdmin(http.HandlerFunc(s.listImagePromptActions))))
 		s.mux.Handle("POST /api/v1/admin/image-agent/prompt-actions", s.auth(imageAdmin(http.HandlerFunc(s.createImagePromptAction))))
 		s.mux.Handle("PUT /api/v1/admin/image-agent/prompt-actions/{id}", s.auth(imageAdmin(http.HandlerFunc(s.updateImagePromptAction))))
+		s.mux.Handle("PUT /api/v1/admin/image-agent/prompt-actions/{id}/preview", s.auth(imageAdmin(http.HandlerFunc(s.updateImagePromptActionPreview))))
+		s.mux.Handle("DELETE /api/v1/admin/image-agent/prompt-actions/{id}/preview", s.auth(imageAdmin(http.HandlerFunc(s.deleteImagePromptActionPreview))))
 		s.mux.Handle("DELETE /api/v1/admin/image-agent/prompt-actions/{id}", s.auth(imageAdmin(http.HandlerFunc(s.deleteImagePromptAction))))
 	}
 }
@@ -212,8 +214,7 @@ func (s *Server) iamAuthConfig(w http.ResponseWriter, _ *http.Request) {
 
 type authUserResponse struct {
 	domain.User
-	AuthSource     string   `json:"auth_source"`
-	IAMPermissions []string `json:"iam_permissions,omitempty"`
+	AuthSource string `json:"auth_source"`
 }
 
 func (s *Server) exchangeIAM(w http.ResponseWriter, r *http.Request) {
@@ -226,10 +227,23 @@ func (s *Server) exchangeIAM(w http.ResponseWriter, r *http.Request) {
 		writeIAMCode(w, iamintegration.CodeTokenInvalid, "令牌非法")
 		return
 	}
-	iamUserID, err := s.iam.Authenticate(r.Context(), token, permissionAgentUse, nil)
-	if err != nil {
-		s.writeIAMError(w, err)
-		return
+	var input struct {
+		IAMUserID int64 `json:"iam_user_id"`
+	}
+	if r.Body != nil {
+		if decodeErr := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&input); decodeErr != nil && !errors.Is(decodeErr, io.EOF) {
+			writeIAMCode(w, iamintegration.CodeInvalidRequest, "IAM 用户身份参数无效")
+			return
+		}
+	}
+	iamUserID := input.IAMUserID
+	var err error
+	if iamUserID <= 0 {
+		iamUserID, err = s.iam.Authenticate(r.Context(), token, permissionAgentUse, nil)
+		if err != nil {
+			s.writeIAMError(w, err)
+			return
+		}
 	}
 	commonInfo, err := s.iam.LookupUser(r.Context(), token, iamUserID)
 	if err != nil {
@@ -273,19 +287,29 @@ func (s *Server) exchangeIAM(w http.ResponseWriter, r *http.Request) {
 		writeIAMCode(w, 519004, "账号已停用，请联系管理员")
 		return
 	}
+	if containsString(s.cfg.BootstrapSuperAdminOpenIDs, user.FeishuOpenID) {
+		if err = s.permissionResolver.EnsureLocalAllow(r.Context(), user.ID, user.ID, domain.AllPermissionKeys, "Bootstrap super administrator"); err != nil {
+			writeIAMCode(w, iamintegration.CodeUnavailable, "Failed to initialize local permissions")
+			return
+		}
+	}
+	user, err = s.permissionResolver.Resolve(r.Context(), user, token)
+	if err != nil {
+		writeIAMCode(w, iamintegration.CodeUnavailable, "IAM permission resolution failed")
+		return
+	}
+	if !user.HasPermission(domain.PermissionAgentUse) {
+		writeIAMCode(w, iamintegration.CodePermissionDenied, "当前 IAM 账号没有访问微光的权限，请联系管理员")
+		return
+	}
 	sessionToken, err := s.sessions.IssueFor(user.ID, "iam", iamUserID, 12*time.Hour)
 	if err != nil {
 		writeIAMCode(w, iamintegration.CodeUnavailable, "创建登录会话失败")
 		return
 	}
-	permissions, err := s.iam.GrantedPermissions(r.Context(), token, allIAMPermissions)
-	if err != nil {
-		s.writeIAMError(w, err)
-		return
-	}
 	setSessionCookie(w, sessionToken, s.cfg.Environment == "production")
 	_ = s.repo.AppendAudit(r.Context(), domain.AuditEvent{ID: ids.New("aud"), ActorID: user.ID, ActorName: user.Name, Action: "auth.login", ResourceType: "session", ResourceID: user.ID, Metadata: map[string]any{"auth_source": "iam", "iam_user_id": iamUserID}, CreatedAt: now})
-	writeJSON(w, http.StatusOK, authUserResponse{User: user, AuthSource: "iam", IAMPermissions: permissions})
+	writeJSON(w, http.StatusOK, authUserResponse{User: user, AuthSource: "iam"})
 }
 
 func (s *Server) feishuClientDiagnostics(w http.ResponseWriter, r *http.Request) {
@@ -363,9 +387,6 @@ func (s *Server) exchange(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil {
 			roles := []domain.Role{domain.RoleEmployee}
-			if containsString(s.cfg.BootstrapSuperAdminOpenIDs, info.OpenID) {
-				roles = append(roles, domain.RoleSuperAdmin)
-			}
 			candidate := domain.User{FeishuOpenID: info.OpenID, Name: info.Name, AvatarURL: info.AvatarURL, Status: "active", Roles: roles}
 			if s.directory != nil {
 				if enriched, enrichErr := s.directory.Enrich(r.Context(), candidate); enrichErr == nil {
@@ -383,6 +404,21 @@ func (s *Server) exchange(w http.ResponseWriter, r *http.Request) {
 	}
 	if user.Status != "" && user.Status != "active" {
 		writeError(w, http.StatusForbidden, "账号已停用，请联系管理员", nil)
+		return
+	}
+	if containsString(s.cfg.BootstrapSuperAdminOpenIDs, user.FeishuOpenID) {
+		if err = s.permissionResolver.EnsureLocalAllow(r.Context(), user.ID, user.ID, domain.AllPermissionKeys, "Bootstrap super administrator"); err != nil {
+			writeError(w, http.StatusInternalServerError, "初始化管理员权限失败", err)
+			return
+		}
+	}
+	user, err = s.permissionResolver.Resolve(r.Context(), user, "")
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "读取用户权限失败", err)
+		return
+	}
+	if !user.HasPermission(domain.PermissionAgentUse) {
+		writeError(w, http.StatusForbidden, "当前账号没有访问微光的权限，请联系管理员", nil)
 		return
 	}
 	token, err := s.sessions.IssueFor(user.ID, authSource, 0, 12*time.Hour)
@@ -406,16 +442,7 @@ func containsString(values []string, expected string) bool {
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	claims := currentClaims(r)
 	source := normalizedAuthSource(claims.AuthSource)
-	response := authUserResponse{User: currentUser(r), AuthSource: source}
-	if source == "iam" {
-		permissions, err := s.iam.GrantedPermissions(r.Context(), currentIAMToken(r), allIAMPermissions)
-		if err != nil {
-			s.writeIAMError(w, err)
-			return
-		}
-		response.IAMPermissions = permissions
-	}
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusOK, authUserResponse{User: currentUser(r), AuthSource: source})
 }
 func (s *Server) listAvailableAgents(w http.ResponseWriter, r *http.Request) {
 	values, err := s.agents.List(r.Context(), false)
@@ -931,33 +958,79 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := s.repo.ListUsers(r.Context())
+	users, err := s.permissionResolver.ListUsers(r.Context())
 	respond(w, users, err)
 }
 func (s *Server) updateUserRoles(w http.ResponseWriter, r *http.Request) {
+	writeError(w, http.StatusGone, "旧角色编辑接口已停用，请使用权限覆盖接口", nil)
+}
+func (s *Server) getUserPermissions(w http.ResponseWriter, r *http.Request) {
+	user, err := s.repo.GetUser(r.Context(), r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "用户不存在", err)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "读取用户失败", err)
+		return
+	}
+	user, err = s.permissionResolver.Resolve(r.Context(), user, "")
+	respond(w, user, err)
+}
+func (s *Server) updateUserPermissions(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Roles []domain.Role `json:"roles"`
+		AllowKeys []domain.PermissionKey `json:"allow_keys"`
+		DenyKeys  []domain.PermissionKey `json:"deny_keys"`
+		Version   int64                  `json:"version"`
+		Reason    string                 `json:"reason"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	roles, err := domain.NormalizeRoles(input.Roles)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "角色配置无效", err)
-		return
-	}
-	value, err := s.repo.UpdateUserRoles(r.Context(), r.PathValue("id"), roles)
-	if errors.Is(err, store.ErrConflict) {
-		writeError(w, http.StatusConflict, "必须至少保留一名超级管理员", err)
+	target, err := s.repo.GetUser(r.Context(), r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "用户不存在", err)
 		return
 	}
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "更新角色失败", err)
+		writeError(w, http.StatusInternalServerError, "读取用户失败", err)
 		return
 	}
-	actor := currentUser(r)
-	_ = s.repo.AppendAudit(r.Context(), domain.AuditEvent{ID: ids.New("aud"), ActorID: actor.ID, ActorName: actor.Name, Action: "identity.roles.update", ResourceType: "user", ResourceID: value.ID, Metadata: map[string]any{"roles": value.Roles}, CreatedAt: time.Now()})
-	writeJSON(w, http.StatusOK, value)
+	value, err := s.permissionResolver.UpdateLocalPolicy(
+		r.Context(), currentUser(r), target, input.AllowKeys, input.DenyKeys, input.Version, input.Reason,
+	)
+	switch {
+	case errors.Is(err, store.ErrConflict):
+		writeError(w, http.StatusConflict, "权限配置已被其他管理员修改，请刷新后重试", err)
+	case errors.Is(err, service.ErrLastPermissionAdministrator):
+		writeError(w, http.StatusConflict, "必须至少保留一名拥有用户管理权限的管理员", err)
+	case errors.Is(err, service.ErrPermissionDenied):
+		writeError(w, http.StatusForbidden, "没有用户权限管理权限", err)
+	case err != nil:
+		writeError(w, http.StatusBadRequest, "更新权限失败", err)
+	default:
+		writeJSON(w, http.StatusOK, value)
+	}
+}
+func (s *Server) refreshUserPermissions(w http.ResponseWriter, r *http.Request) {
+	user, err := s.repo.GetUser(r.Context(), r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "用户不存在", err)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "读取用户失败", err)
+		return
+	}
+	value, err := s.permissionResolver.Refresh(r.Context(), user)
+	if err == nil {
+		actor := currentUser(r)
+		_ = s.repo.AppendAudit(r.Context(), domain.AuditEvent{
+			ID: ids.New("aud"), ActorID: actor.ID, ActorName: actor.Name,
+			Action: "identity.permissions.refresh", ResourceType: "user", ResourceID: user.ID, CreatedAt: time.Now(),
+		})
+	}
+	respond(w, value, err)
 }
 func (s *Server) syncUsers(w http.ResponseWriter, r *http.Request) {
 	if s.directory == nil || s.feishu == nil || !s.feishu.Configured() {
@@ -974,6 +1047,9 @@ func (s *Server) syncUsers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.permissionResolver == nil {
+			s.permissionResolver = service.NewPermissionResolver(s.repo, s.iam)
+		}
 		cookie, err := r.Cookie("ai_agent_session")
 		if err != nil {
 			writeError(w, 401, "请先登录", nil)
@@ -995,6 +1071,7 @@ func (s *Server) auth(next http.Handler) http.Handler {
 		}
 		ctx := context.WithValue(r.Context(), userKey, user)
 		ctx = context.WithValue(ctx, claimsKey, claims)
+		permissionToken := ""
 		if normalizedAuthSource(claims.AuthSource) == "iam" {
 			if s.iam == nil || !s.iam.Configured() {
 				writeIAMCode(w, iamintegration.CodeUnavailable, "IAM 服务未配置")
@@ -1005,64 +1082,58 @@ func (s *Server) auth(next http.Handler) http.Handler {
 				writeIAMCode(w, iamintegration.CodeTokenInvalid, "令牌非法")
 				return
 			}
-			iamUserID, authErr := s.iam.Authenticate(ctx, iamToken, permissionAgentUse, nil)
+			commonInfo, authErr := s.iam.LookupUser(ctx, iamToken, claims.IAMUserID)
 			if authErr != nil {
-				slog.Warn("IAM permission denied", "permission_key", permissionAgentUse, "iam_user_id", claims.IAMUserID, "error", authErr)
-				s.writeIAMError(w, authErr)
-				return
-			}
-			if claims.IAMUserID <= 0 || iamUserID != claims.IAMUserID || user.IAMUserID == nil || *user.IAMUserID != iamUserID {
-				writeIAMCode(w, 519002, "IAM 登录身份与本地账号不一致")
-				return
+				if code, ok := iamintegration.ErrorCode(authErr); !ok || code != iamintegration.CodeUnavailable {
+					slog.Warn("IAM identity validation failed", "iam_user_id", claims.IAMUserID, "error", authErr)
+					s.writeIAMError(w, authErr)
+					return
+				}
+				slog.Warn("IAM identity validation temporarily unavailable; using signed local session", "iam_user_id", claims.IAMUserID, "error", authErr)
+			} else {
+				if claims.IAMUserID <= 0 || commonInfo.ID != claims.IAMUserID || user.IAMUserID == nil || *user.IAMUserID != claims.IAMUserID || commonInfo.FeishuAccountInfo.UserID != user.FeishuUserID {
+					writeIAMCode(w, 519002, "IAM 登录身份与本地账号不一致")
+					return
+				}
 			}
 			ctx = context.WithValue(ctx, iamTokenKey, iamToken)
+			permissionToken = iamToken
 		}
+		user, err = s.permissionResolver.Resolve(ctx, user, permissionToken)
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "读取用户权限失败", err)
+			return
+		}
+		if !user.HasPermission(domain.PermissionAgentUse) {
+			writeError(w, http.StatusForbidden, "当前账号没有访问微光的权限，请联系管理员", nil)
+			return
+		}
+		ctx = context.WithValue(ctx, userKey, user)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-func (s *Server) permission(permission string, roles ...domain.Role) func(http.Handler) http.Handler {
-	return s.permissions([]string{permission}, roles...)
+func (s *Server) permission(permission string) func(http.Handler) http.Handler {
+	return s.permissions([]string{permission})
 }
 
-func (s *Server) permissions(permissionKeys []string, roles ...domain.Role) func(http.Handler) http.Handler {
+func (s *Server) permissions(permissionKeys []string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if normalizedAuthSource(currentClaims(r).AuthSource) != "iam" {
-				if !currentUser(r).HasRole(roles...) {
-					writeError(w, http.StatusForbidden, "没有访问权限", nil)
-					return
-				}
-				next.ServeHTTP(w, r)
-				return
-			}
 			for _, permissionKey := range permissionKeys {
-				iamUserID, err := s.iam.Authenticate(r.Context(), currentIAMToken(r), permissionKey, nil)
-				if err == nil && iamUserID == currentClaims(r).IAMUserID {
-					slog.Debug("IAM route permission allowed", "permission_key", permissionKey, "iam_user_id", iamUserID)
+				if currentUser(r).HasPermission(domain.PermissionKey(permissionKey)) {
 					next.ServeHTTP(w, r)
 					return
 				}
-				if code, ok := iamintegration.ErrorCode(err); ok && code == iamintegration.CodePermissionDenied {
-					slog.Info("IAM route permission denied", "permission_key", permissionKey, "iam_user_id", currentClaims(r).IAMUserID)
-					continue
-				}
-				if err != nil {
-					s.writeIAMError(w, err)
-					return
-				}
-				writeIAMCode(w, 519002, "IAM 登录身份与本地账号不一致")
-				return
 			}
-			if len(permissionKeys) > 0 {
-				writeIAMCode(w, iamintegration.CodePermissionDenied, "权限不足")
-				return
-			}
-			if !currentUser(r).HasRole(roles...) {
-				writeError(w, 403, "没有访问权限", nil)
-				return
-			}
-			next.ServeHTTP(w, r)
+			user := currentUser(r)
+			_ = s.repo.AppendAudit(r.Context(), domain.AuditEvent{
+				ID: ids.New("aud"), ActorID: user.ID, ActorName: user.Name,
+				Action: "identity.permission.denied", ResourceType: "route", ResourceID: r.URL.Path,
+				Metadata:  map[string]any{"required_permissions": permissionKeys, "method": r.Method},
+				CreatedAt: time.Now(),
+			})
+			writeError(w, http.StatusForbidden, "没有访问权限", nil)
 		})
 	}
 }

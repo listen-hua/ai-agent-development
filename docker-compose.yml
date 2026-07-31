@@ -23,6 +23,9 @@ services:
       - ./backend/migrations/012_comfly_image_output_host.sql:/docker-entrypoint-initdb.d/012_comfly_image_output_host.sql:ro
       - ./backend/migrations/013_message_feedback.sql:/docker-entrypoint-initdb.d/013_message_feedback.sql:ro
       - ./backend/migrations/014_iam_identity.sql:/docker-entrypoint-initdb.d/014_iam_identity.sql:ro
+      - ./backend/migrations/015_comfly_apiproxy_output_host.sql:/docker-entrypoint-initdb.d/015_comfly_apiproxy_output_host.sql:ro
+      - ./backend/migrations/016_unified_permissions.sql:/docker-entrypoint-initdb.d/016_unified_permissions.sql:ro
+      - ./backend/migrations/017_image_prompt_action_previews.sql:/docker-entrypoint-initdb.d/017_image_prompt_action_previews.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ai_agent -d ai_agent"]
       interval: 5s

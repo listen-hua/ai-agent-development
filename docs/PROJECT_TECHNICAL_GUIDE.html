@@ -35,6 +35,7 @@
     .hero .lead { max-width: 850px; margin: 22px 0 0; color: rgba(255,255,255,.84); font-size: 17px; }
     .hero-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 30px; }
     .hero-meta span { padding: 7px 12px; border: 1px solid rgba(255,255,255,.2); border-radius: 99px; background: rgba(255,255,255,.08); font-size: 12px; }
+    .hero-guide-link { display: inline-block; margin-top: 18px; padding: 8px 12px; border: 1px solid rgba(255,255,255,.22); border-radius: 8px; color: white; background: rgba(255,255,255,.08); text-decoration: none; font-size: 12px; }
     .layout { display: grid; grid-template-columns: 282px minmax(0, 1fr); }
     .toc { position: sticky; top: 0; align-self: start; max-height: 100vh; overflow: auto; padding: 32px 22px 40px 30px; border-right: 1px solid var(--line); background: #fbfcfe; scrollbar-width: thin; scrollbar-color: #bdc8db transparent; }
     .toc::-webkit-scrollbar { width: 7px; }
@@ -149,6 +150,7 @@
       <p class="kicker">SHIMMER · INTERNAL AI AGENT PLATFORM</p>
       <h1>微光 Shimmer：公司内部 AI Agent 平台技术栈与功能实现原理</h1>
       <p class="lead">基于当前项目代码梳理，不只列出“用了什么”，还解释每个功能如何落地、为什么采用这种方式，以及在什么条件下才值得更换为其他方案。</p>
+      <a class="hero-guide-link" href="./SHIMMER_ZERO_TO_MASTERY.html">需要从基础系统学习？打开《微光 Shimmer 从零到完全掌握》</a>
       <div class="hero-meta">
         <span>Vue 3 + TypeScript</span><span>Go 1.25</span><span>PostgreSQL 17 + pgvector</span>
         <span>阿里云百炼</span><span>飞书 H5 + 机器人</span><span>会议室预约</span>
@@ -250,7 +252,7 @@
           <h2>四、前端架构：一个 Vue 应用承载员工端和管理端</h2>
           <p>同一个 Vue SPA 提供 <code>/chat</code>、<code>/reminders</code>、<code>/image-agent</code> 和多个 <code>/admin/*</code> 页面。路由懒加载减少飞书 WebView 首次下载体积；Pinia 保存跨页面的身份和会话状态；复杂页面继续拆成 feature component、composable、service 与 type。</p>
           <div class="feature-grid">
-            <article><strong>Router</strong><p>根据身份判断是否登录，根据角色元数据决定能否进入管理路由；未知路由进入独立 404 页面。</p></article>
+            <article><strong>Router</strong><p>根据身份判断是否登录，根据统一权限键决定能否进入管理路由；未知路由进入独立 404 页面。</p></article>
             <article><strong>Service 层</strong><p>统一封装 REST 与 SSE，页面不直接拼接底层请求细节，避免 DTO 散落在组件里。</p></article>
             <article><strong>组件拆分</strong><p>聊天消息、引用抽屉、ACL 编辑、会议卡片、富文本编辑器和画布节点均独立维护。</p></article>
           </div>
@@ -282,7 +284,7 @@
         <section id="data">
           <h2>六、数据基础设施：一套存储承担不同职责</h2>
           <h3>PostgreSQL：系统事实来源</h3>
-          <p>用户、角色、组织属性、会话、文档版本、切片、配置、通知、提醒、会议预约、生图任务、画布和审计都以 PostgreSQL 为准。JSONB 用于配置、ACL 和扩展字段；事务用于版本发布、任务领取和状态流转；<code>FOR UPDATE SKIP LOCKED</code> 让多个 Worker 能并发领取任务而不重复处理。</p>
+          <p>用户、权限策略、IAM快照、组织属性、会话、文档版本、切片、配置、通知、提醒、会议预约、生图任务、画布和审计都以 PostgreSQL 为准。JSONB 用于配置、ACL 和扩展字段；事务用于版本发布、任务领取和状态流转；<code>FOR UPDATE SKIP LOCKED</code> 让多个 Worker 能并发领取任务而不重复处理。</p>
           <h3>pgvector：向量与权限共库</h3>
           <p>向量存放在制度切片行中。当前实现将向量相似度和 PostgreSQL 全文排名做加权，再在应用层按中文词命中做一次筛选排序，最后调用 Rerank。它并非独立向量数据库，也不是严格 RRF 实现。</p>
           <div class="decision">
@@ -305,13 +307,13 @@
           <h3>为什么不把 Token 放 localStorage</h3>
           <p>localStorage 可被页面中的恶意脚本读取；HttpOnly Cookie 对 JavaScript 不可见，能降低 XSS 直接窃取会话的风险。Cookie 方案需要处理 CSRF 与 SameSite，但同源 H5 + API 的结构正适合这一模式。</p>
           <h3>超级管理员如何初始化</h3>
-          <p><code>BOOTSTRAP_SUPER_ADMIN_OPEN_IDS</code> 只用于冷启动。API 启动会为已存在用户补角色；尚未登录的用户在首次登录时获得角色。完成首位管理员初始化后应移除该环境变量，再从“用户与权限”页面分配其他管理员。</p>
+          <p><code>BOOTSTRAP_SUPER_ADMIN_OPEN_IDS</code> 只用于冷启动。API 启动会为已存在用户本地允许全部八项权限；尚未登录的用户在首次登录时获得相同策略。完成首位管理员初始化后应移除该环境变量，再从“用户与权限”页面维护本地覆盖。</p>
         </section>
 
         <section id="permission">
           <h2>八、权限体系：RBAC 管功能，组织 ACL 管数据</h2>
           <h3>RBAC：决定可以操作什么</h3>
-          <p>角色包括员工、知识管理员、通知管理员、生图管理员、审计员和超级管理员。前端隐藏无权限菜单以改善体验，后端对每个管理接口再次校验角色。前端路由守卫不是安全边界，因为用户可以绕过页面直接调用 API。</p>
+          <p>IAM和微光本地策略使用同一组八个权限键，最终结果为<code>(IAM ∪ 本地允许) − 本地拒绝</code>。前端隐藏无权限菜单以改善体验，后端对每个接口再次校验最终权限。前端路由守卫不是安全边界，因为用户可以绕过页面直接调用 API。</p>
           <h3>组织 ACL：决定可以看到哪份制度或哪个项目</h3>
           <p>登录或组织事件同步后，本地用户保存飞书部门、职位、职级、序列、员工类型和人员 ID。ACL 规则支持这些维度。一个规则内部不同维度是 AND，同一维度多个值是 OR；多条规则之间是 OR。例如：</p>
           <pre><code>规则 A：部门 ∈ {财务部, 审计部} AND 职位 ∈ {会计}
@@ -319,9 +321,9 @@
 最终可见 = 规则 A 命中 OR 规则 B 命中</code></pre>
           <p>检索时先在 SQL 中过滤，再用领域对象的 <code>ACL.Allows(user)</code> 二次防御。超级管理员可以绕过文档 ACL用于治理，但普通员工无法通过猜文件名、引用 ID 或历史会话越权。</p>
           <div class="decision">
-            <header><span>选型</span>RBAC + ABAC/ACL 混合，而不是只用角色</header>
+            <header><span>选型</span>统一模块权限 + ABAC/ACL，而不是只用角色</header>
             <div>
-              <article><h4>为什么要混合</h4><p>后台能力适合少量稳定角色；制度可见范围经常按部门、职位或人员变化，仅靠角色会产生大量“财务会计制度读者”式角色。</p></article>
+              <article><h4>为什么要混合</h4><p>后台能力适合少量稳定权限键；制度可见范围经常按部门、职位或人员变化，仅靠模块权限会产生大量“财务会计制度读者”式权限。</p></article>
               <article><h4>为什么不实时依赖飞书文件权限</h4><p>飞书源权限只表示应用能否读取源文件，不能直接等价为员工在 AI 中的可见范围；内部发布流程也需要独立、可审计的权限快照。</p></article>
             </div>
           </div>
@@ -601,7 +603,7 @@
           <h2>二十二、测试与可观测性：测试确定性边界，不测试模型“心情”</h2>
           <h3>后端测试重点</h3>
           <ul>
-            <li>ACL 对部门、职位、人员和角色的允许/拒绝。</li>
+            <li>ACL 对部门、职位、人员和显式权限键的允许范围。</li>
             <li>引用缺失、越界和撤权历史不能继续使用。</li>
             <li>上下文补全、主题切换、重置和模型失败降级。</li>
             <li>提醒解析、工作日、任务租约、重试与幂等。</li>
@@ -611,7 +613,7 @@
           <h3>前端测试重点</h3>
           <p>Vitest + Vue Test Utils 验证路由权限、H5 登录回退、通知 Markdown、表单和组件交互；Playwright 验证真实浏览器中的登录、流式聊天、管理页面和画布操作。模型接口应使用可控 mock，真实中转站只做少量验收测试，避免费用和随机性让测试不稳定。</p>
           <h3>指标和审计</h3>
-          <p>系统记录登录、角色修改、资料上传与发布、ACL 修改、配置发布、通知审批发送、会议预约和生图调用。质量看板关注问题数、已发布文档等基础指标；建议持续补充首字延迟、完整耗时、无答案率、引用覆盖率、模型费用、同步积压、飞书发送成功率和生图失败原因分布。</p>
+          <p>系统记录登录、权限修改、IAM同步与降级、资料上传与发布、ACL 修改、配置发布、通知审批发送、会议预约和生图调用。质量看板关注问题数、已发布文档等基础指标；建议持续补充首字延迟、完整耗时、无答案率、引用覆盖率、模型费用、同步积压、飞书发送成功率和生图失败原因分布。</p>
           <div class="callout">端到端成功率不能只看 HTTP 200。例如会议室必须看 RSVP 是否 accept，通知要看每个接收者投递结果，生图要看输出资产是否完成校验并落入 MinIO。</div>
         </section>
 
@@ -664,7 +666,7 @@
         <section id="principles">
           <h2>二十五、核心设计原则总结</h2>
           <ol class="key-list">
-            <li><strong>模型负责理解，代码负责授权。</strong><br>AI 输出不能扩大 ACL、决定角色或绕过确认。</li>
+            <li><strong>模型负责理解，代码负责授权。</strong><br>AI 输出不能扩大 ACL、决定权限或绕过确认。</li>
             <li><strong>先持久化，再异步执行。</strong><br>提醒、通知、会议投递和生图都必须能从重启中恢复。</li>
             <li><strong>候选不是结果。</strong><br>会议室在确认时复核，外部 RSVP 才是真实成功。</li>
             <li><strong>历史不是证据。</strong><br>制度问答每轮重新检索，引用只来自本轮授权片段。</li>

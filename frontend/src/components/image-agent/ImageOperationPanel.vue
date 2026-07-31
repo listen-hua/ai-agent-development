@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { Delete, MagicStick, PictureRounded, Promotion } from '@element-plus/icons-vue'
 import CartoonStrengthControl from './CartoonStrengthControl.vue'
+import ImagePromptActionButton from './ImagePromptActionButton.vue'
 import ReferenceImageSlots from './ReferenceImageSlots.vue'
 import { cartoonStrength, replaceCartoonStrength } from '@/utils/imagePrompt'
 import type {
@@ -149,7 +150,7 @@ function updateStrength(value: number) {
       <section class="form-section action-section">
         <header><strong>功能按键</strong><small>点击后覆盖文本描述</small></header>
         <div v-if="actions.length" class="prompt-actions">
-          <el-button v-for="action in actions" :key="action.id" plain round @click="emit('action', action)">{{ action.name }}</el-button>
+          <ImagePromptActionButton v-for="action in actions" :key="action.id" :action="action" @select="emit('action', $event)" />
         </div>
         <el-empty v-else :image-size="42" description="管理员尚未配置快捷提示词" />
       </section>
@@ -193,7 +194,7 @@ function updateStrength(value: number) {
 .choice-grid button:disabled { opacity: .36; cursor: not-allowed; }.size-grid button { height: 48px; display: flex; justify-content: center; flex-direction: column; gap: 2px; }
 .size-grid button strong { font-size: 12px; }.size-grid button span { color: #a3a0a8; font-size: 10px; }
 .project-status { float: right; color: #9a92a4; font-size: 11px; }
-.prompt-actions { display: flex; flex-wrap: wrap; gap: 6px; }.prompt-actions .el-button { margin: 0; font-size: 11px; }
+.prompt-actions { display: flex; flex-wrap: wrap; gap: 6px; }.prompt-actions :deep(.el-button) { margin: 0; font-size: 11px; }
 .action-section :deep(.el-empty) { padding: 4px 0; }.action-section :deep(.el-empty__description) { margin-top: 3px; }.action-section :deep(.el-empty__description p) { font-size: 11px; }
 .generate-button { width: 100%; margin-top: 2px; border: 0; border-radius: 11px; background: linear-gradient(135deg, #8253ad, #6540a2); box-shadow: 0 8px 18px rgba(105, 65, 157, .22); }
 .workflow-placeholder { min-height: 420px; padding: 50px 30px; display: flex; align-items: center; justify-content: center; flex-direction: column; text-align: center; }

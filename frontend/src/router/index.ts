@@ -1,7 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import type { IAMPermission } from '@/services/iam'
-import type { Role } from '@/types/domain'
+import type { PermissionKey } from '@/types/domain'
 import { installChunkLoadRecovery } from './chunkRecovery'
 
 const routes: RouteRecordRaw[] = [
@@ -11,14 +10,14 @@ const routes: RouteRecordRaw[] = [
       { path: 'chat', name: 'chat', component: () => import('@/views/ChatView.vue'), meta: { permission: 'agent_use' } },
       { path: 'image-agent', name: 'image-agent', component: () => import('@/views/ImageAgentView.vue'), meta: { permission: 'agent_use' } },
       { path: 'reminders', name: 'reminders', component: () => import('@/views/RemindersView.vue'), meta: { permission: 'agent_use' } },
-      { path: 'admin/knowledge', name: 'knowledge', component: () => import('@/views/admin/KnowledgeView.vue'), meta: { permission: 'knowledge_manage', roles: ['knowledge_admin', 'super_admin'] } },
-      { path: 'admin/agent', name: 'agent-config', component: () => import('@/views/admin/AgentConfigView.vue'), meta: { permission: 'agent_manage', roles: ['knowledge_admin', 'super_admin'] } },
-      { path: 'admin/image-agent', name: 'image-agent-admin', component: () => import('@/views/admin/ImageAgentAdminView.vue'), meta: { permission: 'image_manage', roles: ['image_admin', 'super_admin'] } },
-      { path: 'admin/notifications', name: 'notifications', component: () => import('@/views/admin/NotificationsView.vue'), meta: { permission: 'notification_manage', roles: ['notification_admin', 'super_admin'] } },
-      { path: 'admin/work-calendar', name: 'work-calendar', component: () => import('@/views/admin/WorkCalendarView.vue'), meta: { permission: 'calendar_manage', roles: ['notification_admin', 'super_admin'] } },
-      { path: 'admin/meeting-rooms', name: 'meeting-rooms', component: () => import('@/views/admin/MeetingRoomsView.vue'), meta: { permission: 'calendar_manage', roles: ['notification_admin', 'super_admin'] } },
-      { path: 'admin/audit', name: 'audit', component: () => import('@/views/admin/AuditView.vue'), meta: { permission: 'audit_view', roles: ['auditor', 'knowledge_admin', 'notification_admin', 'super_admin'] } },
-      { path: 'admin/users', name: 'users', component: () => import('@/views/admin/UsersView.vue'), meta: { permission: 'user_manage', roles: ['super_admin'] } },
+      { path: 'admin/knowledge', name: 'knowledge', component: () => import('@/views/admin/KnowledgeView.vue'), meta: { permission: 'knowledge_manage' } },
+      { path: 'admin/agent', name: 'agent-config', component: () => import('@/views/admin/AgentConfigView.vue'), meta: { permission: 'agent_manage' } },
+      { path: 'admin/image-agent', name: 'image-agent-admin', component: () => import('@/views/admin/ImageAgentAdminView.vue'), meta: { permission: 'image_manage' } },
+      { path: 'admin/notifications', name: 'notifications', component: () => import('@/views/admin/NotificationsView.vue'), meta: { permission: 'notification_manage' } },
+      { path: 'admin/work-calendar', name: 'work-calendar', component: () => import('@/views/admin/WorkCalendarView.vue'), meta: { permission: 'calendar_manage' } },
+      { path: 'admin/meeting-rooms', name: 'meeting-rooms', component: () => import('@/views/admin/MeetingRoomsView.vue'), meta: { permission: 'calendar_manage' } },
+      { path: 'admin/audit', name: 'audit', component: () => import('@/views/admin/AuditView.vue'), meta: { permission: 'audit_view' } },
+      { path: 'admin/users', name: 'users', component: () => import('@/views/admin/UsersView.vue'), meta: { permission: 'user_manage' } },
     ],
   },
   { path: '/:pathMatch(.*)*', component: () => import('@/views/NotFoundView.vue') },
@@ -31,8 +30,7 @@ router.beforeEach(async (to) => {
   await auth.initialize()
   if (!to.meta.public && !auth.user) return { name: 'login', query: { redirect: to.fullPath } }
   if (to.name === 'login' && auth.user) return { name: 'chat' }
-  const permission = to.meta.permission as IAMPermission | undefined
-  const roles = (to.meta.roles || []) as Role[]
-  if (permission && !auth.can(permission, ...roles)) return { name: 'chat' }
+  const permission = to.meta.permission as PermissionKey | undefined
+  if (permission && !auth.can(permission)) return { name: 'chat' }
 })
 export default router

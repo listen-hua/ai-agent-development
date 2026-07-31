@@ -1,17 +1,27 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { Delete, Plus } from '@element-plus/icons-vue'
-import type { ACL, ACLRule, DirectoryOptions } from '@/types/domain'
+import type { ACL, ACLRule, DirectoryOptions, PermissionKey } from '@/types/domain'
 import { cloneACL, normalizeACL } from '@/utils/acl'
 
 const props = defineProps<{ modelValue: ACL; options: DirectoryOptions }>()
 const emit = defineEmits<{ 'update:modelValue': [value: ACL] }>()
 const draft = ref<ACL>(cloneACL(props.modelValue))
+const permissionOptions: Array<{ value: PermissionKey; label: string }> = [
+  { value: 'agent_use', label: '使用微光' },
+  { value: 'knowledge_manage', label: '制度知识库管理' },
+  { value: 'agent_manage', label: 'Agent 配置管理' },
+  { value: 'image_manage', label: '生图管理' },
+  { value: 'notification_manage', label: '通知管理' },
+  { value: 'calendar_manage', label: '日历与会议室管理' },
+  { value: 'audit_view', label: '质量与审计' },
+  { value: 'user_manage', label: '用户与权限管理' },
+]
 
 watch(() => props.modelValue, (value) => { draft.value = cloneACL(value) }, { deep: true })
 
 function changeScope(scope: ACL['scope']) {
-  draft.value = scope === 'all' ? { scope: 'all' } : { scope: 'restricted', rules: [{ department_ids: [], job_titles: [], user_ids: [] }] }
+  draft.value = scope === 'all' ? { scope: 'all' } : { scope: 'restricted', rules: [{ department_ids: [], job_titles: [], user_ids: [] }], permission_keys: [] }
   commit()
 }
 function addRule() {
@@ -38,6 +48,13 @@ function commit() { emit('update:modelValue', normalizeACL(draft.value)) }
     </el-radio-group>
     <div v-if="draft.scope === 'restricted'" class="acl-rule-list">
       <div class="acl-rule-help">同一规则内的条件需同时满足；多条规则之间满足任意一条即可查看。</div>
+      <el-form label-position="top">
+        <el-form-item label="系统权限（可选）">
+          <el-select v-model="draft.permission_keys" multiple collapse-tags placeholder="不按系统权限开放" style="width: 100%" @change="commit">
+            <el-option v-for="permission in permissionOptions" :key="permission.value" :label="permission.label" :value="permission.value" />
+          </el-select>
+        </el-form-item>
+      </el-form>
       <section v-for="(rule, index) in draft.rules" :key="index" class="acl-rule-card">
         <header><strong>规则 {{ index + 1 }}</strong><el-button v-if="(draft.rules?.length || 0) > 1" text type="danger" :icon="Delete" @click="removeRule(index)">删除</el-button></header>
         <el-form label-position="top">

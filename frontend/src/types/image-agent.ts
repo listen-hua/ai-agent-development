@@ -53,6 +53,11 @@ export interface ImagePromptAction {
   project_id?: string
   enabled: boolean
   sort_order: number
+  has_preview: boolean
+  preview_mime_type?: string
+  preview_size_bytes?: number
+  preview_width?: number
+  preview_height?: number
   created_at: string
   updated_at: string
 }
@@ -186,4 +191,14 @@ export interface ImagePromptActionInput {
   project_id?: string
   enabled: boolean
   sort_order: number
+}
+
+export interface ImagePromptActionSaveResult {
+  action: ImagePromptAction
+  preview_error?: boolean
+}
+
+export interface ImagePromptActionPreviewChange {
+  file?: File
+  remove: boolean
 }

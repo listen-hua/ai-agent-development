@@ -58,8 +58,12 @@ func TestIAMAuthConfigDoesNotExposeSecret(t *testing.T) {
 	}
 }
 
-func TestIAMPermissionMiddlewareUsesIAMInsteadOfLocalAdminRole(t *testing.T) {
+func TestPermissionMiddlewareUsesEffectivePermissionsInsteadOfLegacyRole(t *testing.T) {
 	iamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/users/common-info" {
+			_, _ = w.Write([]byte(`{"data":[{"id":18,"feishu_account_info":{"user_id":"iam-feishu-user"}}]}`))
+			return
+		}
 		permission := r.URL.Query().Get("permission_key")
 		w.Header().Set("Content-Type", "application/json")
 		if permission == permissionAgentUse {
@@ -89,7 +93,7 @@ func TestIAMPermissionMiddlewareUsesIAMInsteadOfLocalAdminRole(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := &Server{repo: repo, sessions: sessions, iam: iamClient}
-	handler := server.auth(server.permission(permissionUserManage, domain.RoleSuperAdmin)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := server.auth(server.permission(permissionUserManage)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})))
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", nil)
@@ -97,14 +101,8 @@ func TestIAMPermissionMiddlewareUsesIAMInsteadOfLocalAdminRole(t *testing.T) {
 	request.AddCookie(&http.Cookie{Name: "iam_user_token", Value: "iam-token"})
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
-	var payload struct {
-		Code int `json:"code"`
-	}
-	if err = json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
-		t.Fatal(err)
-	}
-	if recorder.Code != http.StatusOK || payload.Code != iamintegration.CodePermissionDenied {
-		t.Fatalf("IAM denial must override local super_admin: status=%d body=%s", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("legacy super_admin must not bypass effective permissions: status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

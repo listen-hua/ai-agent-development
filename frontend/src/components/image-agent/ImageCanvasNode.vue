@@ -1,9 +1,15 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Loading, Picture, Warning } from '@element-plus/icons-vue'
+import { Delete, Loading, Picture, Warning } from '@element-plus/icons-vue'
 import { imageAssetURL } from '@/services/image-agent'
 
-const props = defineProps<{ data: { assetId?: string; status: 'pending' | 'ready' | 'failed'; error?: string } }>()
+const props = defineProps<{
+  data: { assetId?: string; status: 'pending' | 'ready' | 'failed'; error?: string }
+  readonly?: boolean
+  deleting?: boolean
+  deleteDisabled?: boolean
+}>()
+const emit = defineEmits<{ delete: [] }>()
 const url = computed(() => props.data.assetId ? imageAssetURL(props.data.assetId) : '')
 const draggingReference = ref(false)
 
@@ -18,6 +24,17 @@ function dragReference(event: DragEvent) {
 
 <template>
   <div class="canvas-image-node" :class="[data.status, { 'dragging-reference': draggingReference }]">
+    <button
+      v-if="!readonly"
+      class="node-delete-button nodrag nopan"
+      type="button"
+      title="从画布删除"
+      :disabled="deleteDisabled"
+      @mousedown.stop
+      @click.stop="emit('delete')"
+    >
+      <el-icon :class="{ 'is-loading': deleting }"><Loading v-if="deleting" /><Delete v-else /></el-icon>
+    </button>
     <img v-if="data.status === 'ready' && url" :src="url" alt="AI 生成图片" draggable="false">
     <div v-else-if="data.status === 'pending'" class="node-state">
       <el-icon class="is-loading"><Loading /></el-icon><strong>正在生成</strong><span>结果会在原位置出现</span>
@@ -44,6 +61,10 @@ function dragReference(event: DragEvent) {
 .canvas-image-node img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .canvas-image-node.pending { border-style: dashed; background: linear-gradient(135deg, #faf8ff, #f3eefb); }
 .canvas-image-node.failed { border-color: #efb9b9; background: #fff7f7; }
+.node-delete-button { position: absolute; z-index: 6; top: 8px; right: 8px; width: 30px; height: 30px; padding: 0; border: 1px solid rgba(154, 66, 76, .2); border-radius: 9px; color: #a74551; background: rgba(255, 255, 255, .92); box-shadow: 0 5px 16px rgba(57, 35, 41, .13); display: grid; place-items: center; cursor: pointer; opacity: 0; transform: translateY(-2px); transition: opacity .18s ease, transform .18s ease, color .18s ease, background .18s ease; }
+.canvas-image-node:hover .node-delete-button, .node-delete-button:focus-visible, .node-delete-button:disabled { opacity: 1; transform: translateY(0); }
+.node-delete-button:hover:not(:disabled) { color: white; background: #bd5360; }
+.node-delete-button:disabled { cursor: wait; }
 .node-state { width: 100%; height: 100%; color: #8465ac; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 7px; text-align: center; }
 .node-state .el-icon { font-size: 26px; }
 .node-state strong { font-size: 14px; }.node-state span { max-width: 82%; color: #9a91a6; font-size: 11px; line-height: 1.45; }

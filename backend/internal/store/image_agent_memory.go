@@ -147,7 +147,27 @@ func (m *Memory) GetImagePromptAction(_ context.Context, id string) (domain.Imag
 func (m *Memory) UpsertImagePromptAction(_ context.Context, value domain.ImagePromptAction) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	value.HasPreview = value.PreviewObjectKey != ""
 	m.imagePromptActions[value.ID] = value
+	return nil
+}
+
+func (m *Memory) UpdateImagePromptActionPreview(_ context.Context, value domain.ImagePromptAction) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	existing, ok := m.imagePromptActions[value.ID]
+	if !ok {
+		return ErrNotFound
+	}
+	existing.PreviewObjectKey = value.PreviewObjectKey
+	existing.PreviewMIMEType = value.PreviewMIMEType
+	existing.PreviewSizeBytes = value.PreviewSizeBytes
+	existing.PreviewWidth = value.PreviewWidth
+	existing.PreviewHeight = value.PreviewHeight
+	existing.HasPreview = value.PreviewObjectKey != ""
+	existing.UpdatedBy = value.UpdatedBy
+	existing.UpdatedAt = value.UpdatedAt
+	m.imagePromptActions[value.ID] = existing
 	return nil
 }
 
@@ -233,6 +253,34 @@ func (m *Memory) ImportImageCanvasAsset(_ context.Context, canvas domain.ImageCa
 	existing.Version++
 	existing.UpdatedAt = time.Now()
 	m.imageAssets[asset.ID] = asset
+	m.imageCanvases[key] = existing
+	return existing, nil
+}
+
+func (m *Memory) DeleteImageCanvasNode(_ context.Context, canvas domain.ImageCanvas, nodeID string, expectedVersion int64) (domain.ImageCanvas, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := canvasMemoryKey(canvas.UserID, canvas.ProjectID)
+	existing, ok := m.imageCanvases[key]
+	if !ok {
+		return canvas, ErrNotFound
+	}
+	if existing.ID != canvas.ID || existing.Version != expectedVersion {
+		return canvas, ErrConflict
+	}
+	nodeIndex := -1
+	for index, node := range existing.Nodes {
+		if node.ID == nodeID {
+			nodeIndex = index
+			break
+		}
+	}
+	if nodeIndex < 0 {
+		return canvas, ErrNotFound
+	}
+	existing.Nodes = append(existing.Nodes[:nodeIndex], existing.Nodes[nodeIndex+1:]...)
+	existing.Version++
+	existing.UpdatedAt = time.Now()
 	m.imageCanvases[key] = existing
 	return existing, nil
 }

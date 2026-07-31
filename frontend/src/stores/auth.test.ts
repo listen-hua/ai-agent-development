@@ -18,6 +18,8 @@ const employee: User = {
   employee_type: 0,
   status: 'active',
   roles: ['employee'],
+  permissions: ['agent_use'],
+  permission_sources: { iam: [], local_allow: ['agent_use'], local_deny: [] },
 }
 
 describe('auth store initialization', () => {
@@ -45,7 +47,7 @@ describe('auth store initialization', () => {
     expect(authService.exchange).toHaveBeenCalledWith(loginCode)
   })
 
-  it('uses IAM in a normal browser and keeps IAM permissions separate from local roles', async () => {
+  it('uses the backend effective permissions for IAM login', async () => {
     vi.spyOn(authService, 'iamConfig').mockResolvedValue({ app_id: 'shimmer-ai', enabled: true })
     const me = vi.spyOn(authService, 'me').mockResolvedValue(employee)
     vi.spyOn(iamService, 'initializeIAM').mockResolvedValue({
@@ -57,15 +59,17 @@ describe('auth store initialization', () => {
       ...employee,
       iam_user_id: 18,
       auth_source: 'iam',
-      iam_permissions: ['agent_use', 'knowledge_manage'],
+      permissions: ['agent_use', 'knowledge_manage'],
+      permission_sources: { iam: ['agent_use'], local_allow: ['knowledge_manage'], local_deny: [] },
     })
 
     const auth = useAuthStore()
     await auth.initialize()
 
     expect(auth.authSource).toBe('iam')
-    expect(auth.can('knowledge_manage', 'knowledge_admin')).toBe(true)
-    expect(auth.can('image_manage', 'image_admin')).toBe(false)
+    expect(auth.can('knowledge_manage')).toBe(true)
+    expect(auth.can('image_manage')).toBe(false)
+    expect(authService.iamExchange).toHaveBeenCalledWith(18)
     expect(me).not.toHaveBeenCalled()
   })
 })

@@ -181,6 +181,7 @@ func (p *Postgres) UpsertImageProject(ctx context.Context, value domain.ImagePro
 
 func (p *Postgres) ListImagePromptActions(ctx context.Context, projectID string) ([]domain.ImagePromptAction, error) {
 	query := `SELECT id,action_key,name,prompt_template,COALESCE(project_id::text,''),enabled,sort_order,
+		preview_object_key,preview_mime_type,preview_size_bytes,preview_width,preview_height,
 		COALESCE(created_by::text,''),COALESCE(updated_by::text,''),created_at,updated_at FROM image_prompt_actions`
 	args := []any{}
 	if projectID != "" {
@@ -197,9 +198,12 @@ func (p *Postgres) ListImagePromptActions(ctx context.Context, projectID string)
 	for rows.Next() {
 		var value domain.ImagePromptAction
 		if err = rows.Scan(&value.ID, &value.ActionKey, &value.Name, &value.PromptTemplate, &value.ProjectID,
-			&value.Enabled, &value.SortOrder, &value.CreatedBy, &value.UpdatedBy, &value.CreatedAt, &value.UpdatedAt); err != nil {
+			&value.Enabled, &value.SortOrder, &value.PreviewObjectKey, &value.PreviewMIMEType,
+			&value.PreviewSizeBytes, &value.PreviewWidth, &value.PreviewHeight,
+			&value.CreatedBy, &value.UpdatedBy, &value.CreatedAt, &value.UpdatedAt); err != nil {
 			return nil, err
 		}
+		value.HasPreview = value.PreviewObjectKey != ""
 		result = append(result, value)
 	}
 	return result, rows.Err()
@@ -208,12 +212,15 @@ func (p *Postgres) ListImagePromptActions(ctx context.Context, projectID string)
 func (p *Postgres) GetImagePromptAction(ctx context.Context, id string) (domain.ImagePromptAction, error) {
 	var value domain.ImagePromptAction
 	err := p.pool.QueryRow(ctx, `SELECT id,action_key,name,prompt_template,COALESCE(project_id::text,''),enabled,sort_order,
+		preview_object_key,preview_mime_type,preview_size_bytes,preview_width,preview_height,
 		COALESCE(created_by::text,''),COALESCE(updated_by::text,''),created_at,updated_at FROM image_prompt_actions WHERE id=$1`, id).
 		Scan(&value.ID, &value.ActionKey, &value.Name, &value.PromptTemplate, &value.ProjectID, &value.Enabled,
-			&value.SortOrder, &value.CreatedBy, &value.UpdatedBy, &value.CreatedAt, &value.UpdatedAt)
+			&value.SortOrder, &value.PreviewObjectKey, &value.PreviewMIMEType, &value.PreviewSizeBytes,
+			&value.PreviewWidth, &value.PreviewHeight, &value.CreatedBy, &value.UpdatedBy, &value.CreatedAt, &value.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return value, ErrNotFound
 	}
+	value.HasPreview = value.PreviewObjectKey != ""
 	return value, err
 }
 
@@ -226,6 +233,17 @@ func (p *Postgres) UpsertImagePromptAction(ctx context.Context, value domain.Ima
 		updated_by=EXCLUDED.updated_by,updated_at=EXCLUDED.updated_at`,
 		value.ID, value.ActionKey, value.Name, value.PromptTemplate, value.ProjectID, value.Enabled, value.SortOrder,
 		value.CreatedBy, value.UpdatedBy, value.CreatedAt, value.UpdatedAt)
+	return err
+}
+
+func (p *Postgres) UpdateImagePromptActionPreview(ctx context.Context, value domain.ImagePromptAction) error {
+	tag, err := p.pool.Exec(ctx, `UPDATE image_prompt_actions SET preview_object_key=$2,preview_mime_type=$3,
+		preview_size_bytes=$4,preview_width=$5,preview_height=$6,updated_by=NULLIF($7,'')::uuid,updated_at=$8
+		WHERE id=$1`, value.ID, value.PreviewObjectKey, value.PreviewMIMEType, value.PreviewSizeBytes,
+		value.PreviewWidth, value.PreviewHeight, value.UpdatedBy, value.UpdatedAt)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
 	return err
 }
 
@@ -346,6 +364,44 @@ func (p *Postgres) ImportImageCanvasAsset(ctx context.Context, canvas domain.Ima
 	canvas.Version = version
 	canvas.UpdatedAt = time.Now()
 	canvas.Nodes = append(canvas.Nodes, node)
+	return canvas, nil
+}
+
+func (p *Postgres) DeleteImageCanvasNode(ctx context.Context, canvas domain.ImageCanvas, nodeID string, expectedVersion int64) (domain.ImageCanvas, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return canvas, err
+	}
+	defer tx.Rollback(ctx)
+	var version int64
+	err = tx.QueryRow(ctx, `UPDATE image_canvases SET version=version+1,updated_at=now()
+		WHERE id=$1 AND user_id=$2 AND project_id=$3 AND version=$4 RETURNING version`,
+		canvas.ID, canvas.UserID, canvas.ProjectID, expectedVersion).Scan(&version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return canvas, ErrConflict
+	}
+	if err != nil {
+		return canvas, err
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM image_canvas_nodes WHERE id=$1 AND canvas_id=$2`, nodeID, canvas.ID)
+	if err != nil {
+		return canvas, err
+	}
+	if tag.RowsAffected() == 0 {
+		return canvas, ErrNotFound
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return canvas, err
+	}
+	canvas.Version = version
+	canvas.UpdatedAt = time.Now()
+	nodes := make([]domain.ImageCanvasNode, 0, len(canvas.Nodes)-1)
+	for _, node := range canvas.Nodes {
+		if node.ID != nodeID {
+			nodes = append(nodes, node)
+		}
+	}
+	canvas.Nodes = nodes
 	return canvas, nil
 }
 

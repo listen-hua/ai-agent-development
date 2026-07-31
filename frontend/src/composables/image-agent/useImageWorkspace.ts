@@ -2,6 +2,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ApiError } from '@/services/api'
 import { imageAgentService } from '@/services/image-agent'
+import { createClientUUID } from '@/utils/clientId'
 import { hasCartoonStrength } from '@/utils/imagePrompt'
 import {
   canvasImportPositions, validateCanvasImportFiles, type CanvasImportOrigin,
@@ -31,6 +32,7 @@ export function useImageWorkspace() {
   const uploading = ref(false)
   const importing = ref(false)
   const importProgress = ref('')
+  const deletingNodeId = ref('')
   const generating = ref(false)
   const currentJob = ref<ImageJob>()
   const selectedProject = computed(() => options.value.projects.find((item) => item.id === form.value.projectId))
@@ -173,6 +175,41 @@ export function useImageWorkspace() {
     references.value = references.value.filter((item) => item.id !== id)
   }
 
+  async function deleteCanvasNode(nodeId: string) {
+    if (!nodeId || deletingNodeId.value || !canvas.value || !form.value.projectId) return
+    if (!selectedProject.value?.enabled) {
+      ElMessage.warning('项目已停用，历史画布仅可查看')
+      return
+    }
+    const projectId = form.value.projectId
+    deletingNodeId.value = nodeId
+    try {
+      await drainCanvasSave()
+      let retryConflict = true
+      while (canvas.value?.nodes.some((node) => node.id === nodeId)) {
+        const deletedNode = canvas.value.nodes.find((node) => node.id === nodeId)
+        try {
+          canvas.value = await imageAgentService.deleteCanvasNode(projectId, nodeId, canvas.value.version)
+          if (deletedNode?.asset_id) removeReference(deletedNode.asset_id)
+          ElMessage.success('图片已从画布删除')
+          return
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 409 && retryConflict) {
+            canvas.value = await imageAgentService.canvas(projectId)
+            retryConflict = false
+            continue
+          }
+          throw error
+        }
+      }
+      ElMessage.info('图片已经不在当前画布中')
+    } catch (error) {
+      showError(error, '删除画布图片失败')
+    } finally {
+      deletingNodeId.value = ''
+    }
+  }
+
   function scheduleCanvasSave(value: { viewport: ImageViewport; nodes: ImageCanvasNode[] }) {
     if (!canvas.value || !selectedProject.value?.enabled || importing.value) return
     pendingCanvasPatch = value
@@ -308,7 +345,7 @@ export function useImageWorkspace() {
         image_size: form.value.imageSize,
         count: form.value.count,
         reference_asset_ids: references.value.map((item) => item.id),
-        idempotency_key: crypto.randomUUID(),
+        idempotency_key: createClientUUID(),
         placement_x: center.x,
         placement_y: center.y,
         anchor_node_id: center.anchorNodeId || undefined,
@@ -363,8 +400,8 @@ export function useImageWorkspace() {
   })
 
   return {
-    options, canvas, references, form, loading, uploading, importing, importProgress, generating, currentJob, selectedProject,
-    initialize, upload, importToCanvas, addCanvasReference, removeReference, scheduleCanvasSave, submit, applyAction,
+    options, canvas, references, form, loading, uploading, importing, importProgress, deletingNodeId, generating, currentJob, selectedProject,
+    initialize, upload, importToCanvas, addCanvasReference, removeReference, deleteCanvasNode, scheduleCanvasSave, submit, applyAction,
   }
 }
 

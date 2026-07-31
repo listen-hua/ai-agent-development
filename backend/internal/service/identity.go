@@ -24,20 +24,36 @@ func EnsureBootstrapSuperAdmins(ctx context.Context, repo store.Repository, open
 		if err != nil {
 			return granted, err
 		}
-		if user.HasRole(domain.RoleSuperAdmin) {
+		policy, policyErr := repo.GetLocalPermissionPolicy(ctx, user.ID)
+		if policyErr != nil && !errors.Is(policyErr, store.ErrNotFound) {
+			return granted, policyErr
+		}
+		if containsAllPermissions(policy.AllowKeys) {
 			continue
 		}
-		roles := append(append([]domain.Role{}, user.Roles...), domain.RoleSuperAdmin)
-		updated, err := repo.UpdateUserRoles(ctx, user.ID, roles)
-		if err != nil {
+		resolver := NewPermissionResolver(repo, nil)
+		if err = resolver.EnsureLocalAllow(ctx, user.ID, user.ID, domain.AllPermissionKeys, "Bootstrap super administrator"); err != nil {
 			return granted, err
 		}
 		granted++
 		_ = repo.AppendAudit(ctx, domain.AuditEvent{
-			ID: ids.New("aud"), ActorID: updated.ID, ActorName: updated.Name,
-			Action: "identity.bootstrap_super_admin", ResourceType: "user", ResourceID: updated.ID,
+			ID: ids.New("aud"), ActorID: user.ID, ActorName: user.Name,
+			Action: "identity.bootstrap_super_admin", ResourceType: "user", ResourceID: user.ID,
 			Metadata: map[string]any{"source": "deployment_config"}, CreatedAt: time.Now(),
 		})
 	}
 	return granted, nil
+}
+
+func containsAllPermissions(keys []domain.PermissionKey) bool {
+	if len(keys) < len(domain.AllPermissionKeys) {
+		return false
+	}
+	set := permissionSet(keys)
+	for _, key := range domain.AllPermissionKeys {
+		if !set[key] {
+			return false
+		}
+	}
+	return true
 }

@@ -1,18 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { Connection, Picture, Refresh } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import InfiniteImageCanvas from '@/components/image-agent/InfiniteImageCanvas.vue'
 import ImageOperationPanel from '@/components/image-agent/ImageOperationPanel.vue'
 import { useImageWorkspace } from '@/composables/image-agent/useImageWorkspace'
 import type { ImagePromptAction } from '@/types/image-agent'
 
 const {
-  options, canvas, references, form, loading, uploading, importing, importProgress, generating, currentJob, selectedProject,
-  initialize, upload, importToCanvas, addCanvasReference, removeReference, scheduleCanvasSave, submit, applyAction,
+  options, canvas, references, form, loading, uploading, importing, importProgress, deletingNodeId, generating, currentJob, selectedProject,
+  initialize, upload, importToCanvas, addCanvasReference, removeReference, deleteCanvasNode, scheduleCanvasSave, submit, applyAction,
 } = useImageWorkspace()
 const canvasRef = ref<InstanceType<typeof InfiniteImageCanvas>>()
 const statusText = computed(() => {
+  if (deletingNodeId.value) return '正在删除图片'
   if (importing.value) return importProgress.value || '正在导入图片'
   if (!currentJob.value) return '画布已同步'
   const labels: Record<string, string> = {
@@ -44,6 +45,25 @@ function notifyUnsupportedDrop() {
   ElMessage.warning('请拖入本地 JPG、PNG 或 WEBP 图片文件，不支持网页图片链接')
 }
 
+async function confirmDeleteNode(nodeId: string) {
+  const node = canvas.value?.nodes.find((item) => item.id === nodeId)
+  if (!node) return
+  const message = node.status === 'pending'
+    ? '这张图片仍在生成，删除后生成结果不会再显示在画布上。确定删除吗？'
+    : '图片将从当前画布移除，确定继续吗？'
+  try {
+    await ElMessageBox.confirm(message, '删除图片', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger',
+    })
+    await deleteCanvasNode(nodeId)
+  } catch {
+    // Element Plus rejects the promise when the user cancels.
+  }
+}
+
 onMounted(initialize)
 </script>
 
@@ -55,9 +75,9 @@ onMounted(initialize)
         <div><small>IMAGE GENERATION AGENT</small><h1>AI 无限画布</h1></div>
       </div>
       <div class="image-runtime">
-        <span><i :class="{ working: generating || importing }" />{{ statusText }}</span>
+        <span><i :class="{ working: generating || importing || deletingNodeId }" />{{ statusText }}</span>
         <span><el-icon><Connection /></el-icon>{{ options.relays.length }} 个中转站 · {{ options.models.length }} 个可用模型</span>
-        <el-button text :icon="Refresh" :loading="loading" :disabled="importing" @click="initialize">刷新</el-button>
+        <el-button text :icon="Refresh" :loading="loading" :disabled="importing || Boolean(deletingNodeId)" @click="initialize">刷新</el-button>
       </div>
     </header>
 
@@ -69,7 +89,9 @@ onMounted(initialize)
         :readonly="!selectedProject?.enabled"
         :importing="importing"
         :import-progress="importProgress"
+        :deleting-node-id="deletingNodeId"
         @change="scheduleCanvasSave"
+        @delete-node="confirmDeleteNode"
         @import-images="({ files, point, origin }) => importToCanvas(files, point, origin)"
         @import-blocked="notifyImportBlocked"
         @unsupported-drop="notifyUnsupportedDrop"
@@ -81,8 +103,8 @@ onMounted(initialize)
         :projects="options.projects"
         :actions="options.prompt_actions"
         :references="references"
-        :busy="generating || importing"
-        :locked="importing"
+        :busy="generating || importing || Boolean(deletingNodeId)"
+        :locked="importing || Boolean(deletingNodeId)"
         :uploading="uploading"
         @upload="upload"
         @remove-reference="removeReference"

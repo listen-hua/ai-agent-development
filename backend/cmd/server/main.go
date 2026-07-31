@@ -127,12 +127,13 @@ func run() error {
 	meetings := service.NewMeeting(repo, feishuClient, meetingLocker, cfg.ReminderTimezone, cfg.FeishuMeetingCalendarID)
 	chat := service.NewChat(repo, provider, hub, reminders, meetings)
 	notifications := service.NewNotification(repo, feishuClient, provider, scanner)
-	feishuBot := service.NewFeishuBot(repo, chat, feishuClient, cfg.FeishuAppLink, reminders, meetings)
+	permissionResolver := service.NewPermissionResolver(repo, iamClient)
+	feishuBot := service.NewFeishuBot(repo, chat, feishuClient, cfg.FeishuAppLink, reminders, meetings, permissionResolver)
 	longConnection := feishu.NewLongConnection(cfg.FeishuAppID, cfg.FeishuAppSecret, feishuBot, directory, meetings)
 	sessions := security.NewSessions(cfg.SessionSecret)
 	seed(context.Background(), repo, knowledge)
 	go knowledge.RunSourceScheduler(rootCtx, 15*time.Minute)
-	handler := httpapi.New(cfg, repo, sessions, chat, knowledge, notifications, reminders, feishuClient, directory, agents, meetings, imageAgent, iamClient).Handler()
+	handler := httpapi.New(cfg, repo, sessions, chat, knowledge, notifications, reminders, feishuClient, directory, agents, meetings, imageAgent, iamClient, permissionResolver).Handler()
 	server := &http.Server{Addr: cfg.HTTPAddr, Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 1 << 20}
 
 	var longConnectionErr <-chan error

@@ -18,12 +18,12 @@ func TestEnsureBootstrapSuperAdminsUpgradesExistingUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	updated, err := repo.GetUser(context.Background(), user.ID)
+	updated, err := NewPermissionResolver(repo, nil).Resolve(context.Background(), user, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if granted != 1 || !updated.HasRole(domain.RoleSuperAdmin) {
-		t.Fatalf("expected existing user to become super admin, granted=%d roles=%v", granted, updated.Roles)
+	if granted != 1 || !updated.HasPermission(domain.PermissionUserManage) || len(updated.Permissions) != len(domain.AllPermissionKeys) {
+		t.Fatalf("expected existing user to receive all local permissions, granted=%d permissions=%v", granted, updated.Permissions)
 	}
 }
 

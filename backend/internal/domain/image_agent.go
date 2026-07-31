@@ -48,17 +48,23 @@ type ImageProject struct {
 }
 
 type ImagePromptAction struct {
-	ID             string    `json:"id"`
-	ActionKey      string    `json:"action_key"`
-	Name           string    `json:"name"`
-	PromptTemplate string    `json:"prompt_template"`
-	ProjectID      string    `json:"project_id,omitempty"`
-	Enabled        bool      `json:"enabled"`
-	SortOrder      int       `json:"sort_order"`
-	CreatedBy      string    `json:"created_by,omitempty"`
-	UpdatedBy      string    `json:"updated_by,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID               string    `json:"id"`
+	ActionKey        string    `json:"action_key"`
+	Name             string    `json:"name"`
+	PromptTemplate   string    `json:"prompt_template"`
+	ProjectID        string    `json:"project_id,omitempty"`
+	Enabled          bool      `json:"enabled"`
+	SortOrder        int       `json:"sort_order"`
+	HasPreview       bool      `json:"has_preview"`
+	PreviewObjectKey string    `json:"-"`
+	PreviewMIMEType  string    `json:"preview_mime_type,omitempty"`
+	PreviewSizeBytes int64     `json:"preview_size_bytes,omitempty"`
+	PreviewWidth     int       `json:"preview_width,omitempty"`
+	PreviewHeight    int       `json:"preview_height,omitempty"`
+	CreatedBy        string    `json:"created_by,omitempty"`
+	UpdatedBy        string    `json:"updated_by,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type ImageViewport struct {

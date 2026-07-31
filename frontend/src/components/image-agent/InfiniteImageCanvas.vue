@@ -26,9 +26,11 @@ const props = defineProps<{
   readonly?: boolean
   importing?: boolean
   importProgress?: string
+  deletingNodeId?: string
 }>()
 const emit = defineEmits<{
   change: [value: { viewport: ImageViewport; nodes: DomainNode[] }]
+  'delete-node': [nodeId: string]
   'import-images': [value: { files: File[]; point: { x: number; y: number }; origin: CanvasImportOrigin }]
   'import-blocked': []
   'unsupported-drop': []
@@ -88,7 +90,7 @@ function domainNodes(): DomainNode[] {
 }
 
 function notifyChange(nextViewport = viewport.value) {
-  if (props.importing) return
+  if (props.importing || props.deletingNodeId) return
   viewport.value = nextViewport
   emit('change', { viewport: nextViewport, nodes: domainNodes() })
 }
@@ -171,7 +173,7 @@ function generationContext() {
 }
 
 function canImport() {
-  return Boolean(props.canvas && !props.loading && !props.readonly && !props.importing)
+  return Boolean(props.canvas && !props.loading && !props.readonly && !props.importing && !props.deletingNodeId)
 }
 
 function emitImport(files: File[], point: { x: number; y: number }, origin: CanvasImportOrigin) {
@@ -260,7 +262,7 @@ onBeforeUnmount(() => document.removeEventListener('paste', onPaste))
       v-model:nodes="flowNodes"
       :min-zoom="0.1"
       :max-zoom="2"
-      :nodes-draggable="!readonly && !importing"
+      :nodes-draggable="!readonly && !importing && !deletingNodeId"
       :nodes-connectable="false"
       :elements-selectable="!importing"
       :pan-on-drag="!importing"
@@ -276,7 +278,15 @@ onBeforeUnmount(() => document.removeEventListener('paste', onPaste))
       @viewport-change-end="onViewportEnd"
     >
       <Background pattern-color="#d8d4df" :gap="24" :size="1" />
-      <template #node-imageNode="nodeProps"><ImageCanvasNode :data="nodeProps.data" /></template>
+      <template #node-imageNode="nodeProps">
+        <ImageCanvasNode
+          :data="nodeProps.data"
+          :readonly="readonly"
+          :deleting="deletingNodeId === nodeProps.id"
+          :delete-disabled="Boolean(deletingNodeId)"
+          @delete="emit('delete-node', nodeProps.id)"
+        />
+      </template>
       <Controls position="top-left" :show-interactive="false" />
       <MiniMap
         position="bottom-right"
@@ -309,6 +319,7 @@ onBeforeUnmount(() => document.removeEventListener('paste', onPaste))
 .infinite-canvas :deep(.vue-flow) { background: #f7f6f8; }
 .infinite-canvas :deep(.vue-flow__node) { border: 0; padding: 0; background: transparent; }
 .infinite-canvas :deep(.vue-flow__node.selected .canvas-image-node) { outline: 2px solid #8c65bd; outline-offset: 3px; }
+.infinite-canvas :deep(.vue-flow__node.selected .node-delete-button) { opacity: 1; transform: translateY(0); }
 .infinite-canvas :deep(.vue-flow__controls) { overflow: hidden; border: 1px solid #e1dde7; border-radius: 10px; box-shadow: 0 7px 22px rgba(31, 25, 43, .1); }
 .infinite-canvas :deep(.vue-flow__controls button) { width: 32px; height: 32px; border: 0; color: #675778; background: white; display: grid; place-items: center; cursor: pointer; }
 .infinite-canvas :deep(.vue-flow__minimap) { width: 150px; height: 100px; overflow: hidden; border: 1px solid rgba(99, 80, 123, .18); border-radius: 11px; background: rgba(255,255,255,.92); box-shadow: 0 8px 24px rgba(36, 29, 48, .12); cursor: crosshair; transition: border-color .18s ease, box-shadow .18s ease; }

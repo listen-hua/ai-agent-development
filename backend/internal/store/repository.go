@@ -19,6 +19,10 @@ type Repository interface {
 	GetUserByIAMID(context.Context, int64) (domain.User, error)
 	ListUsers(context.Context) ([]domain.User, error)
 	UpdateUserRoles(context.Context, string, []domain.Role) (domain.User, error)
+	GetLocalPermissionPolicy(context.Context, string) (domain.LocalPermissionPolicy, error)
+	UpdateLocalPermissionPolicy(context.Context, domain.LocalPermissionPolicy, int64) (domain.LocalPermissionPolicy, error)
+	GetIAMPermissionSnapshot(context.Context, string) (domain.IAMPermissionSnapshot, error)
+	SaveIAMPermissionSnapshot(context.Context, domain.IAMPermissionSnapshot) error
 	UpdateUserStatus(context.Context, string, string) error
 	UpsertMeetingRooms(context.Context, []domain.MeetingRoom) error
 	ListMeetingRooms(context.Context) ([]domain.MeetingRoom, error)
@@ -123,10 +127,12 @@ type ImageRepository interface {
 	ListImagePromptActions(context.Context, string) ([]domain.ImagePromptAction, error)
 	GetImagePromptAction(context.Context, string) (domain.ImagePromptAction, error)
 	UpsertImagePromptAction(context.Context, domain.ImagePromptAction) error
+	UpdateImagePromptActionPreview(context.Context, domain.ImagePromptAction) error
 	DeleteImagePromptAction(context.Context, string) error
 	GetOrCreateImageCanvas(context.Context, string, string) (domain.ImageCanvas, error)
 	UpdateImageCanvas(context.Context, domain.ImageCanvas, int64) (domain.ImageCanvas, error)
 	ImportImageCanvasAsset(context.Context, domain.ImageCanvas, int64, domain.ImageAsset, domain.ImageCanvasNode) (domain.ImageCanvas, error)
+	DeleteImageCanvasNode(context.Context, domain.ImageCanvas, string, int64) (domain.ImageCanvas, error)
 	CreateImageAsset(context.Context, domain.ImageAsset) error
 	GetImageAsset(context.Context, string) (domain.ImageAsset, error)
 	CreateImageJob(context.Context, domain.ImageJob, []domain.ImageCanvasNode, int64) (domain.ImageJob, error)

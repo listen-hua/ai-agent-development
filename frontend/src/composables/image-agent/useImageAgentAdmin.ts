@@ -5,7 +5,7 @@ import { imageAgentAdminService } from '@/services/image-agent'
 import type { DirectoryOptions } from '@/types/domain'
 import type {
   ImageModel, ImageModelInput, ImageProject, ImageProjectInput, ImagePromptAction, ImagePromptActionInput,
-  ImageRelay, ImageRelayInput,
+  ImagePromptActionPreviewChange, ImagePromptActionSaveResult, ImageRelay, ImageRelayInput,
 } from '@/types/image-agent'
 
 export function useImageAgentAdmin() {
@@ -94,15 +94,27 @@ export function useImageAgentAdmin() {
     }
   }
 
-  async function savePromptAction(id: string | undefined, input: ImagePromptActionInput) {
+  async function savePromptAction(
+    id: string | undefined,
+    input: ImagePromptActionInput,
+    preview: ImagePromptActionPreviewChange = { remove: false },
+  ): Promise<ImagePromptActionSaveResult> {
     saving.value = true
     try {
-      const value = id
+      let value = id
         ? await imageAgentAdminService.updatePromptAction(id, input)
         : await imageAgentAdminService.createPromptAction(input)
       upsert(promptActions.value, value)
+      try {
+        if (preview.file) value = await imageAgentAdminService.updatePromptActionPreview(value.id, preview.file)
+        else if (preview.remove && value.has_preview) value = await imageAgentAdminService.deletePromptActionPreview(value.id)
+      } catch {
+        ElMessage.warning('功能按键已保存，但预览图更新失败，请在当前窗口重试')
+        return { action: value, preview_error: true }
+      }
+      upsert(promptActions.value, value)
       ElMessage.success('功能按键已保存')
-      return value
+      return { action: value }
     } finally {
       saving.value = false
     }

@@ -39,6 +39,13 @@ func (p *Postgres) EnsureSeed(ctx context.Context, cfg domain.AgentConfig) error
 	if _, err := p.UpsertUser(ctx, employee); err != nil {
 		return err
 	}
+	if _, err := p.pool.Exec(ctx, `INSERT INTO local_permission_policies(user_id,allow_keys,deny_keys,reason)
+		VALUES
+			($1,$3,'{}','Development seed'),
+			($2,ARRAY['agent_use']::text[],'{}','Development seed')
+		ON CONFLICT(user_id) DO NOTHING`, admin.ID, employee.ID, permissionKeyStrings(domain.AllPermissionKeys)); err != nil {
+		return err
+	}
 	if _, err := p.PublishedConfig(ctx); err == ErrNotFound {
 		now := time.Now()
 		return p.SaveConfig(ctx, domain.AgentConfigVersion{ID: ids.New("cfg"), Version: 1, Status: "published", Config: cfg, CreatedBy: admin.ID, CreatedAt: now, PublishedAt: &now})
@@ -261,6 +268,88 @@ func (p *Postgres) UpdateUserRoles(ctx context.Context, userID string, roles []d
 		return domain.User{}, err
 	}
 	return p.GetUser(ctx, userID)
+}
+
+func (p *Postgres) GetLocalPermissionPolicy(ctx context.Context, userID string) (domain.LocalPermissionPolicy, error) {
+	var policy domain.LocalPermissionPolicy
+	var allowKeys, denyKeys []string
+	err := p.pool.QueryRow(ctx, `SELECT user_id,allow_keys,deny_keys,version,COALESCE(updated_by::text,''),reason,created_at,updated_at
+		FROM local_permission_policies WHERE user_id=$1`, userID).
+		Scan(&policy.UserID, &allowKeys, &denyKeys, &policy.Version, &policy.UpdatedBy, &policy.Reason, &policy.CreatedAt, &policy.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.LocalPermissionPolicy{}, ErrNotFound
+	}
+	policy.AllowKeys = toPermissionKeys(allowKeys)
+	policy.DenyKeys = toPermissionKeys(denyKeys)
+	return policy, err
+}
+
+func (p *Postgres) UpdateLocalPermissionPolicy(ctx context.Context, policy domain.LocalPermissionPolicy, expectedVersion int64) (domain.LocalPermissionPolicy, error) {
+	normalizedAllow, err := domain.NormalizePermissionKeys(policy.AllowKeys)
+	if err != nil {
+		return domain.LocalPermissionPolicy{}, err
+	}
+	normalizedDeny, err := domain.NormalizePermissionKeys(policy.DenyKeys)
+	if err != nil {
+		return domain.LocalPermissionPolicy{}, err
+	}
+	for _, allow := range normalizedAllow {
+		for _, deny := range normalizedDeny {
+			if allow == deny {
+				return domain.LocalPermissionPolicy{}, ErrConflict
+			}
+		}
+	}
+	var allowKeys, denyKeys []string
+	if expectedVersion == 0 {
+		err = p.pool.QueryRow(ctx, `INSERT INTO local_permission_policies(user_id,allow_keys,deny_keys,version,updated_by,reason)
+			VALUES($1,$2,$3,1,$4,$5)
+			ON CONFLICT(user_id) DO NOTHING
+			RETURNING user_id,allow_keys,deny_keys,version,COALESCE(updated_by::text,''),reason,created_at,updated_at`,
+			policy.UserID, permissionKeyStrings(normalizedAllow), permissionKeyStrings(normalizedDeny), nullUUID(policy.UpdatedBy), policy.Reason).
+			Scan(&policy.UserID, &allowKeys, &denyKeys, &policy.Version, &policy.UpdatedBy, &policy.Reason, &policy.CreatedAt, &policy.UpdatedAt)
+	} else {
+		err = p.pool.QueryRow(ctx, `UPDATE local_permission_policies
+			SET allow_keys=$2,deny_keys=$3,version=version+1,updated_by=$4,reason=$5,updated_at=now()
+			WHERE user_id=$1 AND version=$6
+			RETURNING user_id,allow_keys,deny_keys,version,COALESCE(updated_by::text,''),reason,created_at,updated_at`,
+			policy.UserID, permissionKeyStrings(normalizedAllow), permissionKeyStrings(normalizedDeny), nullUUID(policy.UpdatedBy), policy.Reason, expectedVersion).
+			Scan(&policy.UserID, &allowKeys, &denyKeys, &policy.Version, &policy.UpdatedBy, &policy.Reason, &policy.CreatedAt, &policy.UpdatedAt)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.LocalPermissionPolicy{}, ErrConflict
+	}
+	policy.AllowKeys = toPermissionKeys(allowKeys)
+	policy.DenyKeys = toPermissionKeys(denyKeys)
+	return policy, err
+}
+
+func (p *Postgres) GetIAMPermissionSnapshot(ctx context.Context, userID string) (domain.IAMPermissionSnapshot, error) {
+	var snapshot domain.IAMPermissionSnapshot
+	var keys []string
+	err := p.pool.QueryRow(ctx, `SELECT user_id,iam_user_id,permission_keys,policy_version,source_updated_at,synced_at,last_error
+		FROM iam_permission_snapshots WHERE user_id=$1`, userID).
+		Scan(&snapshot.UserID, &snapshot.IAMUserID, &keys, &snapshot.PolicyVersion, &snapshot.SourceUpdatedAt, &snapshot.SyncedAt, &snapshot.LastError)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.IAMPermissionSnapshot{}, ErrNotFound
+	}
+	snapshot.PermissionKeys = toPermissionKeys(keys)
+	return snapshot, err
+}
+
+func (p *Postgres) SaveIAMPermissionSnapshot(ctx context.Context, snapshot domain.IAMPermissionSnapshot) error {
+	_, err := p.pool.Exec(ctx, `INSERT INTO iam_permission_snapshots(user_id,iam_user_id,permission_keys,policy_version,source_updated_at,synced_at,last_error)
+		VALUES($1,$2,$3,$4,$5,$6,$7)
+		ON CONFLICT(user_id) DO UPDATE SET
+			iam_user_id=excluded.iam_user_id,
+			permission_keys=excluded.permission_keys,
+			policy_version=excluded.policy_version,
+			source_updated_at=excluded.source_updated_at,
+			synced_at=excluded.synced_at,
+			last_error=excluded.last_error`,
+		snapshot.UserID, snapshot.IAMUserID, permissionKeyStrings(snapshot.PermissionKeys), snapshot.PolicyVersion,
+		snapshot.SourceUpdatedAt, snapshot.SyncedAt, snapshot.LastError)
+	return err
 }
 
 func (p *Postgres) UpdateUserStatus(ctx context.Context, openID, status string) error {
@@ -581,7 +670,7 @@ func (p *Postgres) SearchChunks(ctx context.Context, user domain.User, query str
 		JOIN documents d ON d.id=c.document_id
 		JOIN document_versions v ON v.id=c.version_id
 		WHERE d.status='published' AND v.status='published' AND (
-			$8::boolean OR d.acl->>'scope'='all' OR
+			d.acl->>'scope'='all' OR
 			EXISTS (
 				SELECT 1 FROM jsonb_array_elements(COALESCE(d.acl->'rules','[]'::jsonb)) AS acl_rule
 				WHERE
@@ -595,21 +684,28 @@ func (p *Postgres) SearchChunks(ctx context.Context, user domain.User, query str
 			) OR
 			EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(d.acl->'user_ids','[]'::jsonb)) x WHERE x=$1) OR
 			EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(d.acl->'department_ids','[]'::jsonb)) x WHERE x=ANY($2::text[])) OR
-			EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(d.acl->'role_names','[]'::jsonb)) x WHERE x=ANY($7::text[]))
+			EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(d.acl->'permission_keys','[]'::jsonb)) x WHERE x=ANY($7::text[])) OR
+			EXISTS (
+				SELECT 1 FROM jsonb_array_elements_text(COALESCE(d.acl->'role_names','[]'::jsonb)) x
+				WHERE CASE x
+					WHEN 'employee' THEN 'agent_use'
+					WHEN 'knowledge_admin' THEN 'knowledge_manage'
+					WHEN 'notification_admin' THEN 'notification_manage'
+					WHEN 'image_admin' THEN 'image_manage'
+					WHEN 'auditor' THEN 'audit_view'
+					WHEN 'super_admin' THEN 'user_manage'
+				END = ANY($7::text[])
+			)
 		)`
 	searchQuery := strings.Join(tokenize(query), " ")
-	roleNames := make([]string, len(user.Roles))
-	for i, role := range user.Roles {
-		roleNames[i] = string(role)
-	}
 	employeeType := fmt.Sprint(user.EmployeeType)
-	aclArgs := []any{user.ID, user.DepartmentIDs, user.JobTitle, user.JobLevelID, user.JobFamilyID, employeeType, roleNames, user.HasRole(domain.RoleSuperAdmin)}
+	aclArgs := []any{user.ID, user.DepartmentIDs, user.JobTitle, user.JobLevelID, user.JobFamilyID, employeeType, permissionKeyStrings(user.Permissions)}
 	var rows pgx.Rows
 	var err error
 	if len(embedding) > 0 {
-		rows, err = p.pool.Query(ctx, selectSQL+` ORDER BY (CASE WHEN c.embedding IS NULL THEN 0 ELSE 1-(c.embedding <=> $9::vector) END)*0.7 + ts_rank(c.search_vector,plainto_tsquery('simple',$10))*0.3 DESC LIMIT 200`, append(aclArgs, vectorArg(embedding), searchQuery)...)
+		rows, err = p.pool.Query(ctx, selectSQL+` ORDER BY (CASE WHEN c.embedding IS NULL THEN 0 ELSE 1-(c.embedding <=> $8::vector) END)*0.7 + ts_rank(c.search_vector,plainto_tsquery('simple',$9))*0.3 DESC LIMIT 200`, append(aclArgs, vectorArg(embedding), searchQuery)...)
 	} else {
-		rows, err = p.pool.Query(ctx, selectSQL+` ORDER BY ts_rank(c.search_vector,plainto_tsquery('simple',$9)) DESC LIMIT 200`, append(aclArgs, searchQuery)...)
+		rows, err = p.pool.Query(ctx, selectSQL+` ORDER BY ts_rank(c.search_vector,plainto_tsquery('simple',$8)) DESC LIMIT 200`, append(aclArgs, searchQuery)...)
 	}
 	if err != nil {
 		return nil, nil, err
@@ -959,6 +1055,20 @@ func toRoles(values []string) []domain.Role {
 	out := make([]domain.Role, len(values))
 	for i, v := range values {
 		out[i] = domain.Role(v)
+	}
+	return out
+}
+func toPermissionKeys(values []string) []domain.PermissionKey {
+	out := make([]domain.PermissionKey, len(values))
+	for i, value := range values {
+		out[i] = domain.PermissionKey(value)
+	}
+	return out
+}
+func permissionKeyStrings(values []domain.PermissionKey) []string {
+	out := make([]string, len(values))
+	for i, value := range values {
+		out[i] = string(value)
 	}
 	return out
 }

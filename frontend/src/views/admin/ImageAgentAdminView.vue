@@ -32,7 +32,7 @@ onMounted(admin.load)
         <ImageProjectAdminPanel :projects="admin.projects.value" :directory="admin.directory.value" :loading="admin.loading.value" :saving="admin.saving.value" @save="admin.saveProject" />
       </el-tab-pane>
       <el-tab-pane label="功能按键" name="actions">
-        <ImagePromptActionAdminPanel :actions="admin.promptActions.value" :projects="admin.projects.value" :loading="admin.loading.value" :saving="admin.saving.value" @save="admin.savePromptAction" @remove="admin.deletePromptAction" />
+        <ImagePromptActionAdminPanel :actions="admin.promptActions.value" :projects="admin.projects.value" :loading="admin.loading.value" :saving="admin.saving.value" :save-action="admin.savePromptAction" @remove="admin.deletePromptAction" />
       </el-tab-pane>
     </el-tabs>
   </section>
