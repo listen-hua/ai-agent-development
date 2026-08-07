@@ -22,6 +22,7 @@ type Chat struct {
 	hub       *RunHub
 	reminders *Reminder
 	meetings  *Meeting
+	massage   *Massage
 	context   *ConversationContextEngine
 	turns     *conversationLocks
 }
@@ -34,6 +35,8 @@ func NewChat(repo store.Repository, provider model.Provider, hub *RunHub, featur
 			chat.reminders = value
 		case *Meeting:
 			chat.meetings = value
+		case *Massage:
+			chat.massage = value
 		}
 	}
 	return chat
@@ -70,6 +73,11 @@ func (c *Chat) ResetContext(ctx context.Context, user domain.User, conversationI
 	ticket := c.turns.Reserve(conversationID)
 	ticket.Wait()
 	defer ticket.Done()
+	if c.meetings != nil {
+		if err = c.meetings.ExpireDrafts(ctx, user, conversationID); err != nil {
+			return err
+		}
+	}
 	return c.context.Reset(ctx, conversationID)
 }
 
@@ -131,11 +139,32 @@ func (c *Chat) execute(ctx context.Context, user domain.User, conversationID, ru
 	question := turn.Understanding.StandaloneQuery
 	switch turn.Understanding.Intent {
 	case contextIntentControl:
+		if c.meetings != nil {
+			_ = c.meetings.ExpireDrafts(ctx, user, conversationID)
+		}
 		c.complete(ctx, conversationID, runID, "已清除当前会话上下文。接下来的问题会作为新任务处理。", nil, cfg.GenerationModel, true)
 		return
 	case contextIntentOutOfScope:
-		c.complete(ctx, conversationID, runID, "我目前只处理公司制度、个人提醒和会议室预约等行政事项。", nil, cfg.GenerationModel, true)
+		c.complete(ctx, conversationID, runID, "我目前只处理公司制度、个人提醒、会议室预约和按摩排号等行政事项。", nil, cfg.GenerationModel, true)
 		return
+	}
+	if c.massage != nil && turn.Understanding.Intent == contextIntentMassage {
+		c.publish(runID, domain.RunEvent{Type: "status", RunID: runID, Metadata: map[string]string{"stage": "interpreting_massage"}, CreatedAt: time.Now()})
+		handled, message, massageErr := c.massage.HandleChat(ctx, user, conversationID, question, source)
+		if massageErr != nil {
+			c.fail(runID, massageErr)
+			return
+		}
+		if handled {
+			if err = c.repo.AddMessage(ctx, message); err != nil {
+				c.fail(runID, err)
+				return
+			}
+			c.publish(runID, domain.RunEvent{Type: "delta", RunID: runID, Delta: message.Content, CreatedAt: time.Now()})
+			c.publish(runID, domain.RunEvent{Type: "done", RunID: runID, Message: &message, CreatedAt: time.Now()})
+			c.context.MarkAssistantResult(ctx, conversationID, message)
+			return
+		}
 	}
 	if c.meetings != nil && turn.Understanding.Intent == contextIntentMeeting {
 		c.publish(runID, domain.RunEvent{Type: "status", RunID: runID, Metadata: map[string]string{"stage": "interpreting_meeting"}, CreatedAt: time.Now()})

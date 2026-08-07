@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"internal-ai-agent/backend/internal/domain"
@@ -181,31 +183,162 @@ func (m *Memory) DeleteImagePromptAction(_ context.Context, id string) error {
 	return nil
 }
 
-func canvasMemoryKey(userID, projectID string) string { return userID + "\x00" + projectID }
+func (m *Memory) ListImageCanvases(_ context.Context, userID string, deleted bool) ([]domain.ImageCanvas, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := []domain.ImageCanvas{}
+	for _, value := range m.imageCanvases {
+		if value.UserID != userID || (value.DeletedAt != nil) != deleted {
+			continue
+		}
+		value.NodeCount = len(value.Nodes)
+		value.PreviewAssetID = firstCanvasPreviewAssetID(value.Nodes)
+		value.Nodes = []domain.ImageCanvasNode{}
+		result = append(result, value)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].UpdatedAt.After(result[j].UpdatedAt) })
+	return result, nil
+}
+
+func (m *Memory) CreateImageCanvas(_ context.Context, value domain.ImageCanvas) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, existing := range m.imageCanvases {
+		if existing.UserID == value.UserID && existing.DeletedAt == nil && strings.EqualFold(existing.Name, value.Name) {
+			return ErrConflict
+		}
+	}
+	m.imageCanvases[value.ID] = value
+	return nil
+}
+
+func (m *Memory) GetImageCanvas(_ context.Context, id string) (domain.ImageCanvas, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	value, ok := m.imageCanvases[id]
+	if !ok {
+		return value, ErrNotFound
+	}
+	value.NodeCount = len(value.Nodes)
+	value.PreviewAssetID = firstCanvasPreviewAssetID(value.Nodes)
+	return value, nil
+}
+
+func firstCanvasPreviewAssetID(nodes []domain.ImageCanvasNode) string {
+	var selected domain.ImageCanvasNode
+	found := false
+	for _, node := range nodes {
+		if node.Status != "ready" || node.AssetID == "" {
+			continue
+		}
+		if !found || node.ZIndex < selected.ZIndex || (node.ZIndex == selected.ZIndex && node.CreatedAt.Before(selected.CreatedAt)) {
+			selected, found = node, true
+		}
+	}
+	if found {
+		return selected.AssetID
+	}
+	return ""
+}
+
+func (m *Memory) SoftDeleteImageCanvas(_ context.Context, id, userID string, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	value, ok := m.imageCanvases[id]
+	if !ok || value.UserID != userID || value.DeletedAt != nil {
+		return ErrNotFound
+	}
+	value.DeletedAt = &now
+	value.UpdatedAt = now
+	m.imageCanvases[id] = value
+	return nil
+}
+
+func (m *Memory) RestoreImageCanvas(_ context.Context, id, userID string, now time.Time) (domain.ImageCanvas, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	value, ok := m.imageCanvases[id]
+	if !ok || value.UserID != userID || value.DeletedAt == nil {
+		return value, ErrNotFound
+	}
+	baseRunes := []rune(strings.TrimSpace(value.Name))
+	if len(baseRunes) > 65 {
+		baseRunes = baseRunes[:65]
+	}
+	base, name := string(baseRunes), value.Name
+	for suffix := 0; ; suffix++ {
+		conflict := false
+		for _, existing := range m.imageCanvases {
+			if existing.ID != id && existing.UserID == userID && existing.DeletedAt == nil && strings.EqualFold(existing.Name, name) {
+				conflict = true
+				break
+			}
+		}
+		if !conflict {
+			break
+		}
+		name = base + "（恢复）"
+		if suffix > 0 {
+			name = fmt.Sprintf("%s（恢复%d）", base, suffix+1)
+		}
+	}
+	value.Name, value.DeletedAt, value.UpdatedAt = name, nil, now
+	m.imageCanvases[id] = value
+	return value, nil
+}
+
+func (m *Memory) CleanupDeletedImageCanvases(_ context.Context, before time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var count int64
+	for id, canvas := range m.imageCanvases {
+		if canvas.DeletedAt == nil || !canvas.DeletedAt.Before(before) {
+			continue
+		}
+		active := false
+		for _, job := range m.imageJobs {
+			if job.CanvasID == id && (job.Status == "pending" || job.Status == "running" || job.Status == "retry") {
+				active = true
+				break
+			}
+		}
+		if !active {
+			delete(m.imageCanvases, id)
+			for jobID, job := range m.imageJobs {
+				if job.CanvasID == id {
+					job.CanvasID = ""
+					m.imageJobs[jobID] = job
+				}
+			}
+			count++
+		}
+	}
+	return count, nil
+}
 
 func (m *Memory) GetOrCreateImageCanvas(_ context.Context, userID, projectID string) (domain.ImageCanvas, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := canvasMemoryKey(userID, projectID)
-	value, ok := m.imageCanvases[key]
-	if !ok {
-		now := time.Now()
-		value = domain.ImageCanvas{ID: ids.New("canvas"), UserID: userID, ProjectID: projectID,
-			Viewport: domain.ImageViewport{Zoom: 1}, Version: 1, CreatedAt: now, UpdatedAt: now, Nodes: []domain.ImageCanvasNode{}}
-		m.imageCanvases[key] = value
+	for _, value := range m.imageCanvases {
+		if value.UserID == userID && value.ProjectID == projectID && value.DeletedAt == nil {
+			return value, nil
+		}
 	}
+	now := time.Now()
+	value := domain.ImageCanvas{ID: ids.New("canvas"), UserID: userID, ProjectID: projectID, Name: "项目画布-" + projectID,
+		Viewport: domain.ImageViewport{Zoom: 1}, Version: 1, CreatedAt: now, UpdatedAt: now, Nodes: []domain.ImageCanvasNode{}}
+	m.imageCanvases[value.ID] = value
 	return value, nil
 }
 
 func (m *Memory) UpdateImageCanvas(_ context.Context, value domain.ImageCanvas, expectedVersion int64) (domain.ImageCanvas, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := canvasMemoryKey(value.UserID, value.ProjectID)
-	existing, ok := m.imageCanvases[key]
+	existing, ok := m.imageCanvases[value.ID]
 	if !ok {
 		return value, ErrNotFound
 	}
-	if existing.Version != expectedVersion {
+	if existing.Version != expectedVersion || existing.DeletedAt != nil {
 		return value, ErrConflict
 	}
 	existing.Viewport = value.Viewport
@@ -221,19 +354,18 @@ func (m *Memory) UpdateImageCanvas(_ context.Context, value domain.ImageCanvas, 
 	}
 	existing.Version++
 	existing.UpdatedAt = time.Now()
-	m.imageCanvases[key] = existing
+	m.imageCanvases[value.ID] = existing
 	return existing, nil
 }
 
 func (m *Memory) ImportImageCanvasAsset(_ context.Context, canvas domain.ImageCanvas, expectedVersion int64, asset domain.ImageAsset, node domain.ImageCanvasNode) (domain.ImageCanvas, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := canvasMemoryKey(canvas.UserID, canvas.ProjectID)
-	existing, ok := m.imageCanvases[key]
+	existing, ok := m.imageCanvases[canvas.ID]
 	if !ok {
 		return canvas, ErrNotFound
 	}
-	if existing.ID != canvas.ID || existing.Version != expectedVersion {
+	if existing.Version != expectedVersion || existing.DeletedAt != nil {
 		return canvas, ErrConflict
 	}
 	if _, exists := m.imageAssets[asset.ID]; exists {
@@ -253,19 +385,18 @@ func (m *Memory) ImportImageCanvasAsset(_ context.Context, canvas domain.ImageCa
 	existing.Version++
 	existing.UpdatedAt = time.Now()
 	m.imageAssets[asset.ID] = asset
-	m.imageCanvases[key] = existing
+	m.imageCanvases[canvas.ID] = existing
 	return existing, nil
 }
 
 func (m *Memory) DeleteImageCanvasNode(_ context.Context, canvas domain.ImageCanvas, nodeID string, expectedVersion int64) (domain.ImageCanvas, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := canvasMemoryKey(canvas.UserID, canvas.ProjectID)
-	existing, ok := m.imageCanvases[key]
+	existing, ok := m.imageCanvases[canvas.ID]
 	if !ok {
 		return canvas, ErrNotFound
 	}
-	if existing.ID != canvas.ID || existing.Version != expectedVersion {
+	if existing.Version != expectedVersion || existing.DeletedAt != nil {
 		return canvas, ErrConflict
 	}
 	nodeIndex := -1
@@ -281,7 +412,7 @@ func (m *Memory) DeleteImageCanvasNode(_ context.Context, canvas domain.ImageCan
 	existing.Nodes = append(existing.Nodes[:nodeIndex], existing.Nodes[nodeIndex+1:]...)
 	existing.Version++
 	existing.UpdatedAt = time.Now()
-	m.imageCanvases[key] = existing
+	m.imageCanvases[canvas.ID] = existing
 	return existing, nil
 }
 
@@ -310,8 +441,7 @@ func (m *Memory) CreateImageJob(_ context.Context, value domain.ImageJob, nodes 
 			return existing, nil
 		}
 	}
-	key := canvasMemoryKey(value.UserID, value.ProjectID)
-	canvas := m.imageCanvases[key]
+	canvas := m.imageCanvases[value.CanvasID]
 	if len(nodes) > 0 {
 		if canvas.ID != value.CanvasID || canvas.Version != expectedCanvasVersion {
 			return value, ErrConflict
@@ -326,7 +456,7 @@ func (m *Memory) CreateImageJob(_ context.Context, value domain.ImageJob, nodes 
 	}
 	m.imageJobs[value.ID] = value
 	canvas.Nodes = append(canvas.Nodes, nodes...)
-	m.imageCanvases[key] = canvas
+	m.imageCanvases[value.CanvasID] = canvas
 	return value, nil
 }
 
@@ -397,15 +527,14 @@ func (m *Memory) SaveImageJobOutput(_ context.Context, output domain.ImageJobOut
 		}
 	}
 	m.imageJobs[job.ID] = job
-	key := canvasMemoryKey(job.UserID, job.ProjectID)
-	canvas := m.imageCanvases[key]
+	canvas := m.imageCanvases[job.CanvasID]
 	for index := range canvas.Nodes {
 		if canvas.Nodes[index].JobID == output.JobID && canvas.Nodes[index].OutputIndex == output.OutputIndex {
 			canvas.Nodes[index].AssetID, canvas.Nodes[index].Status = asset.ID, "ready"
 			canvas.Nodes[index].Width, canvas.Nodes[index].Height = node.Width, node.Height
 		}
 	}
-	m.imageCanvases[key] = canvas
+	m.imageCanvases[job.CanvasID] = canvas
 	return nil
 }
 
@@ -419,14 +548,13 @@ func (m *Memory) UpdateImageJobOutputFailure(_ context.Context, output domain.Im
 		}
 	}
 	m.imageJobs[job.ID] = job
-	key := canvasMemoryKey(job.UserID, job.ProjectID)
-	canvas := m.imageCanvases[key]
+	canvas := m.imageCanvases[job.CanvasID]
 	for index := range canvas.Nodes {
 		if canvas.Nodes[index].JobID == output.JobID && canvas.Nodes[index].OutputIndex == output.OutputIndex {
 			canvas.Nodes[index].Status, canvas.Nodes[index].Error = "failed", node.Error
 		}
 	}
-	m.imageCanvases[key] = canvas
+	m.imageCanvases[job.CanvasID] = canvas
 	return nil
 }
 

@@ -32,6 +32,7 @@ type Server struct {
 	notifications      *service.Notification
 	reminders          *service.Reminder
 	meetings           *service.Meeting
+	massage            *service.Massage
 	directory          *service.Directory
 	agents             *service.AgentRegistry
 	imageAgent         *service.ImageAgent
@@ -65,6 +66,8 @@ func New(cfg config.Config, repo store.Repository, sessions *security.Sessions, 
 		switch value := feature.(type) {
 		case *service.Meeting:
 			s.meetings = value
+		case *service.Massage:
+			s.massage = value
 		case *service.ImageAgent:
 			s.imageAgent = value
 		case *iamintegration.Client:
@@ -109,14 +112,31 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/reminders/{id}/actions", s.auth(http.HandlerFunc(s.createReminderAction)))
 	s.mux.Handle("POST /api/v1/reminder-actions/{id}/confirm", s.auth(http.HandlerFunc(s.confirmReminderAction)))
 	s.mux.Handle("POST /api/v1/reminder-actions/{id}/cancel", s.auth(http.HandlerFunc(s.cancelReminderAction)))
+	if s.massage != nil {
+		s.mux.Handle("GET /api/v1/massage/me", s.auth(http.HandlerFunc(s.massageMe)))
+		s.mux.Handle("POST /api/v1/massage/cycles/{id}/response", s.auth(http.HandlerFunc(s.massageResponse)))
+	}
 	if s.meetings != nil {
 		s.mux.Handle("POST /api/v1/meeting-booking-actions/{id}/confirm", s.auth(http.HandlerFunc(s.confirmMeetingBookingAction)))
 		s.mux.Handle("POST /api/v1/meeting-booking-actions/{id}/cancel", s.auth(http.HandlerFunc(s.cancelMeetingBookingAction)))
 		s.mux.Handle("GET /api/v1/meeting-bookings", s.auth(http.HandlerFunc(s.listMeetingBookings)))
+		s.mux.Handle("POST /api/v1/meeting-bookings/{id}/cancel-action", s.auth(http.HandlerFunc(s.prepareMeetingBookingCancellation)))
+		s.mux.Handle("GET /api/v1/meeting-attendees/search", s.auth(http.HandlerFunc(s.searchMeetingAttendees)))
+		s.mux.Handle("PATCH /api/v1/meeting-booking-drafts/{id}", s.auth(http.HandlerFunc(s.updateMeetingBookingDraft)))
 	}
 	if s.imageAgent != nil {
 		s.mux.Handle("GET /api/v1/image-agent/options", s.auth(http.HandlerFunc(s.imageAgentOptions)))
+		s.mux.Handle("GET /api/v1/image-agent/prompt-actions", s.auth(http.HandlerFunc(s.imagePromptActions)))
 		s.mux.Handle("GET /api/v1/image-agent/prompt-actions/{id}/preview", s.auth(http.HandlerFunc(s.imagePromptActionPreviewContent)))
+		s.mux.Handle("GET /api/v1/image-agent/canvases", s.auth(http.HandlerFunc(s.listImageCanvases)))
+		s.mux.Handle("POST /api/v1/image-agent/canvases", s.auth(http.HandlerFunc(s.createImageCanvas)))
+		s.mux.Handle("GET /api/v1/image-agent/canvases/trash", s.auth(http.HandlerFunc(s.listDeletedImageCanvases)))
+		s.mux.Handle("GET /api/v1/image-agent/canvases/{canvasID}", s.auth(http.HandlerFunc(s.getImageCanvasByID)))
+		s.mux.Handle("PATCH /api/v1/image-agent/canvases/{canvasID}", s.auth(http.HandlerFunc(s.updateImageCanvasByID)))
+		s.mux.Handle("DELETE /api/v1/image-agent/canvases/{canvasID}", s.auth(http.HandlerFunc(s.deleteImageCanvas)))
+		s.mux.Handle("POST /api/v1/image-agent/canvases/{canvasID}/restore", s.auth(http.HandlerFunc(s.restoreImageCanvas)))
+		s.mux.Handle("DELETE /api/v1/image-agent/canvases/{canvasID}/nodes/{nodeID}", s.auth(http.HandlerFunc(s.deleteImageCanvasNodeByID)))
+		s.mux.Handle("POST /api/v1/image-agent/canvases/{canvasID}/imports", s.auth(http.HandlerFunc(s.importImageCanvasAssetByID)))
 		s.mux.Handle("GET /api/v1/image-agent/projects/{id}/canvas", s.auth(http.HandlerFunc(s.imageCanvas)))
 		s.mux.Handle("PATCH /api/v1/image-agent/projects/{id}/canvas", s.auth(http.HandlerFunc(s.updateImageCanvas)))
 		s.mux.Handle("DELETE /api/v1/image-agent/projects/{id}/canvas/nodes/{nodeID}", s.auth(http.HandlerFunc(s.deleteImageCanvasNode)))
@@ -130,7 +150,7 @@ func (s *Server) routes() {
 
 	knowledgeAdmin := s.permission(permissionKnowledgeManage)
 	agentAdmin := s.permission(permissionAgentManage)
-	directoryAdmin := s.permissions([]string{permissionKnowledgeManage, permissionImageManage})
+	directoryAdmin := s.permissions([]string{permissionKnowledgeManage, permissionImageManage, permissionNotificationManage})
 	notificationAdmin := s.permission(permissionNotificationManage)
 	calendarAdmin := s.permission(permissionCalendarManage)
 	auditor := s.permission(permissionAuditView)
@@ -157,6 +177,19 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/admin/notifications/{id}/approve", s.auth(notificationAdmin(http.HandlerFunc(s.approveNotification))))
 	s.mux.Handle("POST /api/v1/admin/notifications/{id}/send", s.auth(notificationAdmin(http.HandlerFunc(s.sendNotification))))
 	s.mux.Handle("POST /api/v1/admin/notifications/{id}/cancel", s.auth(notificationAdmin(http.HandlerFunc(s.cancelNotification))))
+	if s.massage != nil {
+		s.mux.Handle("GET /api/v1/admin/massage/cycles", s.auth(notificationAdmin(http.HandlerFunc(s.listMassageCycles))))
+		s.mux.Handle("POST /api/v1/admin/massage/cycles", s.auth(notificationAdmin(http.HandlerFunc(s.createMassageCycle))))
+		s.mux.Handle("GET /api/v1/admin/massage/cycles/{id}", s.auth(notificationAdmin(http.HandlerFunc(s.getMassageCycle))))
+		s.mux.Handle("PUT /api/v1/admin/massage/cycles/{id}", s.auth(notificationAdmin(http.HandlerFunc(s.updateMassageCycle))))
+		s.mux.Handle("DELETE /api/v1/admin/massage/cycles/{id}", s.auth(notificationAdmin(http.HandlerFunc(s.deleteMassageCycle))))
+		s.mux.Handle("POST /api/v1/admin/massage/cycles/{id}/publish", s.auth(notificationAdmin(http.HandlerFunc(s.publishMassageCycle))))
+		s.mux.Handle("POST /api/v1/admin/massage/cycles/{id}/signup-reminders/resend", s.auth(notificationAdmin(http.HandlerFunc(s.resendMassageSignup))))
+		s.mux.Handle("POST /api/v1/admin/massage/sessions/{id}/{action}", s.auth(notificationAdmin(http.HandlerFunc(s.massageSessionAction))))
+		s.mux.Handle("POST /api/v1/admin/massage/calls/{id}/{action}", s.auth(notificationAdmin(http.HandlerFunc(s.massageCallAction))))
+		s.mux.Handle("GET /api/v1/admin/massage/cycles/{id}/statistics", s.auth(notificationAdmin(http.HandlerFunc(s.massageStatistics))))
+		s.mux.Handle("GET /api/v1/admin/massage/cycles/{id}/statistics.csv", s.auth(notificationAdmin(http.HandlerFunc(s.massageStatisticsCSV))))
+	}
 	s.mux.Handle("GET /api/v1/admin/work-calendar", s.auth(calendarAdmin(http.HandlerFunc(s.listWorkCalendar))))
 	s.mux.Handle("PUT /api/v1/admin/work-calendar/{date}", s.auth(calendarAdmin(http.HandlerFunc(s.upsertWorkCalendar))))
 	s.mux.Handle("DELETE /api/v1/admin/work-calendar/{date}", s.auth(calendarAdmin(http.HandlerFunc(s.deleteWorkCalendar))))

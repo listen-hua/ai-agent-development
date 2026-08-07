@@ -179,6 +179,9 @@ func (m *Meeting) HandleMeetingRoomStatusChange(ctx context.Context, event feish
 }
 
 func (m *Meeting) HandleChat(ctx context.Context, user domain.User, conversationID, question, source string) (bool, domain.Message, error) {
+	if handled, message, err := m.handleActiveDraftTurn(ctx, user, conversationID, question, source); handled || err != nil {
+		return handled, message, err
+	}
 	if !LooksLikeMeetingBooking(question) {
 		return false, domain.Message{}, nil
 	}
@@ -198,12 +201,37 @@ func (m *Meeting) HandleChat(ctx context.Context, user domain.User, conversation
 	if !m.Configured() {
 		return true, m.message(conversationID, "会议室预约尚未完成飞书配置，请联系管理员。", nil), nil
 	}
+	if len(request.Times) > 0 && !meetingDateTime(request.Date, request.Times[0]).After(now) {
+		return true, m.message(conversationID, meetingUserErrorMessage(errMeetingTimeInPast), nil), nil
+	}
+	request.Title = strings.TrimSpace(request.Title)
+	if len([]rune(request.Title)) > 100 {
+		return true, m.message(conversationID, "会议主题不能超过 100 个字符，请精简后重试。", nil), nil
+	}
+	attendeesConfirmed := meetingAttendeesExplicitlySelfOnly(question) || len(request.AttendeeNames) > 0
+	attendeeIDs := []string{}
 	attendees, clarification, err := m.resolveAttendees(ctx, user, request.AttendeeNames)
 	if err != nil {
 		return true, domain.Message{}, err
 	}
 	if clarification != "" {
-		return true, m.message(conversationID, clarification, nil), nil
+		attendeesConfirmed = false
+		attendees = []domain.MeetingAttendee{{UserID: user.ID, OpenID: user.FeishuOpenID, Name: user.Name}}
+	}
+	if len(attendees) > 50 {
+		return true, m.message(conversationID, "每场会议最多包含 50 名内部参会人（含申请人），请减少参会人数。", nil), nil
+	}
+	for _, attendee := range attendees {
+		if attendee.UserID != user.ID {
+			attendeeIDs = append(attendeeIDs, attendee.UserID)
+		}
+	}
+	if strings.TrimSpace(request.Title) == "" || !attendeesConfirmed {
+		message, draftErr := m.startCreateDraft(ctx, user, conversationID, source, request, attendeeIDs, attendeesConfirmed)
+		if draftErr == nil && clarification != "" {
+			message.Content = clarification + " 请在人员选择器中选择准确的同事。"
+		}
+		return true, message, draftErr
 	}
 	options, requestedRoom, err := m.candidates(ctx, request, question, attendees)
 	if err != nil {
@@ -225,23 +253,25 @@ func (m *Meeting) HandleChat(ctx context.Context, user domain.User, conversation
 }
 
 func (m *Meeting) prepareCancellation(ctx context.Context, user domain.User, conversationID string, request meetingRequest, source string) (domain.Message, error) {
-	booking, clarification, err := m.matchBooking(ctx, user, request, false)
+	booking, matches, clarification, err := m.matchBookingCandidates(ctx, user, request, false)
 	if err != nil {
 		return domain.Message{}, err
 	}
 	if clarification != "" {
+		if len(matches) > 1 {
+			return m.cancellationDraft(ctx, user, conversationID, source, matches)
+		}
 		return m.message(conversationID, clarification, nil), nil
 	}
-	now := m.now()
-	action := domain.MeetingBookingAction{ID: ids.New("mba"), UserID: user.ID, Intent: "cancel", Title: booking.Title, Attendees: booking.Attendees, Capacity: len(booking.Attendees), BookingID: booking.ID, Status: domain.MeetingActionPending, SourceChannel: source, SourceConversationID: conversationID, ExpiresAt: now.Add(15 * time.Minute), CreatedAt: now}
-	if err = m.repo.CreateMeetingBookingAction(ctx, action); err != nil {
+	action, err := m.PrepareCancellationForBooking(ctx, user, booking.ID, source, conversationID)
+	if err != nil {
 		return domain.Message{}, err
 	}
 	return m.message(conversationID, fmt.Sprintf("请确认取消 %s 在 %s 的预约。", booking.RoomName, meetingTimeLabel(booking.StartAt.In(m.location), booking.EndAt.In(m.location))), &action), nil
 }
 
 func (m *Meeting) prepareReschedule(ctx context.Context, user domain.User, conversationID string, request meetingRequest, question, source string) (domain.Message, error) {
-	booking, clarification, err := m.matchBooking(ctx, user, request, true)
+	booking, _, clarification, err := m.matchBookingCandidates(ctx, user, request, true)
 	if err != nil {
 		return domain.Message{}, err
 	}
@@ -486,6 +516,16 @@ func (m *Meeting) Confirm(ctx context.Context, user domain.User, actionID, optio
 		m.releaseAction(ctx, &action)
 		return action, nil, errors.New("候选会议室不存在")
 	}
+	attendeeIDs := make([]string, 0, len(action.Attendees))
+	for _, attendee := range action.Attendees {
+		if attendee.UserID != user.ID {
+			attendeeIDs = append(attendeeIDs, attendee.UserID)
+		}
+	}
+	if action.Attendees, err = m.resolveAttendeeIDs(ctx, user, attendeeIDs); err != nil {
+		m.releaseAction(ctx, &action)
+		return action, nil, err
+	}
 	unlock, locked, err := m.locker.Lock(ctx, fmt.Sprintf("%s:%d:%d", option.RoomID, option.StartAt.Unix(), option.EndAt.Unix()), 3*time.Minute)
 	if err != nil || !locked {
 		m.releaseAction(ctx, &action)
@@ -606,6 +646,7 @@ func (m *Meeting) confirmCancellation(ctx context.Context, user domain.User, act
 		return action, &booking, err
 	}
 	m.audit(ctx, user, "meeting.booking.cancel", "meeting_booking", booking.ID, map[string]any{"event_id": booking.EventID})
+	m.audit(ctx, user, "meeting.booking.cancel_notification", "meeting_booking", booking.ID, map[string]any{"channel": "feishu_calendar", "attendee_count": len(booking.Attendees), "need_notification": true})
 	return action, &booking, nil
 }
 
@@ -703,10 +744,10 @@ func (m *Meeting) reserveRoom(ctx context.Context, calendarID, eventID, roomID, 
 	}
 }
 
-func (m *Meeting) matchBooking(ctx context.Context, user domain.User, request meetingRequest, forReschedule bool) (domain.MeetingBooking, string, error) {
+func (m *Meeting) matchBookingCandidates(ctx context.Context, user domain.User, request meetingRequest, forReschedule bool) (domain.MeetingBooking, []domain.MeetingBooking, string, error) {
 	bookings, err := m.repo.ListMeetingBookings(ctx, user.ID)
 	if err != nil {
-		return domain.MeetingBooking{}, "", err
+		return domain.MeetingBooking{}, nil, "", err
 	}
 	matches := []domain.MeetingBooking{}
 	var target *clockTime
@@ -719,25 +760,37 @@ func (m *Meeting) matchBooking(ctx context.Context, user domain.User, request me
 	}
 	for _, booking := range bookings {
 		start := booking.StartAt.In(m.location)
-		if booking.Status != "active" || start.Year() != request.Date.Year() || start.YearDay() != request.Date.YearDay() {
+		if booking.Status != "active" || !booking.EndAt.After(m.now()) {
+			continue
+		}
+		if !request.Date.IsZero() && (start.Year() != request.Date.Year() || start.YearDay() != request.Date.YearDay()) {
 			continue
 		}
 		if target != nil && (start.Hour() != target.Hour || start.Minute() != target.Minute) {
 			continue
 		}
+		if request.Title != "" && !strings.Contains(strings.ToLower(booking.Title), strings.ToLower(request.Title)) && !strings.Contains(strings.ToLower(request.Query), strings.ToLower(booking.Title)) {
+			continue
+		}
+		if queryRoom := meetingRoomNo.FindStringSubmatch(request.Query); len(queryRoom) > 1 {
+			bookingRoom := meetingRoomNo.FindStringSubmatch(booking.RoomName)
+			if len(bookingRoom) < 2 || bookingRoom[1] != queryRoom[1] {
+				continue
+			}
+		}
 		matches = append(matches, booking)
 	}
 	if len(matches) == 0 {
-		return domain.MeetingBooking{}, "没有找到你在指定日期和时间通过行政 AI 创建的有效预约。", nil
+		return domain.MeetingBooking{}, nil, "没有找到你尚未结束且由行政 AI 创建的匹配预约。", nil
 	}
 	if len(matches) > 1 {
 		labels := make([]string, 0, len(matches))
 		for _, booking := range matches {
 			labels = append(labels, fmt.Sprintf("%s %s", booking.StartAt.In(m.location).Format("15:04"), booking.RoomName))
 		}
-		return domain.MeetingBooking{}, "当天有多个匹配预约，请明确时间：" + strings.Join(labels, "、"), nil
+		return domain.MeetingBooking{}, matches, "找到多个匹配预约，请选择：" + strings.Join(labels, "、"), nil
 	}
-	return matches[0], "", nil
+	return matches[0], matches, "", nil
 }
 
 func (m *Meeting) message(conversationID, content string, action *domain.MeetingBookingAction) domain.Message {

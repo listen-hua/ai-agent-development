@@ -30,6 +30,8 @@ import (
 
 var (
 	imageKeyPattern        = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,49}$`)
+	imageProjectKeyPattern = regexp.MustCompile(`^[\p{L}][\p{L}\p{N}_-]{0,49}$`)
+	promptActionKeyPattern = regexp.MustCompile(`^[\p{L}][\p{L}\p{N}_-]{0,49}$`)
 	cartoonStrengthPattern = regexp.MustCompile(`(?m)("cartoonization_strength"\s*:\s*)(-?(?:\d+(?:\.\d*)?|\.\d+))`)
 	validRatios            = map[string]bool{"1:1": true, "16:9": true, "9:16": true, "4:3": true, "3:4": true}
 	validSizes             = map[string]bool{"1K": true, "2K": true, "4K": true}
@@ -96,6 +98,7 @@ type ImageCanvasImport struct {
 }
 
 type ImageJobInput struct {
+	CanvasID          string
 	ProjectID         string
 	RelayID           string
 	ModelID           string
@@ -381,8 +384,11 @@ func (s *ImageAgent) SaveProject(ctx context.Context, actor domain.User, id stri
 	input.ProjectKey = strings.ToLower(strings.TrimSpace(input.ProjectKey))
 	input.Name = strings.TrimSpace(input.Name)
 	input.Description = strings.TrimSpace(input.Description)
-	if !imageKeyPattern.MatchString(input.ProjectKey) || input.Name == "" {
-		return domain.ImageProject{}, errors.New("项目标识和名称不能为空")
+	if !imageProjectKeyPattern.MatchString(input.ProjectKey) {
+		return domain.ImageProject{}, errors.New("项目标识需以中文或英文字母开头，只能包含中文、字母、数字、下划线和短横线，长度不超过 50 个字符")
+	}
+	if input.Name == "" {
+		return domain.ImageProject{}, errors.New("项目名称不能为空")
 	}
 	if err := input.ACL.Validate(); err != nil {
 		return domain.ImageProject{}, err
@@ -413,8 +419,11 @@ func (s *ImageAgent) ListPromptActions(ctx context.Context, projectID string) ([
 func (s *ImageAgent) SavePromptAction(ctx context.Context, actor domain.User, id string, input ImagePromptActionInput) (domain.ImagePromptAction, error) {
 	input.ActionKey = strings.ToLower(strings.TrimSpace(input.ActionKey))
 	input.PromptTemplate = strings.TrimSpace(input.PromptTemplate)
-	if !imageKeyPattern.MatchString(input.ActionKey) || input.PromptTemplate == "" {
-		return domain.ImagePromptAction{}, errors.New("快捷提示词标识格式不正确或模板为空")
+	if !promptActionKeyPattern.MatchString(input.ActionKey) {
+		return domain.ImagePromptAction{}, errors.New("功能按键标识需以中文或英文字母开头，只能包含中文、字母、数字、下划线和短横线，长度不超过 50 个字符")
+	}
+	if input.PromptTemplate == "" {
+		return domain.ImagePromptAction{}, errors.New("功能按键提示词模板不能为空")
 	}
 	if err := ValidateCartoonStrength(input.PromptTemplate); err != nil {
 		return domain.ImagePromptAction{}, err
@@ -638,6 +647,77 @@ func (s *ImageAgent) Canvas(ctx context.Context, user domain.User, projectID str
 	return s.repo.GetOrCreateImageCanvas(ctx, user.ID, projectID)
 }
 
+func (s *ImageAgent) Canvases(ctx context.Context, user domain.User, deleted bool) ([]domain.ImageCanvas, error) {
+	return s.repo.ListImageCanvases(ctx, user.ID, deleted)
+}
+
+func (s *ImageAgent) CreateCanvas(ctx context.Context, user domain.User, name string) (domain.ImageCanvas, error) {
+	name = strings.TrimSpace(name)
+	if count := len([]rune(name)); count < 1 || count > 80 {
+		return domain.ImageCanvas{}, errors.New("画布名称长度必须在 1 到 80 个字符之间")
+	}
+	now := time.Now()
+	value := domain.ImageCanvas{ID: ids.New("canvas"), UserID: user.ID, Name: name, Viewport: domain.ImageViewport{Zoom: 1},
+		Version: 1, CreatedAt: now, UpdatedAt: now, Nodes: []domain.ImageCanvasNode{}}
+	if err := s.repo.CreateImageCanvas(ctx, value); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			return value, fmt.Errorf("已存在同名画布: %w", err)
+		}
+		return value, err
+	}
+	s.appendAudit(ctx, user, "image.canvas.create", "image_canvas", value.ID, map[string]any{"name": name})
+	return value, nil
+}
+
+func (s *ImageAgent) CanvasByID(ctx context.Context, user domain.User, id string, allowDeleted bool) (domain.ImageCanvas, error) {
+	value, err := s.repo.GetImageCanvas(ctx, strings.TrimSpace(id))
+	if err != nil {
+		return value, err
+	}
+	if value.UserID != user.ID {
+		return domain.ImageCanvas{}, store.ErrForbidden
+	}
+	if value.DeletedAt != nil && !allowDeleted {
+		return domain.ImageCanvas{}, store.ErrNotFound
+	}
+	return value, nil
+}
+
+func (s *ImageAgent) UpdateCanvasByID(ctx context.Context, user domain.User, canvasID string, input ImageCanvasPatch) (domain.ImageCanvas, error) {
+	canvas, err := s.CanvasByID(ctx, user, canvasID, false)
+	if err != nil {
+		return canvas, err
+	}
+	if input.Viewport.Zoom < .1 || input.Viewport.Zoom > 2 {
+		return canvas, errors.New("画布缩放范围必须在 10% 到 200% 之间")
+	}
+	canvas.Viewport, canvas.Nodes = input.Viewport, input.Nodes
+	return s.repo.UpdateImageCanvas(ctx, canvas, input.Version)
+}
+
+func (s *ImageAgent) DeleteCanvas(ctx context.Context, user domain.User, canvasID string) error {
+	value, err := s.CanvasByID(ctx, user, canvasID, false)
+	if err != nil {
+		return err
+	}
+	if err = s.repo.SoftDeleteImageCanvas(ctx, value.ID, user.ID, time.Now()); err != nil {
+		return err
+	}
+	s.appendAudit(ctx, user, "image.canvas.delete", "image_canvas", value.ID, map[string]any{"name": value.Name})
+	return nil
+}
+
+func (s *ImageAgent) RestoreCanvas(ctx context.Context, user domain.User, canvasID string) (domain.ImageCanvas, error) {
+	if _, err := s.CanvasByID(ctx, user, canvasID, true); err != nil {
+		return domain.ImageCanvas{}, err
+	}
+	value, err := s.repo.RestoreImageCanvas(ctx, canvasID, user.ID, time.Now())
+	if err == nil {
+		s.appendAudit(ctx, user, "image.canvas.restore", "image_canvas", value.ID, map[string]any{"name": value.Name})
+	}
+	return value, err
+}
+
 func (s *ImageAgent) UpdateCanvas(ctx context.Context, user domain.User, projectID string, input ImageCanvasPatch) (domain.ImageCanvas, error) {
 	if _, err := s.authorizedProject(ctx, user, projectID, false); err != nil {
 		return domain.ImageCanvas{}, err
@@ -653,17 +733,29 @@ func (s *ImageAgent) UpdateCanvas(ctx context.Context, user domain.User, project
 	return s.repo.UpdateImageCanvas(ctx, canvas, input.Version)
 }
 
+func (s *ImageAgent) DeleteCanvasNodeByID(ctx context.Context, user domain.User, canvasID, nodeID string, version int64) (domain.ImageCanvas, error) {
+	canvas, err := s.CanvasByID(ctx, user, canvasID, false)
+	if err != nil {
+		return canvas, err
+	}
+	return s.deleteCanvasNode(ctx, user, canvas, nodeID, version, "")
+}
+
 func (s *ImageAgent) DeleteCanvasNode(ctx context.Context, user domain.User, projectID, nodeID string, version int64) (domain.ImageCanvas, error) {
 	if _, err := s.authorizedProject(ctx, user, projectID, true); err != nil {
 		return domain.ImageCanvas{}, err
 	}
-	nodeID = strings.TrimSpace(nodeID)
-	if nodeID == "" || version < 1 {
-		return domain.ImageCanvas{}, errors.New("画布节点或版本无效")
-	}
 	canvas, err := s.repo.GetOrCreateImageCanvas(ctx, user.ID, projectID)
 	if err != nil {
 		return canvas, err
+	}
+	return s.deleteCanvasNode(ctx, user, canvas, nodeID, version, projectID)
+}
+
+func (s *ImageAgent) deleteCanvasNode(ctx context.Context, user domain.User, canvas domain.ImageCanvas, nodeID string, version int64, projectID string) (domain.ImageCanvas, error) {
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" || version < 1 {
+		return domain.ImageCanvas{}, errors.New("画布节点或版本无效")
 	}
 	var deleted domain.ImageCanvasNode
 	found := false
@@ -712,6 +804,14 @@ func (s *ImageAgent) ImportCanvasAsset(ctx context.Context, user domain.User, pr
 	if _, err := s.authorizedProject(ctx, user, projectID, true); err != nil {
 		return domain.ImageCanvas{}, err
 	}
+	canvas, err := s.repo.GetOrCreateImageCanvas(ctx, user.ID, projectID)
+	if err != nil {
+		return canvas, err
+	}
+	return s.importCanvasAsset(ctx, user, canvas, projectID, input)
+}
+
+func (s *ImageAgent) importCanvasAsset(ctx context.Context, user domain.User, canvas domain.ImageCanvas, projectID string, input ImageCanvasImport) (domain.ImageCanvas, error) {
 	input.Origin = strings.TrimSpace(input.Origin)
 	if input.Origin != "paste" && input.Origin != "drop" {
 		return domain.ImageCanvas{}, errors.New("图片导入来源只能是 paste 或 drop")
@@ -721,10 +821,6 @@ func (s *ImageAgent) ImportCanvasAsset(ctx context.Context, user domain.User, pr
 	}
 	if math.IsNaN(input.X) || math.IsNaN(input.Y) || math.IsInf(input.X, 0) || math.IsInf(input.Y, 0) {
 		return domain.ImageCanvas{}, errors.New("图片位置无效")
-	}
-	canvas, err := s.repo.GetOrCreateImageCanvas(ctx, user.ID, projectID)
-	if err != nil {
-		return canvas, err
 	}
 	asset, err := s.prepareUploadedImage(ctx, user, projectID, input.FileName, input.DeclaredMIME, input.Data)
 	if err != nil {
@@ -759,6 +855,17 @@ func (s *ImageAgent) ImportCanvasAsset(ctx context.Context, user domain.User, pr
 		"node_id":    node.ID,
 	})
 	return updated, nil
+}
+
+func (s *ImageAgent) ImportCanvasAssetByID(ctx context.Context, user domain.User, canvasID, projectID string, input ImageCanvasImport) (domain.ImageCanvas, error) {
+	if _, err := s.authorizedProject(ctx, user, projectID, true); err != nil {
+		return domain.ImageCanvas{}, err
+	}
+	canvas, err := s.CanvasByID(ctx, user, canvasID, false)
+	if err != nil {
+		return canvas, err
+	}
+	return s.importCanvasAsset(ctx, user, canvas, projectID, input)
 }
 
 func (s *ImageAgent) prepareUploadedImage(ctx context.Context, user domain.User, projectID, fileName, declaredMIME string, data []byte) (domain.ImageAsset, error) {
@@ -814,6 +921,10 @@ func (s *ImageAgent) CreateJob(ctx context.Context, user domain.User, input Imag
 	if _, err := s.authorizedProject(ctx, user, input.ProjectID, true); err != nil {
 		return domain.ImageJob{}, err
 	}
+	canvas, err := s.CanvasByID(ctx, user, input.CanvasID, false)
+	if err != nil {
+		return domain.ImageJob{}, err
+	}
 	relay, err := s.repo.GetImageRelay(ctx, input.RelayID)
 	if err != nil {
 		return domain.ImageJob{}, err
@@ -865,8 +976,11 @@ func (s *ImageAgent) CreateJob(ctx context.Context, user domain.User, input Imag
 		if getErr != nil {
 			return domain.ImageJob{}, getErr
 		}
-		if asset.OwnerID != user.ID || asset.ProjectID != input.ProjectID {
+		if asset.OwnerID != user.ID {
 			return domain.ImageJob{}, store.ErrForbidden
+		}
+		if _, getErr = s.authorizedProject(ctx, user, asset.ProjectID, false); getErr != nil {
+			return domain.ImageJob{}, getErr
 		}
 		referenceBytes += asset.SizeBytes
 	}
@@ -878,14 +992,9 @@ func (s *ImageAgent) CreateJob(ctx context.Context, user domain.User, input Imag
 		RelayID: relay.ID, ModelID: model.ID, Kind: input.Kind, Prompt: input.Prompt, AspectRatio: input.AspectRatio,
 		ImageSize: input.ImageSize, Count: input.Count, ReferenceAssetIDs: input.ReferenceAssetIDs, Status: "pending",
 		NextAttemptAt: now, IdempotencyKey: input.IdempotencyKey, CreatedAt: now, UpdatedAt: now}
+	job.CanvasID = canvas.ID
 	var created domain.ImageJob
 	for attempt := 0; attempt < 2; attempt++ {
-		var canvas domain.ImageCanvas
-		canvas, err = s.repo.GetOrCreateImageCanvas(ctx, user.ID, input.ProjectID)
-		if err != nil {
-			return domain.ImageJob{}, err
-		}
-		job.CanvasID = canvas.ID
 		nodes := []domain.ImageCanvasNode{}
 		if input.Kind == "generate" {
 			nodes = placeholderNodes(canvas, job, input.AnchorNodeID, input.PlacementX, input.PlacementY)
@@ -893,6 +1002,10 @@ func (s *ImageAgent) CreateJob(ctx context.Context, user domain.User, input Imag
 		created, err = s.repo.CreateImageJob(ctx, job, nodes, canvas.Version)
 		if !errors.Is(err, store.ErrConflict) || input.Kind != "generate" {
 			break
+		}
+		canvas, err = s.CanvasByID(ctx, user, input.CanvasID, false)
+		if err != nil {
+			return domain.ImageJob{}, err
 		}
 	}
 	if err == nil {

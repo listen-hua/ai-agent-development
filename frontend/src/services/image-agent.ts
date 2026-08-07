@@ -12,14 +12,32 @@ export const imagePromptActionPreviewURL = (id: string, version?: string) => {
 }
 
 export const imageAgentService = {
-  options: (projectId?: string) => api.get<ImageAgentOptions>(`/api/v1/image-agent/options${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
-  canvas: (projectId: string) => api.get<ImageCanvas>(`/api/v1/image-agent/projects/${projectId}/canvas`),
+  options: (projectId?: string) => api.get<ImageAgentOptions>(`/api/v1/image-agent/options${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`).then(normalizeImageAgentOptions),
+  promptActions: (projectId: string) => api.get<ImagePromptAction[]>(`/api/v1/image-agent/prompt-actions?project_id=${encodeURIComponent(projectId)}`),
+  canvases: () => api.get<ImageCanvas[]>('/api/v1/image-agent/canvases').then((items) => (items || []).map(normalizeImageCanvas)),
+  deletedCanvases: () => api.get<ImageCanvas[]>('/api/v1/image-agent/canvases/trash').then((items) => (items || []).map(normalizeImageCanvas)),
+  createCanvas: (name: string) => api.post<ImageCanvas>('/api/v1/image-agent/canvases', { name }).then(normalizeImageCanvas),
+  canvasById: (canvasId: string) => api.get<ImageCanvas>(`/api/v1/image-agent/canvases/${encodeURIComponent(canvasId)}`).then(normalizeImageCanvas),
+  saveCanvasById: (canvasId: string, input: { viewport: ImageViewport; nodes: ImageCanvasNode[]; version: number }) =>
+    api.patch<ImageCanvas>(`/api/v1/image-agent/canvases/${encodeURIComponent(canvasId)}`, input).then(normalizeImageCanvas),
+  removeCanvas: (canvasId: string) => api.delete<void>(`/api/v1/image-agent/canvases/${encodeURIComponent(canvasId)}`),
+  restoreCanvas: (canvasId: string) => api.post<ImageCanvas>(`/api/v1/image-agent/canvases/${encodeURIComponent(canvasId)}/restore`).then(normalizeImageCanvas),
+  deleteCanvasNodeById: (canvasId: string, nodeId: string, version: number) =>
+    api.delete<ImageCanvas>(`/api/v1/image-agent/canvases/${encodeURIComponent(canvasId)}/nodes/${encodeURIComponent(nodeId)}?version=${version}`).then(normalizeImageCanvas),
+  importCanvasAssetById(canvasId: string, projectId: string, file: File, input: { x: number; y: number; version: number; origin: 'paste' | 'drop' }) {
+    const body = new FormData()
+    body.set('file', file)
+    body.set('project_id', projectId)
+    body.set('x', String(input.x)); body.set('y', String(input.y)); body.set('version', String(input.version)); body.set('origin', input.origin)
+    return api.upload<ImageCanvas>(`/api/v1/image-agent/canvases/${encodeURIComponent(canvasId)}/imports`, body).then(normalizeImageCanvas)
+  },
+  canvas: (projectId: string) => api.get<ImageCanvas>(`/api/v1/image-agent/projects/${projectId}/canvas`).then(normalizeImageCanvas),
   saveCanvas: (projectId: string, input: { viewport: ImageViewport; nodes: ImageCanvasNode[]; version: number }) =>
-    api.patch<ImageCanvas>(`/api/v1/image-agent/projects/${projectId}/canvas`, input),
+    api.patch<ImageCanvas>(`/api/v1/image-agent/projects/${projectId}/canvas`, input).then(normalizeImageCanvas),
   deleteCanvasNode: (projectId: string, nodeId: string, version: number) =>
     api.delete<ImageCanvas>(
       `/api/v1/image-agent/projects/${encodeURIComponent(projectId)}/canvas/nodes/${encodeURIComponent(nodeId)}?version=${version}`,
-    ),
+    ).then(normalizeImageCanvas),
   importCanvasAsset(projectId: string, file: File, input: { x: number; y: number; version: number; origin: 'paste' | 'drop' }) {
     const body = new FormData()
     body.set('file', file)
@@ -27,7 +45,7 @@ export const imageAgentService = {
     body.set('y', String(input.y))
     body.set('version', String(input.version))
     body.set('origin', input.origin)
-    return api.upload<ImageCanvas>(`/api/v1/image-agent/projects/${projectId}/canvas/imports`, body)
+    return api.upload<ImageCanvas>(`/api/v1/image-agent/projects/${projectId}/canvas/imports`, body).then(normalizeImageCanvas)
   },
   uploadAsset(file: File, projectId: string) {
     const body = new FormData()
@@ -36,6 +54,7 @@ export const imageAgentService = {
     return api.upload<ImageAsset>('/api/v1/image-agent/assets', body)
   },
   createJob: (input: {
+    canvas_id: string
     project_id: string
     relay_id: string
     model_id: string
@@ -52,6 +71,26 @@ export const imageAgentService = {
   }) => api.post<ImageJob>('/api/v1/image-agent/jobs', input),
   job: (id: string) => api.get<ImageJob>(`/api/v1/image-agent/jobs/${id}`),
   jobs: (projectId: string) => api.get<ImageJob[]>(`/api/v1/image-agent/jobs?project_id=${encodeURIComponent(projectId)}`),
+}
+
+export function normalizeImageAgentOptions(value?: Partial<ImageAgentOptions> | null): ImageAgentOptions {
+  return {
+    relays: Array.isArray(value?.relays) ? value.relays : [],
+    models: Array.isArray(value?.models) ? value.models.map((model) => ({
+      ...model,
+      supported_sizes: Array.isArray(model.supported_sizes) ? model.supported_sizes : [],
+    })) : [],
+    projects: Array.isArray(value?.projects) ? value.projects : [],
+    prompt_actions: Array.isArray(value?.prompt_actions) ? value.prompt_actions : [],
+  }
+}
+
+export function normalizeImageCanvas(value: ImageCanvas): ImageCanvas {
+  return {
+    ...value,
+    viewport: value?.viewport || { x: 0, y: 0, zoom: 1 },
+    nodes: Array.isArray(value?.nodes) ? value.nodes : [],
+  }
 }
 
 export const imageAgentAdminService = {

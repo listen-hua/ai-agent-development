@@ -27,14 +27,13 @@
 
 ## 3. 数据库升级
 
-已有 PostgreSQL 数据卷不会重新执行 `/docker-entrypoint-initdb.d`。升级一次：
+Compose 的 `migrate` 服务会在 API 和 Worker 启动前依次执行迁移。升级后可单独确认最新会议草稿迁移：
 
 ```powershell
-docker compose cp backend/migrations/008_meeting_booking.sql postgres:/tmp/008_meeting_booking.sql
-docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U ai_agent -d ai_agent -f /tmp/008_meeting_booking.sql
+docker compose run --rm migrate
 ```
 
-全新数据卷会由 Compose 自动执行 `008_meeting_booking.sql`。
+`018_meeting_booking_drafts.sql` 用于保存 15 分钟有效的多轮预约/取消草稿；已有数据卷和全新数据卷都会由 `migrate` 服务安全执行。
 
 ## 4. 首次初始化
 
@@ -50,8 +49,9 @@ Worker 每 15 分钟增量刷新会议室快照；收到会议室状态事件时
 
 准备一间空闲室、一间占用室和一间需要审批的会议室，依次验证：
 
-- “明天下午 3 点预约 4 人会议室”只返回可自动预约的候选。
+- “明天下午 3 点预约 4 人会议室”会先要求填写会议主题，并明确选择参会人或“仅自己参会”。
 - 添加参会人后，任何一个人的忙碌时段都不会被推荐。
 - 点击确认后，参会人日历出现日程，会议室参与人的 RSVP 为 `accept`。
-- 取消和改期只能操作当前用户通过行政 AI 创建的预约。
+- 在“我的会议”取消预约，或对行政助手说“取消明天下午三点的周报评审会议”，都会先生成确认动作；确认后飞书日程被删除并通知参会人。
+- 取消和改期只能操作当前用户通过行政 AI 创建的预约；日程已被人工删除时，重复取消按幂等成功处理。
 - 会议结束时，组织者收到关闭设备、带走物品并恢复会议室的私聊提醒。

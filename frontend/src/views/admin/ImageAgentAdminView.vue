@@ -29,7 +29,7 @@ onMounted(admin.load)
         <ImageModelAdminPanel :relays="admin.relays.value" :models="admin.models.value" :loading="admin.loading.value" :saving="admin.saving.value" @save="admin.saveModel" />
       </el-tab-pane>
       <el-tab-pane label="项目" name="projects">
-        <ImageProjectAdminPanel :projects="admin.projects.value" :directory="admin.directory.value" :loading="admin.loading.value" :saving="admin.saving.value" @save="admin.saveProject" />
+        <ImageProjectAdminPanel :projects="admin.projects.value" :directory="admin.directory.value" :loading="admin.loading.value" :saving="admin.saving.value" :save-project="admin.saveProject" />
       </el-tab-pane>
       <el-tab-pane label="功能按键" name="actions">
         <ImagePromptActionAdminPanel :actions="admin.promptActions.value" :projects="admin.projects.value" :loading="admin.loading.value" :saving="admin.saving.value" :save-action="admin.savePromptAction" @remove="admin.deletePromptAction" />

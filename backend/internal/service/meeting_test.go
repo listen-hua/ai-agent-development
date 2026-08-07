@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -260,5 +261,98 @@ func TestMeetingDispatcherThrottlesFailedRoomSync(t *testing.T) {
 	}
 	if fake.listRoomCalls != 1 {
 		t.Fatalf("expected one sync attempt within interval, got %d", fake.listRoomCalls)
+	}
+}
+
+func TestMeetingChatCreatesDraftUntilTitleAndAttendeesAreConfirmed(t *testing.T) {
+	fake := &fakeMeetingFeishu{roomBusy: map[string][]feishu.BusyInterval{}, userBusy: map[string][]feishu.BusyInterval{}}
+	meeting, _, user, _ := testMeetingService(t, fake)
+	handled, message, err := meeting.HandleChat(context.Background(), user, "conversation-1", "明天下午3点预约会议室", "h5")
+	if err != nil || !handled || message.MeetingBookingDraft == nil {
+		t.Fatalf("expected a booking draft, handled=%v message=%#v err=%v", handled, message, err)
+	}
+	draft := message.MeetingBookingDraft
+	if len(draft.MissingFields) != 2 || draft.MissingFields[0] != "title" || draft.MissingFields[1] != "attendees" {
+		t.Fatalf("unexpected missing fields: %#v", draft.MissingFields)
+	}
+	title := "产品周报评审"
+	confirmed := true
+	result, err := meeting.UpdateDraft(context.Background(), user, draft.ID, MeetingBookingDraftUpdate{Title: &title, AttendeesConfirmed: &confirmed, AttendeeUserIDs: []string{}, Version: draft.Version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Action == nil || result.Action.Title != title || len(result.Action.Attendees) != 1 || result.Action.Attendees[0].UserID != user.ID {
+		t.Fatalf("unexpected completed draft result: %#v", result)
+	}
+	if _, err = meeting.UpdateDraft(context.Background(), user, draft.ID, MeetingBookingDraftUpdate{Title: &title, AttendeesConfirmed: &confirmed, Version: draft.Version}); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("expected duplicate draft completion to conflict, got %v", err)
+	}
+}
+
+func TestMeetingCancellationOrdinalDoesNotTreatTimeAsChoice(t *testing.T) {
+	if got := ordinalChoice("改成16:30"); got != -1 {
+		t.Fatalf("time must not be interpreted as a cancellation choice, got %d", got)
+	}
+	if got := ordinalChoice("选择第二个"); got != 1 {
+		t.Fatalf("expected second choice, got %d", got)
+	}
+}
+
+func TestPrepareCancellationOnlyAllowsOwnerAndCancelsCleanupDelivery(t *testing.T) {
+	fake := &fakeMeetingFeishu{}
+	meeting, repo, user, base := testMeetingService(t, fake)
+	booking := domain.MeetingBooking{ID: "00000000-0000-4000-8000-000000000601", UserID: user.ID, CalendarID: "calendar", EventID: "event-cancel", RoomID: "room-small", RoomName: "海棠", Title: "产品周报评审", StartAt: base.Add(time.Hour), EndAt: base.Add(2 * time.Hour), Attendees: []domain.MeetingAttendee{{UserID: user.ID, OpenID: user.FeishuOpenID, Name: user.Name}}, Status: "active", SourceChannel: "h5", CreatedAt: base, UpdatedAt: base}
+	if err := repo.CreateMeetingBooking(context.Background(), booking); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CreateMeetingBookingDelivery(context.Background(), domain.MeetingBookingDelivery{ID: "00000000-0000-4000-8000-000000000602", BookingID: booking.ID, ScheduledFor: booking.EndAt, Status: "pending", NextAttemptAt: booking.EndAt, IdempotencyKey: "cancel-delivery", CreatedAt: base, UpdatedAt: base}); err != nil {
+		t.Fatal(err)
+	}
+	action, err := meeting.PrepareCancellationForBooking(context.Background(), user, booking.ID, "h5", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, cancelled, err := meeting.Confirm(context.Background(), user, action.ID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cancelled == nil || cancelled.Status != "cancelled" || fake.deletedEvents != 1 {
+		t.Fatalf("unexpected cancellation result: booking=%#v deleted=%d", cancelled, fake.deletedEvents)
+	}
+	other, _ := repo.GetUser(context.Background(), store.DemoAdminID)
+	if _, err = meeting.PrepareCancellationForBooking(context.Background(), other, booking.ID, "h5", ""); !errors.Is(err, store.ErrForbidden) {
+		t.Fatalf("expected owner check, got %v", err)
+	}
+}
+
+func TestNaturalLanguageCancellationMatchesTitleWithoutDate(t *testing.T) {
+	fake := &fakeMeetingFeishu{}
+	meeting, repo, user, base := testMeetingService(t, fake)
+	booking := domain.MeetingBooking{ID: "00000000-0000-4000-8000-000000000701", UserID: user.ID, CalendarID: "calendar", EventID: "event-title", RoomID: "room-small", RoomName: "海棠", Title: "周报评审", StartAt: base.AddDate(0, 0, 1), EndAt: base.AddDate(0, 0, 1).Add(time.Hour), Attendees: []domain.MeetingAttendee{{UserID: user.ID, OpenID: user.FeishuOpenID, Name: user.Name}}, Status: "active", SourceChannel: "h5", CreatedAt: base, UpdatedAt: base}
+	if err := repo.CreateMeetingBooking(context.Background(), booking); err != nil {
+		t.Fatal(err)
+	}
+	handled, message, err := meeting.HandleChat(context.Background(), user, "conversation-2", "取消周报评审会议", "h5")
+	if err != nil || !handled || message.MeetingBookingAction == nil || message.MeetingBookingAction.BookingID != booking.ID {
+		t.Fatalf("expected title cancellation action, handled=%v message=%#v err=%v", handled, message, err)
+	}
+}
+
+func TestCancellationDraftCanSelectMeetingByPartialTitle(t *testing.T) {
+	fake := &fakeMeetingFeishu{}
+	meeting, repo, user, base := testMeetingService(t, fake)
+	for index, title := range []string{"周报评审", "需求讨论"} {
+		booking := domain.MeetingBooking{ID: fmt.Sprintf("00000000-0000-4000-8000-0000000008%02d", index), UserID: user.ID, CalendarID: "calendar", EventID: fmt.Sprintf("event-%d", index), RoomID: "room-small", RoomName: "海棠", Title: title, StartAt: base.AddDate(0, 0, 1).Add(time.Duration(index) * time.Hour), EndAt: base.AddDate(0, 0, 1).Add(time.Duration(index+1) * time.Hour), Attendees: []domain.MeetingAttendee{{UserID: user.ID, OpenID: user.FeishuOpenID, Name: user.Name}}, Status: "active", SourceChannel: "h5", CreatedAt: base, UpdatedAt: base}
+		if err := repo.CreateMeetingBooking(context.Background(), booking); err != nil {
+			t.Fatal(err)
+		}
+	}
+	handled, message, err := meeting.HandleChat(context.Background(), user, "conversation-3", "取消明天的会议", "h5")
+	if err != nil || !handled || message.MeetingBookingDraft == nil {
+		t.Fatalf("expected cancellation selection draft, handled=%v message=%#v err=%v", handled, message, err)
+	}
+	handled, message, err = meeting.HandleChat(context.Background(), user, "conversation-3", "取消周报那个", "h5")
+	if err != nil || !handled || message.MeetingBookingAction == nil || message.MeetingBookingAction.Title != "周报评审" {
+		t.Fatalf("expected partial-title cancellation action, handled=%v message=%#v err=%v", handled, message, err)
 	}
 }

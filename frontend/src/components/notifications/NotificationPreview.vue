@@ -1,18 +1,19 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Picture } from '@element-plus/icons-vue'
-import { renderNotificationMarkdown } from '@/utils/notificationMarkdown'
+import { renderNotificationMarkdown, renderNotificationText } from '@/utils/notificationMarkdown'
 import type { NotificationImage } from '@/types/domain'
 
 const props = defineProps<{ title: string; content: string; images: NotificationImage[] }>()
 const html = computed(() => renderNotificationMarkdown(props.content || '通知正文将在这里预览。'))
+const titleHTML = computed(() => renderNotificationText(props.title || '通知标题'))
 </script>
 
 <template>
   <div class="notification-preview">
     <span>飞书卡片预览</span>
     <article>
-      <header>{{ title || '通知标题' }}</header>
+      <header v-html="titleHTML" />
       <div class="preview-rich-text" v-html="html" />
       <div v-if="images.length" class="preview-images">
         <div v-for="image in images" :key="image.image_key">
@@ -30,6 +31,8 @@ const html = computed(() => renderNotificationMarkdown(props.content || '通知�
 .notification-preview > span { color: #748095; font-size: 13px; }
 .notification-preview article { margin-top: 8px; overflow: hidden; border: 1px solid #dfe4ec; border-radius: 13px; background: #fff; box-shadow: 0 8px 22px rgba(38, 53, 82, .06); }
 .notification-preview header { padding: 13px 17px; color: #fff; font-size: 15px; font-weight: 700; background: linear-gradient(120deg, #4164d7, #627ce0); }
+.notification-preview header :deep(.feishu-emoji-inline), .preview-rich-text :deep(.feishu-emoji-inline) { display: inline-block; width: 23px; height: 23px; margin: 0 2px; object-fit: contain; vertical-align: -6px; }
+.notification-preview header :deep(.feishu-emoji-inline) { width: 25px; height: 25px; vertical-align: -7px; }
 .preview-rich-text { min-height: 70px; padding: 16px 17px 8px; color: #4c596f; font-size: 14px; line-height: 1.7; }
 .preview-rich-text :deep(p) { margin: 0 0 8px; }
 .preview-rich-text :deep(h2), .preview-rich-text :deep(h3), .preview-rich-text :deep(h4) { margin: 5px 0 8px; color: #303d54; }

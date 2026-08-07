@@ -65,6 +65,21 @@ type MeetingBookingChoice struct {
 	Label string
 }
 
+type MeetingDraftBookingChoice struct {
+	ID    string
+	Label string
+}
+
+type MeetingBookingDraftCard struct {
+	ID                string
+	Intent            string
+	Title             string
+	RequesterOpenID   string
+	SelectableOpenIDs []string
+	SelectedOpenIDs   []string
+	BookingChoices    []MeetingDraftBookingChoice
+}
+
 func (c *Client) ListMeetingRooms(ctx context.Context) ([]MeetingRoomInfo, error) {
 	if !c.Configured() {
 		return nil, errors.New("feishu is not configured")
@@ -405,15 +420,28 @@ func (c *Client) DeleteCalendarEvent(ctx context.Context, calendarID, eventID st
 	}
 	if err = c.deleteJSON(ctx, endpoint, token, &output); err != nil {
 		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.HTTPStatus == http.StatusNotFound {
+		if errors.As(err, &apiErr) && isMissingOrDeletedCalendarEvent(*apiErr) {
 			return nil
 		}
 		return err
 	}
 	if output.Code != 0 {
+		if output.Code == 193001 || output.Code == 193003 {
+			return nil
+		}
 		return &APIError{Code: output.Code, Message: output.Msg}
 	}
 	return nil
+}
+
+func isMissingOrDeletedCalendarEvent(apiErr APIError) bool {
+	if apiErr.Code == 193001 || apiErr.Code == 193003 {
+		return true
+	}
+	var body struct {
+		Code int `json:"code"`
+	}
+	return json.Unmarshal([]byte(apiErr.Message), &body) == nil && (body.Code == 193001 || body.Code == 193003)
 }
 
 func (c *Client) SendMeetingBookingConfirmation(ctx context.Context, openID, content, actionID, confirmLabel string, choices []MeetingBookingChoice, idempotencyKey string) (string, error) {
@@ -439,6 +467,33 @@ func (c *Client) SendMeetingBookingConfirmation(ctx context.Context, openID, con
 			map[string]any{"tag": "action", "actions": actions},
 		},
 	}
+	return c.sendCard(ctx, "open_id", openID, card, idempotencyKey)
+}
+
+func (c *Client) SendMeetingBookingDraft(ctx context.Context, openID, content string, draft MeetingBookingDraftCard, idempotencyKey string) (string, error) {
+	if draft.Intent == "cancel" {
+		elements := []any{map[string]any{"tag": "markdown", "content": content}}
+		for _, choice := range draft.BookingChoices {
+			elements = append(elements, map[string]any{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": choice.Label}, "type": "default", "width": "fill", "behaviors": []any{map[string]any{"type": "callback", "value": map[string]string{"meeting_booking_draft_id": draft.ID, "booking_id": choice.ID}}}, "name": "meeting_booking_draft_select"})
+		}
+		card := map[string]any{"schema": "2.0", "config": map[string]any{"update_multi": true}, "header": map[string]any{"template": "orange", "title": map[string]string{"tag": "plain_text", "content": "选择要取消的会议"}}, "body": map[string]any{"elements": elements}}
+		return c.sendCard(ctx, "open_id", openID, card, idempotencyKey)
+	}
+	selected := make(map[string]bool, len(draft.SelectedOpenIDs))
+	for _, value := range draft.SelectedOpenIDs {
+		selected[value] = true
+	}
+	people := make([]map[string]any, 0, len(draft.SelectableOpenIDs))
+	for _, value := range draft.SelectableOpenIDs {
+		people = append(people, map[string]any{"id": value, "selected": selected[value]})
+	}
+	form := map[string]any{"tag": "form", "name": "meeting_booking_draft_form", "elements": []any{
+		map[string]any{"tag": "input", "name": "meeting_title", "required": true, "max_length": 100, "default_value": draft.Title, "label": map[string]string{"tag": "plain_text", "content": "会议主题"}, "placeholder": map[string]string{"tag": "plain_text", "content": "例如：产品周报评审"}},
+		map[string]any{"tag": "multi_select_person", "name": "meeting_attendees", "required": false, "options": people, "placeholder": map[string]string{"tag": "plain_text", "content": "搜索并选择参会同事"}, "width": "fill"},
+		map[string]any{"tag": "button", "name": "meeting_booking_draft_submit", "form_action_type": "submit", "type": "primary", "text": map[string]string{"tag": "plain_text", "content": "保存并查找会议室"}, "behaviors": []any{map[string]any{"type": "callback", "value": map[string]string{"meeting_booking_draft_id": draft.ID}}}},
+		map[string]any{"tag": "button", "name": "meeting_booking_draft_self", "form_action_type": "submit", "type": "default", "text": map[string]string{"tag": "plain_text", "content": "仅自己参会"}, "behaviors": []any{map[string]any{"type": "callback", "value": map[string]string{"meeting_booking_draft_id": draft.ID}}}},
+	}}
+	card := map[string]any{"schema": "2.0", "config": map[string]any{"update_multi": true}, "header": map[string]any{"template": "blue", "title": map[string]string{"tag": "plain_text", "content": "补充会议信息"}}, "body": map[string]any{"elements": []any{map[string]any{"tag": "markdown", "content": content}, form}}}
 	return c.sendCard(ctx, "open_id", openID, card, idempotencyKey)
 }
 

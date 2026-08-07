@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { Delete, Edit, Plus } from '@element-plus/icons-vue'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import PromptActionPreviewPicker from './PromptActionPreviewPicker.vue'
 import { imagePromptActionPreviewURL } from '@/services/image-agent'
 import type {
@@ -62,15 +62,34 @@ function open(value?: ImagePromptAction) {
 }
 
 async function save() {
-  const result = await props.saveAction(
-    editingId.value,
-    { ...form, project_id: form.project_id || undefined },
-    preview.value,
-  )
-  editingId.value = result.action.id
-  editingAction.value = result.action
-  if (result.preview_error) return
-  dialog.value = false
+  if (props.saving) return
+  const actionKey = form.action_key.trim()
+  const promptTemplate = form.prompt_template.trim()
+  if (!actionKey) {
+    ElMessage.warning('请填写按键标识')
+    return
+  }
+  if (!/^[\p{L}][\p{L}\p{N}_-]{0,49}$/u.test(actionKey)) {
+    ElMessage.warning('按键标识需以中文或英文字母开头，只能包含中文、字母、数字、下划线和短横线，最多 50 个字符')
+    return
+  }
+  if (!promptTemplate) {
+    ElMessage.warning('请填写提示词模板')
+    return
+  }
+  try {
+    const result = await props.saveAction(
+      editingId.value,
+      { ...form, action_key: actionKey, prompt_template: promptTemplate, project_id: form.project_id || undefined },
+      preview.value,
+    )
+    editingId.value = result.action.id
+    editingAction.value = result.action
+    if (result.preview_error) return
+    dialog.value = false
+  } catch {
+    // The composable displays the API error and the dialog stays open for retry.
+  }
 }
 
 async function remove(id: string) {
@@ -112,8 +131,8 @@ async function remove(id: string) {
     <el-dialog v-model="dialog" :title="editingId ? '编辑功能按键' : '新增功能按键'" width="min(720px, 95vw)" top="4vh" class="prompt-action-dialog" destroy-on-close>
       <el-form label-position="top">
         <el-form-item label="按键标识">
-          <el-input v-model="form.action_key" placeholder="例如 cartoonize" />
-          <small>使用小写字母、数字、下划线或短横线；员工端默认显示此标识。</small>
+          <el-input v-model="form.action_key" maxlength="50" placeholder="例如 卡通化 或 cartoonize" />
+          <small>支持中文、英文字母、数字、下划线和短横线；员工端默认显示此标识。</small>
         </el-form-item>
         <div class="form-grid">
           <el-form-item label="作用范围"><el-select v-model="form.project_id" clearable placeholder="全局"><el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" /></el-select></el-form-item>

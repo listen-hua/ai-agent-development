@@ -239,7 +239,7 @@ func (c *Client) SendCard(ctx context.Context, receiveType, receiveID, title, co
 }
 func (c *Client) SendRichCard(ctx context.Context, receiveType, receiveID, title, markdown string, images []CardImage, idempotencyKey string) (string, error) {
 	markdown = normalizeCardMarkdown(markdown)
-	elements := []any{map[string]string{"tag": "markdown", "content": markdown}}
+	elements := []any{map[string]any{"tag": "div", "text": map[string]string{"tag": "lark_md", "content": markdown}}}
 	for _, image := range images {
 		if image.ImageKey == "" {
 			continue
@@ -250,7 +250,7 @@ func (c *Client) SendRichCard(ctx context.Context, receiveType, receiveID, title
 		}
 		elements = append(elements, map[string]any{"tag": "img", "img_key": image.ImageKey, "alt": map[string]string{"tag": "plain_text", "content": alt}})
 	}
-	card := map[string]any{"header": map[string]any{"template": "blue", "title": map[string]string{"tag": "plain_text", "content": title}}, "elements": elements}
+	card := map[string]any{"header": map[string]any{"template": "blue", "title": map[string]string{"tag": "lark_md", "content": title}}, "elements": elements}
 	return c.sendCard(ctx, receiveType, receiveID, card, idempotencyKey)
 }
 
@@ -383,6 +383,73 @@ func (c *Client) SendReminder(ctx context.Context, openID, content, scheduleText
 	}
 	card := map[string]any{"header": map[string]any{"template": "blue", "title": map[string]string{"tag": "plain_text", "content": "提醒"}}, "elements": elements}
 	return c.sendCard(ctx, "open_id", openID, card, idempotencyKey)
+}
+func (c *Client) SendMassageSignup(ctx context.Context, openID, title string, deadline time.Time, cycleID, appLink, idempotencyKey string) (string, error) {
+	elements := []any{
+		map[string]any{"tag": "markdown", "content": fmt.Sprintf("公司本月按摩排号已开放。\n\n**活动：** %s\n**报名截止：** %s\n\n排号以确认成功时间为准。", title, deadline.In(time.FixedZone("CST", 8*3600)).Format("01月02日 15:04"))},
+		map[string]any{"tag": "action", "actions": []any{
+			map[string]any{"tag": "button", "type": "primary", "name": "massage_enroll", "text": map[string]string{"tag": "plain_text", "content": "接受排号"}, "value": map[string]string{"massage_cycle_id": cycleID}},
+			map[string]any{"tag": "button", "name": "massage_decline", "text": map[string]string{"tag": "plain_text", "content": "本月不参加"}, "value": map[string]string{"massage_cycle_id": cycleID}},
+		}},
+	}
+	if appLink != "" {
+		elements = append(elements, map[string]any{"tag": "action", "actions": []any{map[string]any{"tag": "button", "text": map[string]string{"tag": "plain_text", "content": "打开我的按摩"}, "url": strings.Replace(appLink, "/chat", "/massages", 1)}}})
+	}
+	return c.sendCard(ctx, "open_id", openID, map[string]any{"header": map[string]any{"template": "purple", "title": map[string]string{"tag": "plain_text", "content": "按摩排号报名"}}, "elements": elements}, idempotencyKey)
+}
+func (c *Client) SendMassageCall(ctx context.Context, openID, title string, queueNumber, sequence int, due time.Time, callID, idempotencyKey string) (string, error) {
+	card := map[string]any{"header": map[string]any{"template": "orange", "title": map[string]string{"tag": "plain_text", "content": "现在轮到你按摩"}}, "elements": []any{
+		map[string]any{"tag": "markdown", "content": fmt.Sprintf("**%s · 第 %d 场**\n\n你的排号是 **%d 号**，请在 **%s** 前回复。", title, sequence, queueNumber, due.In(time.FixedZone("CST", 8*3600)).Format("15:04:05"))},
+		map[string]any{"tag": "action", "actions": []any{
+			map[string]any{"tag": "button", "type": "primary", "name": "massage_call_accept", "text": map[string]string{"tag": "plain_text", "content": "我去按摩"}, "value": map[string]string{"massage_call_id": callID}},
+			map[string]any{"tag": "button", "name": "massage_call_reject", "text": map[string]string{"tag": "plain_text", "content": "本场去不了"}, "value": map[string]string{"massage_call_id": callID}},
+		}},
+	}}
+	return c.sendCard(ctx, "open_id", openID, card, idempotencyKey)
+}
+func (c *Client) SendMassageAction(ctx context.Context, openID, content, action, cycleID, idempotencyKey string) (string, error) {
+	name, label := "massage_enroll", "确认报名"
+	if action == "withdraw" {
+		name = "massage_withdraw"
+		label = "确认退出"
+	}
+	card := map[string]any{"header": map[string]any{"template": "purple", "title": map[string]string{"tag": "plain_text", "content": "按摩排号确认"}}, "elements": []any{map[string]any{"tag": "markdown", "content": content}, map[string]any{"tag": "action", "actions": []any{map[string]any{"tag": "button", "type": "primary", "name": name, "text": map[string]string{"tag": "plain_text", "content": label}, "value": map[string]string{"massage_cycle_id": cycleID}}}}}}
+	return c.sendCard(ctx, "open_id", openID, card, idempotencyKey)
+}
+func (c *Client) UpdateMassageCallCard(ctx context.Context, messageID, status string) error {
+	token, err := c.getTenantToken(ctx)
+	if err != nil {
+		return err
+	}
+	card := map[string]any{"header": map[string]any{"template": "grey", "title": map[string]string{"tag": "plain_text", "content": "按摩叫号状态"}}, "elements": []any{map[string]any{"tag": "markdown", "content": status}}}
+	encoded, _ := json.Marshal(card)
+	body, _ := json.Marshal(map[string]any{"content": string(encoded)})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, c.baseURL+"/open-apis/im/v1/messages/"+url.PathEscape(messageID), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	limited, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &APIError{HTTPStatus: resp.StatusCode, Message: strings.TrimSpace(string(limited))}
+	}
+	var output struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if err = json.Unmarshal(limited, &output); err != nil {
+		return err
+	}
+	if output.Code != 0 {
+		return &APIError{Code: output.Code, Message: output.Msg}
+	}
+	return nil
 }
 func (c *Client) sendCard(ctx context.Context, receiveType, receiveID string, card map[string]any, idempotencyKey string) (string, error) {
 	encoded, _ := json.Marshal(card)

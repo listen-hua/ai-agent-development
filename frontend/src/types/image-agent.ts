@@ -84,9 +84,13 @@ export interface ImageCanvasNode {
 export interface ImageCanvas {
   id: string
   user_id: string
-  project_id: string
+  project_id?: string
+  name: string
   viewport: ImageViewport
   version: number
+  node_count: number
+  preview_asset_id?: string
+  deleted_at?: string
   nodes: ImageCanvasNode[]
   created_at: string
   updated_at: string
@@ -119,7 +123,7 @@ export interface ImageJob {
   id: string
   user_id: string
   project_id: string
-  canvas_id: string
+  canvas_id?: string
   relay_id: string
   model_id: string
   kind: 'generate' | 'reverse_prompt'

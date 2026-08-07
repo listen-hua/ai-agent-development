@@ -3,7 +3,8 @@ import { ElMessage } from 'element-plus'
 import { chatService } from '@/services/chat'
 import { reminderService } from '@/services/reminder'
 import { meetingService } from '@/services/meeting'
-import type { Citation, Conversation, Message, RunEvent } from '@/types/domain'
+import { massageService } from '@/services/massage'
+import type { Citation, Conversation, MeetingBookingDraftResult, Message, RunEvent } from '@/types/domain'
 import { createClientUUID } from '@/utils/clientId'
 import { createTextStreamController, type TextStreamController } from '@/utils/textStream'
 
@@ -35,7 +36,12 @@ export function useChat() {
   async function selectConversation(id: string) {
     if (sending.value) return
     activeId.value = id
-    messages.value = (await chatService.listMessages(id)) || []
+    messages.value = ((await chatService.listMessages(id)) || []).map((message) => {
+      if (!message.meeting_booking_action && message.meeting_booking_draft?.result_action) {
+        message.meeting_booking_action = message.meeting_booking_draft.result_action
+      }
+      return message
+    })
   }
 
   async function removeConversation(id: string) {
@@ -88,6 +94,7 @@ export function useChat() {
         retrieving: '正在检索已授权制度',
         interpreting_reminder: '正在核对提醒时间',
         interpreting_meeting: '正在校验会议室与参会人忙闲',
+        interpreting_massage: '正在查询按摩批次与排号',
         generating: '正在生成有依据的回答',
       }
       stage.value = labels[event.metadata?.stage || ''] || '正在处理'
@@ -122,6 +129,8 @@ export function useChat() {
       assistant.model = message.model
 	  assistant.reminder_action = message.reminder_action
 	  assistant.meeting_booking_action = message.meeting_booking_action
+	  assistant.meeting_booking_draft = message.meeting_booking_draft
+	  assistant.massage_action = message.massage_action
       assistant.created_at = message.created_at
     }
     assistant.pending = false
@@ -231,6 +240,16 @@ export function useChat() {
     ElMessage.info('已取消')
   }
 
+  function applyMeetingDraftResult(message: Message, result: MeetingBookingDraftResult) {
+    message.meeting_booking_draft = result.draft
+    if (result.action) {
+      message.meeting_booking_action = result.action
+      message.content = result.action.intent === 'cancel' ? '请确认取消所选会议。' : '信息已补充完整。请选择候选会议室并确认。'
+    }
+  }
+
+  async function confirmMassageAction(message:Message){const action=message.massage_action;if(!action)return;try{const result=await massageService.respond(action.cycle_id,action.type);message.content=action.type==='enroll'?`报名成功，你的排号是 ${result.queue_number}。`:'已退出本月按摩排号。';message.massage_action=undefined;ElMessage.success('按摩排号操作已确认')}catch(error){ElMessage.error(error instanceof Error?error.message:'按摩排号操作失败')}}
+
   onBeforeUnmount(() => {
     stopStream?.()
     textStream?.cancel()
@@ -239,7 +258,7 @@ export function useChat() {
 
   return {
     conversations, activeId, activeConversation, messages, sending, stage,
-    loadConversations, newConversation, selectConversation, removeConversation, send, stop, retry, feedback, confirmReminder, cancelReminder, confirmMeeting, cancelMeeting,
+    loadConversations, newConversation, selectConversation, removeConversation, send, stop, retry, feedback, confirmReminder, cancelReminder, confirmMeeting, cancelMeeting, applyMeetingDraftResult, confirmMassageAction,
   }
 }
 

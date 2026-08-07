@@ -396,6 +396,8 @@ type Message struct {
 	CompletionTokens     int                   `json:"-"`
 	ReminderAction       *ReminderActionDraft  `json:"reminder_action,omitempty"`
 	MeetingBookingAction *MeetingBookingAction `json:"meeting_booking_action,omitempty"`
+	MeetingBookingDraft  *MeetingBookingDraft  `json:"meeting_booking_draft,omitempty"`
+	MassageAction        *MassageAction        `json:"massage_action,omitempty"`
 	CreatedAt            time.Time             `json:"created_at"`
 }
 

@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { nextTick, reactive, ref, watch } from 'vue'
+import { ElInput, ElMessage } from 'element-plus'
 import NotificationAudiencePicker from './NotificationAudiencePicker.vue'
+import FeishuEmojiPicker from './FeishuEmojiPicker.vue'
 import NotificationPreview from './NotificationPreview.vue'
 import NotificationRichEditor from './NotificationRichEditor.vue'
+import type { FeishuEmoji } from '@/constants/feishuEmojis'
 import type { NotificationCreateInput, NotificationImage, NotificationRecipientType, NotificationTargetOption } from '@/types/domain'
+import { insertTextAtSelection } from '@/utils/textInsertion'
 
 const props = defineProps<{
   modelValue: boolean
@@ -30,6 +33,7 @@ const form = reactive({
   images: [] as NotificationImage[],
   scheduledAt: '',
 })
+const titleInput = ref<InstanceType<typeof ElInput>>()
 
 watch(() => props.modelValue, (open) => {
   if (!open) return
@@ -76,6 +80,19 @@ function removeImage(index: number) {
   const [removed] = form.images.splice(index, 1)
   if (removed?.preview_url) URL.revokeObjectURL(removed.preview_url)
 }
+function insertTitleEmoji(emoji: FeishuEmoji) {
+  const element = titleInput.value?.input
+  const result = insertTextAtSelection(form.title, `:${emoji.code}:`, element?.selectionStart, element?.selectionEnd, 80)
+  if (!result) {
+    ElMessage.warning('通知标题最多 80 个字符，无法继续插入表情')
+    return
+  }
+  form.title = result.value
+  nextTick(() => {
+    element?.focus()
+    element?.setSelectionRange(result.cursor, result.cursor)
+  })
+}
 function applyDraft(value: string) { form.content = value }
 function addImage(value: NotificationImage) { form.images.push(value) }
 defineExpose({ applyDraft, addImage })
@@ -91,7 +108,9 @@ defineExpose({ applyDraft, addImage })
   >
     <el-form class="notification-form" label-position="top">
       <el-form-item label="通知标题">
-        <el-input v-model="form.title" maxlength="80" show-word-limit placeholder="例如：2026 年国庆放假安排" />
+        <el-input ref="titleInput" v-model="form.title" maxlength="80" show-word-limit placeholder="例如：2026 年国庆放假安排">
+          <template #suffix><FeishuEmojiPicker label="表情" @select="insertTitleEmoji" /></template>
+        </el-input>
       </el-form-item>
       <el-form-item label="接收目标" required>
         <NotificationAudiencePicker

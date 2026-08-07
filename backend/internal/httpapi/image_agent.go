@@ -32,12 +32,94 @@ func (s *Server) imageAgentOptions(w http.ResponseWriter, r *http.Request) {
 	respondImage(w, value, err)
 }
 
+func (s *Server) imagePromptActions(w http.ResponseWriter, r *http.Request) {
+	value, err := s.imageAgent.PromptActions(r.Context(), currentUser(r), strings.TrimSpace(r.URL.Query().Get("project_id")))
+	respondImage(w, value, err)
+}
+
+func (s *Server) listImageCanvases(w http.ResponseWriter, r *http.Request) {
+	value, err := s.imageAgent.Canvases(r.Context(), currentUser(r), false)
+	respondImage(w, value, err)
+}
+
+func (s *Server) listDeletedImageCanvases(w http.ResponseWriter, r *http.Request) {
+	value, err := s.imageAgent.Canvases(r.Context(), currentUser(r), true)
+	respondImage(w, value, err)
+}
+
+func (s *Server) createImageCanvas(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Name string `json:"name"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	value, err := s.imageAgent.CreateCanvas(r.Context(), currentUser(r), input.Name)
+	if err == nil {
+		writeJSON(w, http.StatusCreated, value)
+		return
+	}
+	respondImage(w, value, err)
+}
+
+func (s *Server) getImageCanvasByID(w http.ResponseWriter, r *http.Request) {
+	value, err := s.imageAgent.CanvasByID(r.Context(), currentUser(r), r.PathValue("canvasID"), false)
+	respondImage(w, value, err)
+}
+
+func decodeImageCanvasPatch(w http.ResponseWriter, r *http.Request) (service.ImageCanvasPatch, bool) {
+	var input struct {
+		Viewport domain.ImageViewport     `json:"viewport"`
+		Nodes    []domain.ImageCanvasNode `json:"nodes"`
+		Version  int64                    `json:"version"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return service.ImageCanvasPatch{}, false
+	}
+	return service.ImageCanvasPatch{Viewport: input.Viewport, Nodes: input.Nodes, Version: input.Version}, true
+}
+
+func (s *Server) updateImageCanvasByID(w http.ResponseWriter, r *http.Request) {
+	input, ok := decodeImageCanvasPatch(w, r)
+	if !ok {
+		return
+	}
+	value, err := s.imageAgent.UpdateCanvasByID(r.Context(), currentUser(r), r.PathValue("canvasID"), input)
+	respondImage(w, value, err)
+}
+
+func (s *Server) deleteImageCanvas(w http.ResponseWriter, r *http.Request) {
+	err := s.imageAgent.DeleteCanvas(r.Context(), currentUser(r), r.PathValue("canvasID"))
+	if err != nil {
+		respondImage(w, nil, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) restoreImageCanvas(w http.ResponseWriter, r *http.Request) {
+	value, err := s.imageAgent.RestoreCanvas(r.Context(), currentUser(r), r.PathValue("canvasID"))
+	respondImage(w, value, err)
+}
+
+func (s *Server) deleteImageCanvasNodeByID(w http.ResponseWriter, r *http.Request) {
+	version, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("version")), 10, 64)
+	if err != nil || version < 1 {
+		writeError(w, http.StatusBadRequest, "画布版本无效", err)
+		return
+	}
+	value, err := s.imageAgent.DeleteCanvasNodeByID(r.Context(), currentUser(r), r.PathValue("canvasID"), r.PathValue("nodeID"), version)
+	respondImage(w, value, err)
+}
+
 func (s *Server) imageCanvas(w http.ResponseWriter, r *http.Request) {
+	markLegacyImageCanvasEndpoint(w)
 	value, err := s.imageAgent.Canvas(r.Context(), currentUser(r), r.PathValue("id"))
 	respondImage(w, value, err)
 }
 
 func (s *Server) updateImageCanvas(w http.ResponseWriter, r *http.Request) {
+	markLegacyImageCanvasEndpoint(w)
 	var input struct {
 		Viewport domain.ImageViewport     `json:"viewport"`
 		Nodes    []domain.ImageCanvasNode `json:"nodes"`
@@ -53,6 +135,7 @@ func (s *Server) updateImageCanvas(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteImageCanvasNode(w http.ResponseWriter, r *http.Request) {
+	markLegacyImageCanvasEndpoint(w)
 	version, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("version")), 10, 64)
 	if err != nil || version < 1 {
 		writeError(w, http.StatusBadRequest, "画布版本无效", err)
@@ -90,6 +173,16 @@ func (s *Server) uploadImageAsset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) importImageCanvasAsset(w http.ResponseWriter, r *http.Request) {
+	markLegacyImageCanvasEndpoint(w)
+	s.importImageCanvasAssetFor(w, r, false)
+}
+
+func markLegacyImageCanvasEndpoint(w http.ResponseWriter) {
+	w.Header().Set("Deprecation", "true")
+	w.Header().Set("Link", `</api/v1/image-agent/canvases>; rel="successor-version"`)
+}
+
+func (s *Server) importImageCanvasAssetFor(w http.ResponseWriter, r *http.Request, byCanvasID bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, 12<<20)
 	if err := r.ParseMultipartForm(12 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "上传内容不能超过 10 MB", err)
@@ -121,7 +214,7 @@ func (s *Server) importImageCanvasAsset(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "读取图片失败", err)
 		return
 	}
-	value, err := s.imageAgent.ImportCanvasAsset(r.Context(), currentUser(r), r.PathValue("id"), service.ImageCanvasImport{
+	input := service.ImageCanvasImport{
 		FileName:     header.Filename,
 		DeclaredMIME: header.Header.Get("Content-Type"),
 		Data:         data,
@@ -129,12 +222,22 @@ func (s *Server) importImageCanvasAsset(w http.ResponseWriter, r *http.Request) 
 		Y:            y,
 		Version:      version,
 		Origin:       r.FormValue("origin"),
-	})
+	}
+	var value domain.ImageCanvas
+	if byCanvasID {
+		value, err = s.imageAgent.ImportCanvasAssetByID(r.Context(), currentUser(r), r.PathValue("canvasID"), r.FormValue("project_id"), input)
+	} else {
+		value, err = s.imageAgent.ImportCanvasAsset(r.Context(), currentUser(r), r.PathValue("id"), input)
+	}
 	if err != nil {
 		respondImage(w, value, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, value)
+}
+
+func (s *Server) importImageCanvasAssetByID(w http.ResponseWriter, r *http.Request) {
+	s.importImageCanvasAssetFor(w, r, true)
 }
 
 func (s *Server) imageAssetContent(w http.ResponseWriter, r *http.Request) {
@@ -153,6 +256,7 @@ func (s *Server) imageAssetContent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createImageJob(w http.ResponseWriter, r *http.Request) {
 	var input struct {
+		CanvasID          string   `json:"canvas_id"`
 		ProjectID         string   `json:"project_id"`
 		RelayID           string   `json:"relay_id"`
 		ModelID           string   `json:"model_id"`
@@ -171,7 +275,7 @@ func (s *Server) createImageJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	value, err := s.imageAgent.CreateJob(r.Context(), currentUser(r), service.ImageJobInput{
-		ProjectID: input.ProjectID, RelayID: input.RelayID, ModelID: input.ModelID, Kind: input.Kind,
+		CanvasID: input.CanvasID, ProjectID: input.ProjectID, RelayID: input.RelayID, ModelID: input.ModelID, Kind: input.Kind,
 		Prompt: input.Prompt, AspectRatio: input.AspectRatio, ImageSize: input.ImageSize, Count: input.Count,
 		ReferenceAssetIDs: input.ReferenceAssetIDs, IdempotencyKey: input.IdempotencyKey,
 		PlacementX: input.PlacementX, PlacementY: input.PlacementY, AnchorNodeID: input.AnchorNodeID,

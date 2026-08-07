@@ -9,6 +9,22 @@ import (
 	"testing"
 )
 
+func TestMissingOrDeletedCalendarEventDetection(t *testing.T) {
+	for _, value := range []APIError{
+		{Code: 193001},
+		{Code: 193003},
+		{HTTPStatus: 404, Message: `{"code":193001,"msg":"event not found"}`},
+		{HTTPStatus: 403, Message: `{"code":193003,"msg":"event is deleted"}`},
+	} {
+		if !isMissingOrDeletedCalendarEvent(value) {
+			t.Fatalf("expected idempotent event deletion for %#v", value)
+		}
+	}
+	if isMissingOrDeletedCalendarEvent(APIError{HTTPStatus: 404, Message: `{"code":191000,"msg":"calendar not found"}`}) {
+		t.Fatal("calendar-not-found must not be treated as an idempotent event deletion")
+	}
+}
+
 func TestExchangeLegacyCodeUsesMatchingTokenFlow(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -86,6 +102,7 @@ func TestGetContactUserReturnsAuthorizationAttributes(t *testing.T) {
 
 func TestSendRichCardNormalizesLongMessageUUID(t *testing.T) {
 	var receivedUUID string
+	var receivedCard map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -98,6 +115,9 @@ func TestSendRichCardNormalizesLongMessageUUID(t *testing.T) {
 			var input map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&input)
 			receivedUUID, _ = input["uuid"].(string)
+			if content, ok := input["content"].(string); ok {
+				_ = json.Unmarshal([]byte(content), &receivedCard)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]string{"message_id": "om_test"}})
 		default:
 			http.NotFound(w, r)
@@ -109,7 +129,7 @@ func TestSendRichCardNormalizesLongMessageUUID(t *testing.T) {
 	client.baseURL = server.URL
 	client.http = server.Client()
 	longUUID := strings.Repeat("a", 36) + "_" + strings.Repeat("b", 36)
-	messageID, err := client.SendRichCard(context.Background(), "chat_id", "oc_test", "测试通知", "正文", nil, longUUID)
+	messageID, err := client.SendRichCard(context.Background(), "chat_id", "oc_test", ":PARTY: 测试通知", "正文 :OK:", nil, longUUID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,6 +141,17 @@ func TestSendRichCardNormalizesLongMessageUUID(t *testing.T) {
 	}
 	if normalizeMessageUUID("short-idempotency-key") != "short-idempotency-key" {
 		t.Fatal("short message uuid should remain unchanged")
+	}
+	header, _ := receivedCard["header"].(map[string]any)
+	title, _ := header["title"].(map[string]any)
+	if title["tag"] != "lark_md" || title["content"] != ":PARTY: 测试通知" {
+		t.Fatalf("unexpected rich-card title: %#v", title)
+	}
+	elements, _ := receivedCard["elements"].([]any)
+	body, _ := elements[0].(map[string]any)
+	text, _ := body["text"].(map[string]any)
+	if body["tag"] != "div" || text["tag"] != "lark_md" || text["content"] != "正文 :OK:" {
+		t.Fatalf("unexpected rich-card body: %#v", body)
 	}
 }
 

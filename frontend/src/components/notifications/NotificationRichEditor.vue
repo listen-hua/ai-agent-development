@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue'
 import { Delete, Picture, MagicStick } from '@element-plus/icons-vue'
-import { ElInput } from 'element-plus'
+import { ElInput, ElMessage } from 'element-plus'
+import FeishuEmojiPicker from './FeishuEmojiPicker.vue'
+import type { FeishuEmoji } from '@/constants/feishuEmojis'
 import type { NotificationImage } from '@/types/domain'
+import { insertTextAtSelection } from '@/utils/textInsertion'
 
 const props = defineProps<{ modelValue: string; images: NotificationImage[]; uploading: boolean; drafting: boolean }>()
 const emit = defineEmits<{
@@ -28,6 +31,20 @@ function insert(before: string, after = '', placeholder = '文字') {
   })
 }
 
+function insertEmoji(emoji: FeishuEmoji) {
+  const textarea = input.value?.textarea
+  const result = insertTextAtSelection(props.modelValue, `:${emoji.code}:`, textarea?.selectionStart, textarea?.selectionEnd, 4000)
+  if (!result) {
+    ElMessage.warning('通知正文最多 4000 个字符，无法继续插入表情')
+    return
+  }
+  emit('update:modelValue', result.value)
+  nextTick(() => {
+    textarea?.focus()
+    textarea?.setSelectionRange(result.cursor, result.cursor)
+  })
+}
+
 function chooseImage(event: Event) {
   const target = event.target as HTMLInputElement
   const file = target.files?.[0]
@@ -44,6 +61,7 @@ function chooseImage(event: Event) {
       <el-button text title="加粗" @click="insert('**', '**')"><strong>B</strong></el-button>
       <el-button text title="项目列表" @click="insert('- ', '', '列表项')">• 列表</el-button>
       <el-button text title="链接" @click="insert('[', '](https://)', '链接文字')">链接</el-button>
+      <FeishuEmojiPicker @select="insertEmoji" />
       <span />
       <input ref="fileInput" hidden type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp,image/tiff,image/x-icon" @change="chooseImage">
       <el-button text type="primary" :icon="Picture" :loading="uploading" :disabled="images.length >= 9" @click="fileInput?.click()">添加图片</el-button>

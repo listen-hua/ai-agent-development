@@ -38,7 +38,11 @@ func (d *ImageDispatcher) Tick(ctx context.Context) error {
 			slog.Warn("image job processing failed", "job_id", job.ID, "error", err)
 		}
 	}
-	return d.agent.repo.CleanupImageJobLogs(ctx, now.Add(-d.retention))
+	if err = d.agent.repo.CleanupImageJobLogs(ctx, now.Add(-d.retention)); err != nil {
+		return err
+	}
+	_, err = d.agent.repo.CleanupDeletedImageCanvases(ctx, now.Add(-30*24*time.Hour))
+	return err
 }
 
 func (d *ImageDispatcher) process(ctx context.Context, job domain.ImageJob) error {

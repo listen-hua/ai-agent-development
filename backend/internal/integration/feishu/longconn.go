@@ -26,12 +26,16 @@ type MessageEvent struct {
 }
 
 type CardActionEvent struct {
-	EventID   string
-	OpenID    string
-	ChatID    string
-	MessageID string
-	Name      string
-	Value     map[string]any
+	EventID    string
+	OpenID     string
+	ChatID     string
+	MessageID  string
+	Name       string
+	Value      map[string]any
+	FormValue  map[string]any
+	Options    []string
+	Option     string
+	InputValue string
 }
 
 type CardActionResult struct {
@@ -247,6 +251,10 @@ func toCardActionEvent(event *callback.CardActionTriggerEvent) CardActionEvent {
 	if event.Event.Action != nil {
 		result.Name = event.Event.Action.Name
 		result.Value = event.Event.Action.Value
+		result.FormValue = event.Event.Action.FormValue
+		result.Options = event.Event.Action.Options
+		result.Option = event.Event.Action.Option
+		result.InputValue = event.Event.Action.InputValue
 	}
 	return result
 }

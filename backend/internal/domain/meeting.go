@@ -71,6 +71,49 @@ type MeetingAttendee struct {
 	Name   string `json:"name"`
 }
 
+type MeetingBookingDraftSlots struct {
+	Date                string   `json:"date,omitempty"`
+	Hour                int      `json:"hour,omitempty"`
+	Minute              int      `json:"minute,omitempty"`
+	DurationMinutes     int      `json:"duration_minutes,omitempty"`
+	Title               string   `json:"title,omitempty"`
+	AttendeeUserIDs     []string `json:"attendee_user_ids"`
+	AttendeesConfirmed  bool     `json:"attendees_confirmed"`
+	Capacity            int      `json:"capacity,omitempty"`
+	OriginalQuery       string   `json:"original_query,omitempty"`
+	RequestedRoomName   string   `json:"requested_room_name,omitempty"`
+	CandidateBookingIDs []string `json:"candidate_booking_ids,omitempty"`
+	SelectedBookingID   string   `json:"selected_booking_id,omitempty"`
+}
+
+type MeetingBookingDraft struct {
+	ID              string                   `json:"id"`
+	UserID          string                   `json:"user_id"`
+	ConversationID  string                   `json:"conversation_id,omitempty"`
+	Channel         string                   `json:"channel"`
+	Intent          string                   `json:"intent"`
+	Slots           MeetingBookingDraftSlots `json:"slots"`
+	MissingFields   []string                 `json:"missing_fields"`
+	Status          string                   `json:"status"`
+	Version         int64                    `json:"version"`
+	ResultActionID  string                   `json:"result_action_id,omitempty"`
+	ResultAction    *MeetingBookingAction    `json:"result_action,omitempty"`
+	BookingChoices  []MeetingBooking         `json:"booking_choices,omitempty"`
+	AttendeeChoices []MeetingAttendeeOption  `json:"attendee_choices,omitempty"`
+	ExpiresAt       time.Time                `json:"expires_at"`
+	CreatedAt       time.Time                `json:"created_at"`
+	UpdatedAt       time.Time                `json:"updated_at"`
+}
+
+type MeetingAttendeeOption struct {
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	AvatarURL       string   `json:"avatar_url,omitempty"`
+	DepartmentIDs   []string `json:"department_ids"`
+	DepartmentNames []string `json:"department_names,omitempty"`
+	JobTitle        string   `json:"job_title,omitempty"`
+}
+
 type MeetingBookingAction struct {
 	ID                   string                 `json:"id"`
 	UserID               string                 `json:"user_id"`

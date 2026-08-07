@@ -74,14 +74,18 @@ type ImageViewport struct {
 }
 
 type ImageCanvas struct {
-	ID        string            `json:"id"`
-	UserID    string            `json:"user_id"`
-	ProjectID string            `json:"project_id"`
-	Viewport  ImageViewport     `json:"viewport"`
-	Version   int64             `json:"version"`
-	CreatedAt time.Time         `json:"created_at"`
-	UpdatedAt time.Time         `json:"updated_at"`
-	Nodes     []ImageCanvasNode `json:"nodes,omitempty"`
+	ID             string            `json:"id"`
+	UserID         string            `json:"user_id"`
+	ProjectID      string            `json:"project_id,omitempty"`
+	Name           string            `json:"name"`
+	Viewport       ImageViewport     `json:"viewport"`
+	Version        int64             `json:"version"`
+	NodeCount      int               `json:"node_count"`
+	PreviewAssetID string            `json:"preview_asset_id,omitempty"`
+	DeletedAt      *time.Time        `json:"deleted_at,omitempty"`
+	CreatedAt      time.Time         `json:"created_at"`
+	UpdatedAt      time.Time         `json:"updated_at"`
+	Nodes          []ImageCanvasNode `json:"nodes"`
 }
 
 type ImageCanvasNode struct {

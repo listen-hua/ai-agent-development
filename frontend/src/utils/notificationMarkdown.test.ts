@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeFeishuCardMarkdown, renderNotificationMarkdown } from './notificationMarkdown'
+import { normalizeFeishuCardMarkdown, renderNotificationMarkdown, renderNotificationText } from './notificationMarkdown'
 
 describe('renderNotificationMarkdown', () => {
   it('renders supported rich text', () => {
@@ -19,5 +19,16 @@ describe('renderNotificationMarkdown', () => {
     expect(html).not.toContain('<img')
     expect(html).not.toContain('href="javascript:')
     expect(html).toContain('&lt;img')
+  })
+
+  it('renders allowlisted Feishu emojis and preserves unknown tokens', () => {
+    const html = renderNotificationMarkdown('已完成 :OK:，未知 :NOT_REAL:')
+    expect(html).toContain('class="feishu-emoji-inline"')
+    expect(html).toContain('title="好的 · :OK:"')
+    expect(html).toContain(':NOT_REAL:')
+
+    const title = renderNotificationText('<通知> :PARTY:')
+    expect(title).toContain('&lt;通知&gt;')
+    expect(title).toContain('title="庆祝 · :PARTY:"')
   })
 })

@@ -71,6 +71,13 @@ func TestDeleteImageCanvasNodeAtomicallyClaimsCanvasVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	listed, err := repo.ListImageCanvases(ctx, canvas.UserID, false)
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("unexpected canvas list: count=%d err=%v", len(listed), err)
+	}
+	if listed[0].PreviewAssetID != asset.ID || listed[0].NodeCount != 1 {
+		t.Fatalf("canvas list must expose its first ready image as preview: %+v", listed[0])
+	}
 
 	if _, err = repo.DeleteImageCanvasNode(ctx, imported, node.ID, canvas.Version); !errors.Is(err, ErrConflict) {
 		t.Fatalf("expected stale version conflict, got %v", err)

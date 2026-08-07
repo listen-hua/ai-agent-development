@@ -49,6 +49,8 @@ type Config struct {
 	ReminderGraceMinutes       int
 	ReminderMaxActive          int
 	RetentionDays              int
+	MassageResponseSeconds     int
+	MassageRetentionDays       int
 }
 
 func Load() Config {
@@ -94,6 +96,8 @@ func Load() Config {
 		ReminderGraceMinutes:       envInt("REMINDER_GRACE_MINUTES", 30),
 		ReminderMaxActive:          envInt("REMINDER_MAX_ACTIVE_PER_USER", 100),
 		RetentionDays:              envInt("RETENTION_DAYS", 90),
+		MassageResponseSeconds:     envInt("MASSAGE_RESPONSE_SECONDS", 180),
+		MassageRetentionDays:       envInt("MASSAGE_RETENTION_DAYS", 365),
 	}
 	config.AgentSecretEncryptionKey = env("AGENT_SECRET_ENCRYPTION_KEY", config.SessionSecret)
 	if config.FeishuAppLink == "" && config.FeishuAppID != "" {

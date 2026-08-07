@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"internal-ai-agent/backend/internal/domain"
 	"internal-ai-agent/backend/internal/ids"
 )
@@ -255,23 +258,147 @@ func (p *Postgres) DeleteImagePromptAction(ctx context.Context, id string) error
 	return err
 }
 
-func (p *Postgres) GetOrCreateImageCanvas(ctx context.Context, userID, projectID string) (domain.ImageCanvas, error) {
-	_, err := p.pool.Exec(ctx, `INSERT INTO image_canvases(id,user_id,project_id) VALUES($1,$2,$3)
-		ON CONFLICT(user_id,project_id) DO NOTHING`, ids.New("canvas"), userID, projectID)
-	if err != nil {
-		return domain.ImageCanvas{}, err
+func (p *Postgres) ListImageCanvases(ctx context.Context, userID string, deleted bool) ([]domain.ImageCanvas, error) {
+	operator := "IS NULL"
+	if deleted {
+		operator = "IS NOT NULL"
 	}
-	var value domain.ImageCanvas
-	var viewport []byte
-	err = p.pool.QueryRow(ctx, `SELECT id,user_id,project_id,viewport,version,created_at,updated_at
-		FROM image_canvases WHERE user_id=$1 AND project_id=$2`, userID, projectID).
-		Scan(&value.ID, &value.UserID, &value.ProjectID, &viewport, &value.Version, &value.CreatedAt, &value.UpdatedAt)
+	rows, err := p.pool.Query(ctx, `SELECT c.id,c.user_id,COALESCE(c.project_id::text,''),c.name,c.viewport,c.version,c.deleted_at,c.created_at,c.updated_at,
+		(SELECT count(*) FROM image_canvas_nodes n WHERE n.canvas_id=c.id),
+		COALESCE((SELECT n.asset_id::text FROM image_canvas_nodes n WHERE n.canvas_id=c.id AND n.status='ready' AND n.asset_id IS NOT NULL ORDER BY n.z_index,n.created_at,n.id LIMIT 1),'')
+		FROM image_canvases c WHERE c.user_id=$1 AND c.deleted_at `+operator+` ORDER BY c.updated_at DESC,c.created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []domain.ImageCanvas{}
+	for rows.Next() {
+		value, scanErr := scanImageCanvas(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		value.Nodes = []domain.ImageCanvasNode{}
+		result = append(result, value)
+	}
+	return result, rows.Err()
+}
+
+func (p *Postgres) CreateImageCanvas(ctx context.Context, value domain.ImageCanvas) error {
+	_, err := p.pool.Exec(ctx, `INSERT INTO image_canvases(id,user_id,project_id,name,viewport,version,created_at,updated_at)
+		VALUES($1,$2,NULL,$3,$4,$5,$6,$7)`, value.ID, value.UserID, value.Name, mustJSON(value.Viewport), value.Version, value.CreatedAt, value.UpdatedAt)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return ErrConflict
+	}
+	return err
+}
+
+func (p *Postgres) GetImageCanvas(ctx context.Context, id string) (domain.ImageCanvas, error) {
+	value, err := scanImageCanvas(p.pool.QueryRow(ctx, `SELECT c.id,c.user_id,COALESCE(c.project_id::text,''),c.name,c.viewport,c.version,c.deleted_at,c.created_at,c.updated_at,
+		(SELECT count(*) FROM image_canvas_nodes n WHERE n.canvas_id=c.id),
+		COALESCE((SELECT n.asset_id::text FROM image_canvas_nodes n WHERE n.canvas_id=c.id AND n.status='ready' AND n.asset_id IS NOT NULL ORDER BY n.z_index,n.created_at,n.id LIMIT 1),'')
+		FROM image_canvases c WHERE c.id=$1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return value, ErrNotFound
+	}
 	if err != nil {
 		return value, err
 	}
-	_ = json.Unmarshal(viewport, &value.Viewport)
 	value.Nodes, err = p.listImageCanvasNodes(ctx, value.ID)
 	return value, err
+}
+
+func scanImageCanvas(row rowScanner) (domain.ImageCanvas, error) {
+	var value domain.ImageCanvas
+	var viewport []byte
+	err := row.Scan(&value.ID, &value.UserID, &value.ProjectID, &value.Name, &viewport, &value.Version, &value.DeletedAt,
+		&value.CreatedAt, &value.UpdatedAt, &value.NodeCount, &value.PreviewAssetID)
+	if err == nil {
+		err = json.Unmarshal(viewport, &value.Viewport)
+	}
+	return value, err
+}
+
+func (p *Postgres) SoftDeleteImageCanvas(ctx context.Context, id, userID string, now time.Time) error {
+	tag, err := p.pool.Exec(ctx, `UPDATE image_canvases SET deleted_at=$3,updated_at=$3 WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL`, id, userID, now)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return err
+}
+
+func (p *Postgres) RestoreImageCanvas(ctx context.Context, id, userID string, now time.Time) (domain.ImageCanvas, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return domain.ImageCanvas{}, err
+	}
+	defer tx.Rollback(ctx)
+	var original string
+	if err = tx.QueryRow(ctx, `SELECT name FROM image_canvases WHERE id=$1 AND user_id=$2 AND deleted_at IS NOT NULL FOR UPDATE`, id, userID).Scan(&original); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.ImageCanvas{}, ErrNotFound
+		}
+		return domain.ImageCanvas{}, err
+	}
+	name := original
+	for suffix := 0; ; suffix++ {
+		if suffix > 0 {
+			base := []rune(strings.TrimSpace(original))
+			if len(base) > 65 {
+				base = base[:65]
+			}
+			name = string(base) + "（恢复）"
+			if suffix > 1 {
+				name = fmt.Sprintf("%s（恢复%d）", string(base), suffix)
+			}
+		}
+		var exists bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM image_canvases WHERE user_id=$1 AND deleted_at IS NULL AND lower(name)=lower($2))`, userID, name).Scan(&exists); err != nil {
+			return domain.ImageCanvas{}, err
+		}
+		if !exists {
+			break
+		}
+	}
+	if _, err = tx.Exec(ctx, `UPDATE image_canvases SET name=$3,deleted_at=NULL,updated_at=$4 WHERE id=$1 AND user_id=$2`, id, userID, name, now); err != nil {
+		return domain.ImageCanvas{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return domain.ImageCanvas{}, err
+	}
+	return p.GetImageCanvas(ctx, id)
+}
+
+func (p *Postgres) CleanupDeletedImageCanvases(ctx context.Context, before time.Time) (int64, error) {
+	tag, err := p.pool.Exec(ctx, `DELETE FROM image_canvases c WHERE c.deleted_at IS NOT NULL AND c.deleted_at<$1
+		AND NOT EXISTS (SELECT 1 FROM image_jobs j WHERE j.canvas_id=c.id AND j.status IN ('pending','running','retry'))`, before)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+func (p *Postgres) GetOrCreateImageCanvas(ctx context.Context, userID, projectID string) (domain.ImageCanvas, error) {
+	project, err := p.GetImageProject(ctx, projectID)
+	if err != nil {
+		return domain.ImageCanvas{}, err
+	}
+	baseName := []rune(strings.TrimSpace(project.Name))
+	if len(baseName) > 68 {
+		baseName = baseName[:68]
+	}
+	legacyName := string(baseName) + "-" + projectID[:min(8, len(projectID))]
+	_, err = p.pool.Exec(ctx, `INSERT INTO image_canvases(id,user_id,project_id,name) VALUES($1,$2,$3,$4)
+		ON CONFLICT(user_id,project_id) WHERE project_id IS NOT NULL DO NOTHING`, ids.New("canvas"), userID, projectID, legacyName)
+	if err != nil {
+		return domain.ImageCanvas{}, err
+	}
+	var id string
+	err = p.pool.QueryRow(ctx, `SELECT id FROM image_canvases WHERE user_id=$1 AND project_id=$2 AND deleted_at IS NULL`, userID, projectID).Scan(&id)
+	if err != nil {
+		return domain.ImageCanvas{}, err
+	}
+	return p.GetImageCanvas(ctx, id)
 }
 
 func (p *Postgres) listImageCanvasNodes(ctx context.Context, canvasID string) ([]domain.ImageCanvasNode, error) {
@@ -302,7 +429,7 @@ func (p *Postgres) UpdateImageCanvas(ctx context.Context, value domain.ImageCanv
 	defer tx.Rollback(ctx)
 	var version int64
 	err = tx.QueryRow(ctx, `UPDATE image_canvases SET viewport=$3,version=version+1,updated_at=now()
-		WHERE id=$1 AND version=$2 RETURNING version`, value.ID, expectedVersion, mustJSON(value.Viewport)).Scan(&version)
+		WHERE id=$1 AND version=$2 AND deleted_at IS NULL RETURNING version`, value.ID, expectedVersion, mustJSON(value.Viewport)).Scan(&version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return value, ErrConflict
 	}
@@ -335,8 +462,8 @@ func (p *Postgres) ImportImageCanvasAsset(ctx context.Context, canvas domain.Ima
 	defer tx.Rollback(ctx)
 	var version int64
 	err = tx.QueryRow(ctx, `UPDATE image_canvases SET version=version+1,updated_at=now()
-		WHERE id=$1 AND user_id=$2 AND project_id=$3 AND version=$4 RETURNING version`,
-		canvas.ID, canvas.UserID, canvas.ProjectID, expectedVersion).Scan(&version)
+		WHERE id=$1 AND user_id=$2 AND version=$3 AND deleted_at IS NULL RETURNING version`,
+		canvas.ID, canvas.UserID, expectedVersion).Scan(&version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return canvas, ErrConflict
 	}
@@ -375,8 +502,8 @@ func (p *Postgres) DeleteImageCanvasNode(ctx context.Context, canvas domain.Imag
 	defer tx.Rollback(ctx)
 	var version int64
 	err = tx.QueryRow(ctx, `UPDATE image_canvases SET version=version+1,updated_at=now()
-		WHERE id=$1 AND user_id=$2 AND project_id=$3 AND version=$4 RETURNING version`,
-		canvas.ID, canvas.UserID, canvas.ProjectID, expectedVersion).Scan(&version)
+		WHERE id=$1 AND user_id=$2 AND version=$3 AND deleted_at IS NULL RETURNING version`,
+		canvas.ID, canvas.UserID, expectedVersion).Scan(&version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return canvas, ErrConflict
 	}
@@ -447,7 +574,7 @@ func (p *Postgres) CreateImageJob(ctx context.Context, value domain.ImageJob, no
 	}
 	if len(nodes) > 0 {
 		tag, err = tx.Exec(ctx, `UPDATE image_canvases SET version=version+1,updated_at=now()
-			WHERE id=$1 AND version=$2`, value.CanvasID, expectedCanvasVersion)
+			WHERE id=$1 AND version=$2 AND user_id=$3 AND deleted_at IS NULL`, value.CanvasID, expectedCanvasVersion, value.UserID)
 		if err != nil {
 			return value, err
 		}
@@ -499,7 +626,7 @@ func (p *Postgres) GetImageJob(ctx context.Context, id string) (domain.ImageJob,
 	return value, err
 }
 
-const imageJobSelect = `SELECT id,user_id,project_id,canvas_id,relay_id,model_id,kind,prompt,aspect_ratio,image_size,
+const imageJobSelect = `SELECT id,user_id,project_id,COALESCE(canvas_id::text,''),relay_id,model_id,kind,prompt,aspect_ratio,image_size,
 	count,reference_asset_ids,status,attempts,next_attempt_at,locked_until,completed_count,reversed_prompt,error,
 	idempotency_key,created_at,updated_at FROM image_jobs`
 
@@ -565,7 +692,7 @@ func (p *Postgres) ClaimImageJobs(ctx context.Context, now time.Time, lease time
 			AND (locked_until IS NULL OR locked_until<$1) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT $2
 	) UPDATE image_jobs j SET status='running',attempts=j.attempts+1,locked_until=$1+$3::interval,updated_at=$1
 	FROM candidates c WHERE j.id=c.id
-	RETURNING j.id,j.user_id,j.project_id,j.canvas_id,j.relay_id,j.model_id,j.kind,j.prompt,j.aspect_ratio,j.image_size,
+	RETURNING j.id,j.user_id,j.project_id,COALESCE(j.canvas_id::text,''),j.relay_id,j.model_id,j.kind,j.prompt,j.aspect_ratio,j.image_size,
 		j.count,j.reference_asset_ids,j.status,j.attempts,j.next_attempt_at,j.locked_until,j.completed_count,j.reversed_prompt,
 		j.error,j.idempotency_key,j.created_at,j.updated_at`, now, limit, lease.String())
 	if err != nil {

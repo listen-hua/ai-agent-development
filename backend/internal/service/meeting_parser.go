@@ -10,6 +10,7 @@ import (
 
 type meetingRequest struct {
 	Intent        string
+	Query         string
 	Date          time.Time
 	Times         []clockTime
 	Duration      time.Duration
@@ -41,14 +42,14 @@ func LooksLikeMeetingBooking(text string) bool {
 }
 
 func parseMeetingRequest(text string, now time.Time, location *time.Location) (meetingRequest, string) {
-	request := meetingRequest{Intent: "create", Duration: 30 * time.Minute, Title: "会议"}
+	request := meetingRequest{Intent: "create", Query: strings.TrimSpace(text), Duration: 30 * time.Minute}
 	if strings.Contains(text, "取消") {
 		request.Intent = "cancel"
 	} else if strings.Contains(text, "改期") || strings.Contains(text, "改到") || strings.Contains(text, "调整") {
 		request.Intent = "reschedule"
 	}
 	request.Date = parseMeetingDate(text, now, location)
-	if request.Date.IsZero() {
+	if request.Date.IsZero() && request.Intent != "cancel" {
 		return request, "请告诉我要预约或操作哪一天的会议室，例如“明天下午 3 点”。"
 	}
 	for _, match := range meetingTimes.FindAllStringSubmatch(text, -1) {
@@ -98,7 +99,38 @@ func parseMeetingRequest(text string, now time.Time, location *time.Location) (m
 	if title := parseMeetingTitle(text); title != "" {
 		request.Title = title
 	}
+	if request.Intent == "cancel" && request.Title == "" {
+		request.Title = parseCancellationTitle(text)
+	}
 	return request, ""
+}
+
+func meetingAttendeesExplicitlySelfOnly(text string) bool {
+	for _, phrase := range []string{"仅自己", "只有我", "就我自己", "不邀请其他人", "无需邀请其他人"} {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseCancellationTitle(text string) string {
+	value := strings.TrimSpace(text)
+	for _, token := range []string{"帮我", "请", "取消", "预约的", "预约", "会议室", "会议", "那个", "这场"} {
+		value = strings.ReplaceAll(value, token, " ")
+	}
+	value = meetingDateYMD.ReplaceAllString(value, " ")
+	value = meetingDateMD.ReplaceAllString(value, " ")
+	value = meetingTimes.ReplaceAllString(value, " ")
+	for _, token := range []string{"今天", "明天", "后天", "上午", "下午", "晚上", "中午"} {
+		value = strings.ReplaceAll(value, token, " ")
+	}
+	value = strings.Join(strings.Fields(value), "")
+	value = strings.Trim(value, "的")
+	if len([]rune(value)) > 100 {
+		return ""
+	}
+	return value
 }
 
 func looksLikeMeetingTimeRange(text string) bool {

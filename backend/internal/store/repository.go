@@ -33,6 +33,12 @@ type Repository interface {
 	GetMeetingBookingAction(context.Context, string) (domain.MeetingBookingAction, error)
 	ClaimMeetingBookingAction(context.Context, string, string, string, time.Time) (domain.MeetingBookingAction, error)
 	UpdateMeetingBookingAction(context.Context, domain.MeetingBookingAction) error
+	CreateMeetingBookingDraft(context.Context, domain.MeetingBookingDraft) error
+	GetMeetingBookingDraft(context.Context, string) (domain.MeetingBookingDraft, error)
+	LatestMeetingBookingDraft(context.Context, string, string, time.Time) (domain.MeetingBookingDraft, error)
+	UpdateMeetingBookingDraft(context.Context, domain.MeetingBookingDraft, int64) (domain.MeetingBookingDraft, error)
+	CompleteMeetingBookingDraft(context.Context, domain.MeetingBookingDraft, domain.MeetingBookingAction, int64, time.Time) (domain.MeetingBookingDraft, error)
+	ExpireMeetingBookingDrafts(context.Context, string, string, time.Time) error
 	CreateMeetingBooking(context.Context, domain.MeetingBooking) error
 	GetMeetingBooking(context.Context, string) (domain.MeetingBooking, error)
 	ListMeetingBookings(context.Context, string) ([]domain.MeetingBooking, error)
@@ -129,6 +135,12 @@ type ImageRepository interface {
 	UpsertImagePromptAction(context.Context, domain.ImagePromptAction) error
 	UpdateImagePromptActionPreview(context.Context, domain.ImagePromptAction) error
 	DeleteImagePromptAction(context.Context, string) error
+	ListImageCanvases(context.Context, string, bool) ([]domain.ImageCanvas, error)
+	CreateImageCanvas(context.Context, domain.ImageCanvas) error
+	GetImageCanvas(context.Context, string) (domain.ImageCanvas, error)
+	SoftDeleteImageCanvas(context.Context, string, string, time.Time) error
+	RestoreImageCanvas(context.Context, string, string, time.Time) (domain.ImageCanvas, error)
+	CleanupDeletedImageCanvases(context.Context, time.Time) (int64, error)
 	GetOrCreateImageCanvas(context.Context, string, string) (domain.ImageCanvas, error)
 	UpdateImageCanvas(context.Context, domain.ImageCanvas, int64) (domain.ImageCanvas, error)
 	ImportImageCanvasAsset(context.Context, domain.ImageCanvas, int64, domain.ImageAsset, domain.ImageCanvasNode) (domain.ImageCanvas, error)
@@ -143,4 +155,31 @@ type ImageRepository interface {
 	SaveImageJobOutput(context.Context, domain.ImageJobOutput, domain.ImageAsset, domain.ImageCanvasNode) error
 	UpdateImageJobOutputFailure(context.Context, domain.ImageJobOutput, domain.ImageCanvasNode) error
 	CleanupImageJobLogs(context.Context, time.Time) error
+}
+
+// MassageRepository keeps the operational queue optional while allowing its
+// state transitions to stay transactional in PostgreSQL.
+type MassageRepository interface {
+	ListMassageCycles(context.Context) ([]domain.MassageCycle, error)
+	GetMassageCycle(context.Context, string) (domain.MassageCycle, error)
+	CreateMassageCycle(context.Context, domain.MassageCycle) error
+	UpdateMassageCycle(context.Context, domain.MassageCycle, []string, []domain.MassageDelivery) error
+	DeleteMassageCycle(context.Context, string) error
+	PublishMassageCycle(context.Context, string, []string, []domain.MassageDelivery, time.Time) error
+	ListMassageEligibleUserIDs(context.Context, string) ([]string, error)
+	MassageResponse(context.Context, string, string, string, time.Time) (domain.MassageEnrollment, error)
+	ListMassageMe(context.Context, string) ([]domain.MassageMe, error)
+	CreateMassageResendDeliveries(context.Context, string, []domain.MassageDelivery) (int, error)
+	SetMassageSessionStatus(context.Context, string, string, string, time.Time) (domain.MassageSession, error)
+	FillMassageSession(context.Context, string, time.Time) ([]domain.MassageCall, error)
+	ClaimMassageDeliveries(context.Context, time.Time, time.Duration, int) ([]domain.MassageDelivery, error)
+	UpdateMassageDelivery(context.Context, domain.MassageDelivery) error
+	MarkMassageCallSent(context.Context, string, string, time.Time, time.Time) error
+	MarkMassageCallDeliveryFailed(context.Context, string, string, time.Time) error
+	ExpireMassageCalls(context.Context, time.Time) ([]domain.MassageCall, error)
+	RespondMassageCall(context.Context, string, string, string, time.Time) (domain.MassageCall, error)
+	CompleteMassageCall(context.Context, string, string, time.Time) (domain.MassageCall, error)
+	GetMassageCall(context.Context, string) (domain.MassageCall, error)
+	MassageStatistics(context.Context, string) (domain.MassageStatistic, error)
+	CleanupMassageHistory(context.Context, time.Time) error
 }

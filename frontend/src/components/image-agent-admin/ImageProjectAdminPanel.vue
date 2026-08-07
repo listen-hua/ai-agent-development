@@ -1,12 +1,18 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { Edit, Plus } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import ACLEditor from '@/components/knowledge/ACLEditor.vue'
 import type { DirectoryOptions } from '@/types/domain'
 import type { ImageProject, ImageProjectInput } from '@/types/image-agent'
 
-defineProps<{ projects: ImageProject[]; directory: DirectoryOptions; loading: boolean; saving: boolean }>()
-const emit = defineEmits<{ save: [id: string | undefined, input: ImageProjectInput] }>()
+const props = defineProps<{
+  projects: ImageProject[]
+  directory: DirectoryOptions
+  loading: boolean
+  saving: boolean
+  saveProject: (id: string | undefined, input: ImageProjectInput) => Promise<ImageProject>
+}>()
 const dialog = ref(false)
 const editingId = ref<string>()
 const form = reactive<ImageProjectInput>({ project_key: '', name: '', description: '', acl: { scope: 'all' }, enabled: true })
@@ -19,7 +25,31 @@ function open(value?: ImageProject) {
   } : { project_key: '', name: '', description: '', acl: { scope: 'all' }, enabled: true })
   dialog.value = true
 }
-function save() { emit('save', editingId.value, { ...form, acl: JSON.parse(JSON.stringify(form.acl)) }); dialog.value = false }
+async function save() {
+  if (props.saving) return
+  const projectKey = form.project_key.trim().toLowerCase()
+  const name = form.name.trim()
+  if (!/^[\p{L}][\p{L}\p{N}_-]{0,49}$/u.test(projectKey)) {
+    ElMessage.warning('项目标识需以中文或英文字母开头，只能包含中文、字母、数字、下划线和短横线，最多 50 个字符')
+    return
+  }
+  if (!name) {
+    ElMessage.warning('请填写项目名称')
+    return
+  }
+  try {
+    await props.saveProject(editingId.value, {
+      ...form,
+      project_key: projectKey,
+      name,
+      description: form.description.trim(),
+      acl: JSON.parse(JSON.stringify(form.acl)),
+    })
+    dialog.value = false
+  } catch {
+    // The composable displays the API error and the dialog stays open for retry.
+  }
+}
 </script>
 
 <template>
@@ -35,7 +65,7 @@ function save() { emit('save', editingId.value, { ...form, acl: JSON.parse(JSON.
     </el-table>
     <el-dialog v-model="dialog" :title="editingId ? '编辑生图项目' : '新增生图项目'" width="min(720px, 95vw)">
       <el-form label-position="top">
-        <div class="form-grid"><el-form-item label="项目标识"><el-input v-model="form.project_key" placeholder="例如 campaign_2026" /></el-form-item><el-form-item label="项目名称"><el-input v-model="form.name" /></el-form-item></div>
+        <div class="form-grid"><el-form-item label="项目标识"><el-input v-model="form.project_key" maxlength="50" placeholder="例如 宣传图_2026" /><small>支持中文、字母、数字、下划线和短横线，需以中文或字母开头。</small></el-form-item><el-form-item label="项目名称（支持中文）"><el-input v-model="form.name" maxlength="100" placeholder="例如 公司宣传图" /></el-form-item></div>
         <el-form-item label="项目说明"><el-input v-model="form.description" type="textarea" :rows="2" /></el-form-item>
         <el-form-item label="启用"><el-switch v-model="form.enabled" /></el-form-item>
         <el-form-item label="可见范围"><ACLEditor v-model="form.acl" :options="directory" /></el-form-item>

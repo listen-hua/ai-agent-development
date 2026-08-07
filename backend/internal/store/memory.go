@@ -40,8 +40,14 @@ type Memory struct {
 	meetingRooms            map[string]domain.MeetingRoom
 	meetingSettings         domain.MeetingSettings
 	meetingActions          map[string]domain.MeetingBookingAction
+	meetingDrafts           map[string]domain.MeetingBookingDraft
 	meetingBookings         map[string]domain.MeetingBooking
 	meetingDeliveries       map[string]domain.MeetingBookingDelivery
+	massageCycles           map[string]domain.MassageCycle
+	massageEligible         map[string]map[string]bool
+	massageEnrollments      map[string]domain.MassageEnrollment
+	massageCalls            map[string]domain.MassageCall
+	massageDeliveries       map[string]domain.MassageDelivery
 	imageRelays             map[string]domain.ImageRelay
 	imageModels             map[string]domain.ImageModel
 	imageProjects           map[string]domain.ImageProject
@@ -80,7 +86,8 @@ func NewMemory(defaultConfig domain.AgentConfig) *Memory {
 		reminders: map[string]domain.Reminder{}, reminderActions: map[string]domain.ReminderActionDraft{}, reminderDeliveries: map[string]domain.ReminderDelivery{},
 		workdayOverrides: map[string]domain.WorkdayOverride{}, reminderBotJobs: map[string]domain.ReminderBotJob{},
 		meetingRooms: map[string]domain.MeetingRoom{}, meetingSettings: domain.MeetingSettings{Timezone: "Asia/Shanghai", WorkdayStart: "09:00", WorkdayEnd: "18:00", SlotMinutes: 30, SyncIntervalMinute: 15, UpdatedAt: now},
-		meetingActions: map[string]domain.MeetingBookingAction{}, meetingBookings: map[string]domain.MeetingBooking{}, meetingDeliveries: map[string]domain.MeetingBookingDelivery{},
+		meetingActions: map[string]domain.MeetingBookingAction{}, meetingDrafts: map[string]domain.MeetingBookingDraft{}, meetingBookings: map[string]domain.MeetingBooking{}, meetingDeliveries: map[string]domain.MeetingBookingDelivery{},
+		massageCycles: map[string]domain.MassageCycle{}, massageEligible: map[string]map[string]bool{}, massageEnrollments: map[string]domain.MassageEnrollment{}, massageCalls: map[string]domain.MassageCall{}, massageDeliveries: map[string]domain.MassageDelivery{},
 		imageRelays: map[string]domain.ImageRelay{}, imageModels: map[string]domain.ImageModel{}, imageProjects: map[string]domain.ImageProject{},
 		imagePromptActions: map[string]domain.ImagePromptAction{}, imageCanvases: map[string]domain.ImageCanvas{},
 		imageAssets: map[string]domain.ImageAsset{}, imageJobs: map[string]domain.ImageJob{},
@@ -457,6 +464,107 @@ func (m *Memory) UpdateMeetingBookingAction(_ context.Context, value domain.Meet
 	return nil
 }
 
+func (m *Memory) CreateMeetingBookingDraft(_ context.Context, value domain.MeetingBookingDraft) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.meetingDrafts[value.ID]; exists {
+		return ErrConflict
+	}
+	m.meetingDrafts[value.ID] = value
+	return nil
+}
+
+func (m *Memory) GetMeetingBookingDraft(_ context.Context, id string) (domain.MeetingBookingDraft, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	value, ok := m.meetingDrafts[id]
+	if !ok {
+		return value, ErrNotFound
+	}
+	if value.ResultActionID != "" {
+		action := m.meetingActions[value.ResultActionID]
+		value.ResultAction = &action
+	}
+	if value.Intent == "cancel" {
+		for _, bookingID := range value.Slots.CandidateBookingIDs {
+			if booking, ok := m.meetingBookings[bookingID]; ok && booking.UserID == value.UserID {
+				value.BookingChoices = append(value.BookingChoices, booking)
+			}
+		}
+	}
+	return value, nil
+}
+
+func (m *Memory) LatestMeetingBookingDraft(_ context.Context, userID, conversationID string, now time.Time) (domain.MeetingBookingDraft, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var latest domain.MeetingBookingDraft
+	found := false
+	for _, value := range m.meetingDrafts {
+		if value.UserID != userID || value.ConversationID != conversationID || value.Status != "collecting" || !value.ExpiresAt.After(now) {
+			continue
+		}
+		if !found || value.UpdatedAt.After(latest.UpdatedAt) {
+			latest, found = value, true
+		}
+	}
+	if !found {
+		return latest, ErrNotFound
+	}
+	return latest, nil
+}
+
+func (m *Memory) UpdateMeetingBookingDraft(_ context.Context, value domain.MeetingBookingDraft, expectedVersion int64) (domain.MeetingBookingDraft, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, ok := m.meetingDrafts[value.ID]
+	if !ok {
+		return value, ErrNotFound
+	}
+	if current.Version != expectedVersion {
+		return current, ErrConflict
+	}
+	value.Version = expectedVersion + 1
+	m.meetingDrafts[value.ID] = value
+	return value, nil
+}
+
+func (m *Memory) CompleteMeetingBookingDraft(_ context.Context, value domain.MeetingBookingDraft, action domain.MeetingBookingAction, expectedVersion int64, now time.Time) (domain.MeetingBookingDraft, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, ok := m.meetingDrafts[value.ID]
+	if !ok {
+		return value, ErrNotFound
+	}
+	if current.Version != expectedVersion || current.Status != "collecting" || !current.ExpiresAt.After(now) {
+		return current, ErrConflict
+	}
+	if _, exists := m.meetingActions[action.ID]; exists {
+		return current, ErrConflict
+	}
+	value.Version = expectedVersion + 1
+	value.Status = "completed"
+	value.ResultActionID = action.ID
+	value.ResultAction = &action
+	m.meetingActions[action.ID] = action
+	m.meetingDrafts[value.ID] = value
+	return value, nil
+}
+
+func (m *Memory) ExpireMeetingBookingDrafts(_ context.Context, userID, conversationID string, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, value := range m.meetingDrafts {
+		if value.UserID == userID && value.ConversationID == conversationID && value.Status == "collecting" {
+			value.Status = "expired"
+			value.Version++
+			value.UpdatedAt = now
+			m.meetingDrafts[id] = value
+		}
+	}
+	return nil
+}
+
 func (m *Memory) CreateMeetingBooking(_ context.Context, value domain.MeetingBooking) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -591,6 +699,11 @@ func (m *Memory) DeleteConversation(_ context.Context, id, userID string) error 
 	delete(m.conversations, id)
 	delete(m.messages, id)
 	delete(m.conversationContexts, id)
+	for draftID, draft := range m.meetingDrafts {
+		if draft.ConversationID == id {
+			delete(m.meetingDrafts, draftID)
+		}
+	}
 	for key, binding := range m.conversationBindings {
 		if binding.ConversationID == id {
 			delete(m.conversationBindings, key)

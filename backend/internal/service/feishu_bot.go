@@ -29,6 +29,13 @@ type FeishuMeetingSender interface {
 	SendMeetingBookingResult(context.Context, string, string, string, string, string) (string, error)
 }
 
+type FeishuMeetingDraftSender interface {
+	SendMeetingBookingDraft(context.Context, string, string, feishu.MeetingBookingDraftCard, string) (string, error)
+}
+type FeishuMassageSender interface {
+	SendMassageAction(context.Context, string, string, string, string, string) (string, error)
+}
+
 type FeishuBot struct {
 	repo        store.Repository
 	chat        *Chat
@@ -36,6 +43,7 @@ type FeishuBot struct {
 	appLink     string
 	reminders   *Reminder
 	meetings    *Meeting
+	massage     *Massage
 	permissions *PermissionResolver
 	turns       *conversationLocks
 }
@@ -48,6 +56,8 @@ func NewFeishuBot(repo store.Repository, chat *Chat, sender FeishuMessageSender,
 			bot.reminders = value
 		case *Meeting:
 			bot.meetings = value
+		case *Massage:
+			bot.massage = value
 		case *PermissionResolver:
 			bot.permissions = value
 		}
@@ -98,6 +108,20 @@ func (b *FeishuBot) HandleCardAction(ctx context.Context, event feishu.CardActio
 		}
 		return result, err
 	}
+	if strings.HasPrefix(event.Name, "meeting_booking_draft_") {
+		result, err := b.handleMeetingDraftCardAction(ctx, event)
+		if err != nil {
+			b.repo.ForgetProcessedEvent(ctx, event.EventID)
+		}
+		return result, err
+	}
+	if strings.HasPrefix(event.Name, "massage_") {
+		result, err := b.handleMassageCardAction(ctx, event)
+		if err != nil {
+			b.repo.ForgetProcessedEvent(ctx, event.EventID)
+		}
+		return result, err
+	}
 	actorID, actorName := "", "飞书用户"
 	if user, err := b.repo.GetUserByOpenID(ctx, event.OpenID); err == nil {
 		actorID, actorName = user.ID, user.Name
@@ -108,6 +132,56 @@ func (b *FeishuBot) HandleCardAction(ctx context.Context, event feishu.CardActio
 		Metadata: map[string]any{"action": event.Name, "chat_id": event.ChatID}, CreatedAt: time.Now(),
 	})
 	return feishu.CardActionResult{ToastType: "info", ToastContent: "操作已接收"}, nil
+}
+
+func (b *FeishuBot) handleMassageCardAction(ctx context.Context, event feishu.CardActionEvent) (feishu.CardActionResult, error) {
+	if b.massage == nil {
+		return feishu.CardActionResult{ToastType: "error", ToastContent: "按摩排号服务未启用"}, nil
+	}
+	user, err := b.repo.GetUserByOpenID(ctx, event.OpenID)
+	if err != nil {
+		return feishu.CardActionResult{ToastType: "error", ToastContent: "无法识别当前用户"}, nil
+	}
+	if user, err = b.authorizedUser(ctx, user); err != nil {
+		return feishu.CardActionResult{ToastType: "error", ToastContent: "当前账号没有使用微光的权限"}, nil
+	}
+	if event.Name == "massage_call_accept" || event.Name == "massage_call_reject" {
+		id, _ := event.Value["massage_call_id"].(string)
+		action := "accept"
+		text := "已接受，请前往按摩室"
+		template := "green"
+		if event.Name == "massage_call_reject" {
+			action = "reject"
+			text = "已跳过，本场不会再次叫号"
+			template = "grey"
+		}
+		if id == "" {
+			return feishu.CardActionResult{ToastType: "error", ToastContent: "叫号信息无效"}, nil
+		}
+		if _, err = b.massage.RespondCall(ctx, user, id, action); err != nil {
+			return feishu.CardActionResult{ToastType: "error", ToastContent: "该叫号已过期或已处理", Card: massageResultCard("该叫号已失效", "grey")}, nil
+		}
+		return feishu.CardActionResult{ToastType: "success", ToastContent: text, Card: massageResultCard(text, template)}, nil
+	}
+	cycleID, _ := event.Value["massage_cycle_id"].(string)
+	action := map[string]string{"massage_enroll": "enroll", "massage_decline": "decline", "massage_withdraw": "withdraw"}[event.Name]
+	if cycleID == "" || action == "" {
+		return feishu.CardActionResult{ToastType: "error", ToastContent: "报名操作无效"}, nil
+	}
+	enrollment, err := b.massage.Respond(ctx, user, cycleID, action)
+	if err != nil {
+		return feishu.CardActionResult{ToastType: "error", ToastContent: "报名已截止或操作已失效", Card: massageResultCard("报名操作未生效，请打开微光查看最新状态", "grey")}, nil
+	}
+	text := "本月已标记为不参加"
+	if action == "enroll" {
+		text = fmt.Sprintf("报名成功，你的排号是 %d", enrollment.QueueNumber)
+	} else if action == "withdraw" {
+		text = "已退出本月按摩排号"
+	}
+	return feishu.CardActionResult{ToastType: "success", ToastContent: text, Card: massageResultCard(text, "green")}, nil
+}
+func massageResultCard(content, template string) map[string]any {
+	return map[string]any{"header": map[string]any{"template": template, "title": map[string]string{"tag": "plain_text", "content": "按摩排号"}}, "elements": []any{map[string]any{"tag": "div", "text": map[string]string{"tag": "plain_text", "content": content}}}}
 }
 
 func (b *FeishuBot) handleMeetingCardAction(ctx context.Context, event feishu.CardActionEvent) (feishu.CardActionResult, error) {
@@ -134,6 +208,138 @@ func (b *FeishuBot) handleMeetingCardAction(ctx context.Context, event feishu.Ca
 	}
 	go b.confirmMeetingFromCard(user, actionID, optionID, event.EventID)
 	return feishu.CardActionResult{ToastType: "info", ToastContent: "正在重新校验并预约", Card: meetingResultCard("正在重新校验会议室和参会人忙闲，结果稍后私聊通知你。", "blue")}, nil
+}
+
+func (b *FeishuBot) handleMeetingDraftCardAction(ctx context.Context, event feishu.CardActionEvent) (feishu.CardActionResult, error) {
+	if b.meetings == nil {
+		return feishu.CardActionResult{ToastType: "error", ToastContent: "会议室预约服务未启用"}, nil
+	}
+	draftID, _ := event.Value["meeting_booking_draft_id"].(string)
+	if draftID == "" {
+		return feishu.CardActionResult{ToastType: "error", ToastContent: "会议预约草稿无效"}, nil
+	}
+	user, err := b.repo.GetUserByOpenID(ctx, event.OpenID)
+	if err != nil {
+		return feishu.CardActionResult{ToastType: "error", ToastContent: "无法识别当前用户"}, nil
+	}
+	if user, err = b.authorizedUser(ctx, user); err != nil {
+		return feishu.CardActionResult{ToastType: "error", ToastContent: "当前账号没有使用微光的权限"}, nil
+	}
+	input := MeetingBookingDraftUpdate{Version: 0}
+	draft, err := b.meetings.GetDraft(ctx, user, draftID)
+	if err != nil {
+		return feishu.CardActionResult{ToastType: "error", ToastContent: "会议预约草稿已失效"}, nil
+	}
+	input.Version = draft.Version
+	if event.Name == "meeting_booking_draft_select" {
+		input.BookingID, _ = event.Value["booking_id"].(string)
+	} else {
+		title := cardFormString(event.FormValue["meeting_title"])
+		input.Title = &title
+		confirmed := true
+		input.AttendeesConfirmed = &confirmed
+		if event.Name != "meeting_booking_draft_self" {
+			openIDs := cardFormStrings(event.FormValue["meeting_attendees"])
+			users, listErr := b.repo.ListUsers(ctx)
+			if listErr != nil {
+				return feishu.CardActionResult{}, listErr
+			}
+			byOpenID := map[string]string{}
+			for _, value := range users {
+				byOpenID[value.FeishuOpenID] = value.ID
+			}
+			unresolved := []string{}
+			seen := map[string]bool{}
+			for _, openID := range openIDs {
+				if openID == "" || openID == user.FeishuOpenID || seen[openID] {
+					continue
+				}
+				seen[openID] = true
+				if userID := byOpenID[openID]; userID != "" && userID != user.ID {
+					input.AttendeeUserIDs = append(input.AttendeeUserIDs, userID)
+				} else {
+					unresolved = append(unresolved, openID)
+				}
+			}
+			if len(unresolved) > 0 {
+				return feishu.CardActionResult{ToastType: "error", ToastContent: "部分参会人已离职或不在应用可见范围，请重新选择"}, nil
+			}
+		}
+	}
+	go b.completeMeetingDraftFromCard(user, draft, input, event.EventID)
+	return feishu.CardActionResult{ToastType: "info", ToastContent: "正在校验会议信息", Card: meetingResultCard("正在查询参会人和会议室忙闲，结果稍后私聊通知你。", "blue")}, nil
+}
+
+func (b *FeishuBot) completeMeetingDraftFromCard(user domain.User, draft domain.MeetingBookingDraft, input MeetingBookingDraftUpdate, eventID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	result, err := b.meetings.UpdateDraft(ctx, user, draft.ID, input)
+	sender, ok := b.sender.(FeishuMeetingSender)
+	if !ok || user.FeishuOpenID == "" {
+		return
+	}
+	if err != nil {
+		_, _ = sender.SendMeetingBookingResult(ctx, user.FeishuOpenID, "会议信息校验失败", err.Error(), "red", "meeting-draft-failed-"+eventID)
+		return
+	}
+	if result.Action == nil {
+		if draftSender, ok := b.sender.(FeishuMeetingDraftSender); ok {
+			_, _ = draftSender.SendMeetingBookingDraft(ctx, user.FeishuOpenID, meetingDraftPrompt(result.Draft), b.meetingDraftCard(ctx, user, result.Draft), "meeting-draft-again-"+eventID)
+		}
+		return
+	}
+	action := *result.Action
+	choices := make([]feishu.MeetingBookingChoice, 0, len(action.Options))
+	for index, option := range action.Options {
+		choices = append(choices, feishu.MeetingBookingChoice{ID: option.ID, Label: fmt.Sprintf("候选%d %s %s", index+1, option.StartAt.Format("15:04"), option.RoomName)})
+	}
+	label := "确认预约"
+	if action.Intent == "cancel" {
+		label = "确认取消预约"
+	}
+	_, _ = sender.SendMeetingBookingConfirmation(ctx, user.FeishuOpenID, meetingActionSummary(action), action.ID, label, choices, "meeting-draft-ready-"+eventID)
+}
+
+func cardFormString(value any) string {
+	if text, ok := value.(string); ok {
+		return strings.TrimSpace(text)
+	}
+	return ""
+}
+
+func cardFormStrings(value any) []string {
+	switch values := value.(type) {
+	case []string:
+		return values
+	case []any:
+		out := make([]string, 0, len(values))
+		for _, item := range values {
+			if text, ok := item.(string); ok && text != "" {
+				out = append(out, text)
+				continue
+			}
+			if person, ok := item.(map[string]any); ok {
+				for _, key := range []string{"id", "open_id", "value"} {
+					if text, ok := person[key].(string); ok && text != "" {
+						out = append(out, text)
+						break
+					}
+				}
+			}
+		}
+		return out
+	case map[string]any:
+		for _, key := range []string{"id", "open_id", "value"} {
+			if text, ok := values[key].(string); ok && text != "" {
+				return []string{text}
+			}
+		}
+	case string:
+		if values != "" {
+			return []string{values}
+		}
+	}
+	return nil
 }
 
 func (b *FeishuBot) confirmMeetingFromCard(user domain.User, actionID, optionID, eventID string) {
@@ -281,12 +487,60 @@ func (b *FeishuBot) answer(event feishu.MessageEvent, question string, ticket *c
 		}
 		return
 	}
+	if finalMessage != nil && finalMessage.MeetingBookingDraft != nil {
+		if draftSender, ok := b.sender.(FeishuMeetingDraftSender); ok {
+			draft := *finalMessage.MeetingBookingDraft
+			if _, err = draftSender.SendMeetingBookingDraft(ctx, event.OpenID, finalMessage.Content, b.meetingDraftCard(ctx, user, draft), event.EventID); err != nil {
+				slog.Error("send meeting booking draft failed", "event_id", event.EventID, "error", err)
+			}
+		}
+		return
+	}
+	if finalMessage != nil && finalMessage.MassageAction != nil {
+		if massageSender, ok := b.sender.(FeishuMassageSender); ok {
+			action := finalMessage.MassageAction
+			if _, err = massageSender.SendMassageAction(ctx, event.OpenID, finalMessage.Content, action.Type, action.CycleID, event.EventID); err != nil {
+				slog.Error("send massage action failed", "event_id", event.EventID, "error", err)
+			}
+		}
+		return
+	}
 	if b.appLink != "" {
 		answer += "\n\n在 Agent 中查看完整引用：" + b.appLink
 	}
 	if _, err = b.sender.SendText(ctx, "chat_id", event.ChatID, answer, event.EventID); err != nil {
 		slog.Error("send feishu answer failed", "event_id", event.EventID, "error", err)
 	}
+}
+
+func (b *FeishuBot) meetingDraftCard(ctx context.Context, user domain.User, draft domain.MeetingBookingDraft) feishu.MeetingBookingDraftCard {
+	card := feishu.MeetingBookingDraftCard{ID: draft.ID, Intent: draft.Intent, Title: draft.Slots.Title, RequesterOpenID: user.FeishuOpenID}
+	if draft.Intent == "cancel" {
+		for _, booking := range draft.BookingChoices {
+			card.BookingChoices = append(card.BookingChoices, feishu.MeetingDraftBookingChoice{ID: booking.ID, Label: b.meetings.cancellationChoiceLabel(booking)})
+		}
+		return card
+	}
+	users, _ := b.repo.ListUsers(ctx)
+	selectedUserIDs := map[string]bool{}
+	for _, userID := range draft.Slots.AttendeeUserIDs {
+		selectedUserIDs[userID] = true
+	}
+	for _, value := range users {
+		if selectedUserIDs[value.ID] && value.Status == "active" && value.FeishuOpenID != "" && value.ID != user.ID {
+			card.SelectableOpenIDs = append(card.SelectableOpenIDs, value.FeishuOpenID)
+			card.SelectedOpenIDs = append(card.SelectedOpenIDs, value.FeishuOpenID)
+		}
+	}
+	for _, value := range users {
+		if len(card.SelectableOpenIDs) >= 200 {
+			break
+		}
+		if !selectedUserIDs[value.ID] && value.Status == "active" && value.FeishuOpenID != "" && value.ID != user.ID {
+			card.SelectableOpenIDs = append(card.SelectableOpenIDs, value.FeishuOpenID)
+		}
+	}
+	return card
 }
 
 func meetingActionSummary(action domain.MeetingBookingAction) string {

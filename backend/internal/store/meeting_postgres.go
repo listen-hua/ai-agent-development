@@ -151,6 +151,101 @@ func (p *Postgres) UpdateMeetingBookingAction(ctx context.Context, value domain.
 	return err
 }
 
+func (p *Postgres) CreateMeetingBookingDraft(ctx context.Context, value domain.MeetingBookingDraft) error {
+	_, err := p.pool.Exec(ctx, `INSERT INTO meeting_booking_drafts(id,user_id,conversation_id,channel,intent,slots,missing_fields,status,version,result_action_id,expires_at,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, value.ID, value.UserID, nullUUID(value.ConversationID), value.Channel, value.Intent, mustJSON(value.Slots), value.MissingFields, value.Status, value.Version, nullUUID(value.ResultActionID), value.ExpiresAt, value.CreatedAt, value.UpdatedAt)
+	return err
+}
+
+const meetingDraftSelect = `SELECT id,user_id,COALESCE(conversation_id::text,''),channel,intent,slots,missing_fields,status,version,COALESCE(result_action_id::text,''),expires_at,created_at,updated_at FROM meeting_booking_drafts`
+
+func (p *Postgres) scanMeetingDraft(ctx context.Context, row rowScanner) (domain.MeetingBookingDraft, error) {
+	var value domain.MeetingBookingDraft
+	var slots []byte
+	err := row.Scan(&value.ID, &value.UserID, &value.ConversationID, &value.Channel, &value.Intent, &slots, &value.MissingFields, &value.Status, &value.Version, &value.ResultActionID, &value.ExpiresAt, &value.CreatedAt, &value.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return value, ErrNotFound
+	}
+	if err != nil {
+		return value, err
+	}
+	_ = json.Unmarshal(slots, &value.Slots)
+	if value.ResultActionID != "" {
+		if action, actionErr := p.GetMeetingBookingAction(ctx, value.ResultActionID); actionErr == nil {
+			value.ResultAction = &action
+		}
+	}
+	if value.Intent == "cancel" {
+		for _, bookingID := range value.Slots.CandidateBookingIDs {
+			if booking, bookingErr := p.GetMeetingBooking(ctx, bookingID); bookingErr == nil && booking.UserID == value.UserID {
+				value.BookingChoices = append(value.BookingChoices, booking)
+			}
+		}
+	}
+	return value, nil
+}
+
+func (p *Postgres) GetMeetingBookingDraft(ctx context.Context, id string) (domain.MeetingBookingDraft, error) {
+	return p.scanMeetingDraft(ctx, p.pool.QueryRow(ctx, meetingDraftSelect+` WHERE id=$1`, id))
+}
+
+func (p *Postgres) LatestMeetingBookingDraft(ctx context.Context, userID, conversationID string, now time.Time) (domain.MeetingBookingDraft, error) {
+	return p.scanMeetingDraft(ctx, p.pool.QueryRow(ctx, meetingDraftSelect+` WHERE user_id=$1 AND conversation_id=$2 AND status='collecting' AND expires_at>$3 ORDER BY updated_at DESC LIMIT 1`, userID, conversationID, now))
+}
+
+func (p *Postgres) UpdateMeetingBookingDraft(ctx context.Context, value domain.MeetingBookingDraft, expectedVersion int64) (domain.MeetingBookingDraft, error) {
+	tag, err := p.pool.Exec(ctx, `UPDATE meeting_booking_drafts SET slots=$2,missing_fields=$3,status=$4,version=version+1,result_action_id=$5,expires_at=$6,updated_at=$7 WHERE id=$1 AND version=$8`, value.ID, mustJSON(value.Slots), value.MissingFields, value.Status, nullUUID(value.ResultActionID), value.ExpiresAt, value.UpdatedAt, expectedVersion)
+	if err != nil {
+		return value, err
+	}
+	if tag.RowsAffected() == 0 {
+		if _, getErr := p.GetMeetingBookingDraft(ctx, value.ID); errors.Is(getErr, ErrNotFound) {
+			return value, ErrNotFound
+		}
+		return value, ErrConflict
+	}
+	return p.GetMeetingBookingDraft(ctx, value.ID)
+}
+
+func (p *Postgres) CompleteMeetingBookingDraft(ctx context.Context, value domain.MeetingBookingDraft, action domain.MeetingBookingAction, expectedVersion int64, now time.Time) (domain.MeetingBookingDraft, error) {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return value, err
+	}
+	defer tx.Rollback(ctx)
+	var currentVersion int64
+	var currentStatus string
+	var expiresAt time.Time
+	if err = tx.QueryRow(ctx, `SELECT version,status,expires_at FROM meeting_booking_drafts WHERE id=$1 FOR UPDATE`, value.ID).Scan(&currentVersion, &currentStatus, &expiresAt); errors.Is(err, pgx.ErrNoRows) {
+		return value, ErrNotFound
+	} else if err != nil {
+		return value, err
+	}
+	if currentVersion != expectedVersion || currentStatus != "collecting" || !expiresAt.After(now) {
+		return value, ErrConflict
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO meeting_booking_actions(id,user_id,intent,title,attendees,capacity,requested_room_name,options,selected_option_id,booking_id,result_booking_id,status,source_channel,source_conversation_id,expires_at,created_at,confirmed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`, action.ID, action.UserID, action.Intent, action.Title, mustJSON(action.Attendees), action.Capacity, action.RequestedRoomName, mustJSON(action.Options), nullUUID(action.SelectedOptionID), nullUUID(action.BookingID), nullUUID(action.ResultBookingID), action.Status, action.SourceChannel, nullUUID(action.SourceConversationID), action.ExpiresAt, action.CreatedAt, action.ConfirmedAt)
+	if err != nil {
+		return value, err
+	}
+	value.Status = "completed"
+	value.ResultActionID = action.ID
+	value.Version = expectedVersion + 1
+	_, err = tx.Exec(ctx, `UPDATE meeting_booking_drafts SET slots=$2,missing_fields=$3,status='completed',version=$4,result_action_id=$5,expires_at=$6,updated_at=$7 WHERE id=$1`, value.ID, mustJSON(value.Slots), value.MissingFields, value.Version, action.ID, value.ExpiresAt, value.UpdatedAt)
+	if err != nil {
+		return value, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return value, err
+	}
+	value.ResultAction = &action
+	return value, nil
+}
+
+func (p *Postgres) ExpireMeetingBookingDrafts(ctx context.Context, userID, conversationID string, now time.Time) error {
+	_, err := p.pool.Exec(ctx, `UPDATE meeting_booking_drafts SET status='expired',version=version+1,updated_at=$3 WHERE user_id=$1 AND conversation_id=$2 AND status='collecting'`, userID, conversationID, now)
+	return err
+}
+
 func (p *Postgres) CreateMeetingBooking(ctx context.Context, value domain.MeetingBooking) error {
 	_, err := p.pool.Exec(ctx, `INSERT INTO meeting_bookings(id,user_id,calendar_id,event_id,room_id,room_name,title,start_at,end_at,attendees,status,replaces_booking_id,replaced_by_booking_id,last_error,source_channel,source_conversation_id,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, value.ID, value.UserID, value.CalendarID, value.EventID, value.RoomID, value.RoomName, value.Title, value.StartAt, value.EndAt, mustJSON(value.Attendees), value.Status, nullUUID(value.ReplacesBookingID), nullUUID(value.ReplacedByBookingID), value.LastError, value.SourceChannel, nullUUID(value.SourceConversationID), value.CreatedAt, value.UpdatedAt)
 	return err

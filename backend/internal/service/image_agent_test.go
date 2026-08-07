@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,6 +62,35 @@ func TestValidateCartoonStrength(t *testing.T) {
 		if err := ValidateCartoonStrength(value); err == nil {
 			t.Fatalf("%s should be invalid", value)
 		}
+	}
+}
+
+func TestSaveProjectReturnsSpecificValidationErrors(t *testing.T) {
+	repo := store.NewMemory(domain.AgentConfig{})
+	agent, err := NewImageAgent(repo, repo, blob.Noop{}, security.NoopScanner{}, "test-image-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = agent.SaveProject(context.Background(), domain.User{}, "", ImageProjectInput{
+		ProjectKey: "1invalid", Name: "活动图", ACL: domain.ACL{Scope: "all"}, Enabled: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "项目标识需以") {
+		t.Fatalf("expected a specific project key error, got %v", err)
+	}
+	_, err = agent.SaveProject(context.Background(), domain.User{}, "", ImageProjectInput{
+		ProjectKey: "campaign_2026", Name: " ", ACL: domain.ACL{Scope: "all"}, Enabled: true,
+	})
+	if err == nil || err.Error() != "项目名称不能为空" {
+		t.Fatalf("expected a specific project name error, got %v", err)
+	}
+	value, err := agent.SaveProject(context.Background(), domain.User{}, "", ImageProjectInput{
+		ProjectKey: "宣传图项目", Name: "宣传图生成", ACL: domain.ACL{Scope: "all"}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("expected Chinese project key and name to be accepted, got %v", err)
+	}
+	if value.ProjectKey != "宣传图项目" || value.Name != "宣传图生成" {
+		t.Fatalf("unexpected Chinese project values: %#v", value)
 	}
 }
 
@@ -160,6 +190,29 @@ func TestPromptActionNameDoesNotRequireSeparateEmployeeLabel(t *testing.T) {
 	}
 	if got := promptActionName("  新名称  ", "cartoonize", "旧名称"); got != "新名称" {
 		t.Fatalf("an explicitly provided name should still be honored, got %q", got)
+	}
+}
+
+func TestSavePromptActionAcceptsChineseButtonKey(t *testing.T) {
+	ctx := context.Background()
+	repo := store.NewMemory(domain.AgentConfig{})
+	admin, _ := repo.GetUser(ctx, store.DemoAdminID)
+	agent, _ := NewImageAgent(repo, repo, newImageTestBlob(), security.NoopScanner{}, "test-image-secret")
+
+	action, err := agent.SavePromptAction(ctx, admin, "", ImagePromptActionInput{
+		ActionKey: "卡通化_2", PromptTemplate: "将参考图转换为卡通风格", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("Chinese button keys should be accepted: %v", err)
+	}
+	if action.ActionKey != "卡通化_2" || action.Name != "卡通化_2" {
+		t.Fatalf("unexpected action identity: %+v", action)
+	}
+
+	if _, err = agent.SavePromptAction(ctx, admin, "", ImagePromptActionInput{
+		ActionKey: "-invalid", PromptTemplate: "prompt", Enabled: true,
+	}); err == nil {
+		t.Fatal("button keys must start with a letter")
 	}
 }
 
@@ -360,5 +413,52 @@ func TestImportCanvasAssetRejectsStaleVersion(t *testing.T) {
 	}
 	if _, err := agent.ImportCanvasAsset(ctx, user, project.ID, input); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("expected stale version conflict, got %v", err)
+	}
+}
+
+func TestImageCanvasLifecycleAndOwnership(t *testing.T) {
+	ctx := context.Background()
+	repo := store.NewMemory(domain.AgentConfig{})
+	owner, _ := repo.GetUser(ctx, store.DemoEmployeeID)
+	other, _ := repo.GetUser(ctx, store.DemoAdminID)
+	agent, err := NewImageAgent(repo, repo, blob.Noop{}, security.NoopScanner{}, "test-image-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	canvas, err := agent.CreateCanvas(ctx, owner, "  市场宣传图  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canvas.Name != "市场宣传图" || canvas.ProjectID != "" {
+		t.Fatalf("unexpected new canvas: %+v", canvas)
+	}
+	if _, err = agent.CanvasByID(ctx, other, canvas.ID, false); !errors.Is(err, store.ErrForbidden) {
+		t.Fatalf("another user must not read this canvas, got %v", err)
+	}
+	if _, err = agent.CreateCanvas(ctx, owner, "市场宣传图"); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("duplicate active canvas names must conflict, got %v", err)
+	}
+
+	if err = agent.DeleteCanvas(ctx, owner, canvas.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = agent.CanvasByID(ctx, owner, canvas.ID, false); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleted canvas must reject normal access, got %v", err)
+	}
+	trash, err := agent.Canvases(ctx, owner, true)
+	if err != nil || len(trash) != 1 || trash[0].ID != canvas.ID {
+		t.Fatalf("unexpected trash list: %+v, err=%v", trash, err)
+	}
+
+	if _, err = agent.CreateCanvas(ctx, owner, "市场宣传图"); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := agent.RestoreCanvas(ctx, owner, canvas.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Name == "市场宣传图" || restored.DeletedAt != nil {
+		t.Fatalf("restore should resolve an active name conflict: %+v", restored)
 	}
 }

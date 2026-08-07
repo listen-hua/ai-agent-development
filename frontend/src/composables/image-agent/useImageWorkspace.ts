@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ApiError } from '@/services/api'
 import { imageAgentService } from '@/services/image-agent'
@@ -7,6 +7,10 @@ import { hasCartoonStrength } from '@/utils/imagePrompt'
 import {
   canvasImportPositions, validateCanvasImportFiles, type CanvasImportOrigin,
 } from '@/utils/imageCanvasImport'
+import {
+  applyLocalCanvasLayout, canvasLayoutFromCanvas, cloneCanvasLayout, mergeRemoteCanvasWithLocalLayout,
+  sameCanvasLayout, type ImageCanvasLayout,
+} from '@/utils/imageCanvasPersistence'
 import type {
   ImageAgentOptions, ImageAsset, ImageCanvas, ImageFormState, ImageJob, ImagePromptAction, ImageViewport,
   ImageCanvasNode,
@@ -14,7 +18,14 @@ import type {
 
 const emptyOptions = (): ImageAgentOptions => ({ relays: [], models: [], projects: [], prompt_actions: [] })
 
-export function useImageWorkspace() {
+interface CanvasSaveTask extends ImageCanvasLayout {
+  canvasId: string
+  epoch: number
+  revision: number
+  conflictAttempts: number
+}
+
+export function useImageWorkspace(canvasId: Ref<string>) {
   const options = ref<ImageAgentOptions>(emptyOptions())
   const canvas = ref<ImageCanvas>()
   const references = ref<ImageAsset[]>([])
@@ -41,22 +52,35 @@ export function useImageWorkspace() {
   let pollTimer: number | undefined
   let saveInFlight = false
   let savePromise: Promise<void> | undefined
-  let pendingCanvasPatch: { viewport: ImageViewport; nodes: ImageCanvasNode[] } | undefined
+  let pendingCanvasPatch: CanvasSaveTask | undefined
+  let lastScheduledLayout: ImageCanvasLayout | undefined
+  let canvasEpoch = 0
+  let canvasRevision = 0
   let projectWatchReady = false
+  let promptActionRequest = 0
 
   async function initialize() {
     loading.value = true
     try {
-      const loaded = await imageAgentService.options()
+      if (canvas.value) await drainCanvasSave()
+      beginCanvasLoad()
+      canvas.value = undefined
+      references.value = []
+      currentJob.value = undefined
+      projectWatchReady = false
+      const [loaded, projectCanvas] = await Promise.all([
+        imageAgentService.options(),
+        imageAgentService.canvasById(canvasId.value),
+      ])
       options.value = loaded
       const project = loaded.projects.find((item) => item.enabled) || loaded.projects[0]
       const relay = loaded.relays[0]
       form.value.projectId = project?.id || ''
       form.value.relayId = relay?.id || ''
       form.value.modelId = loaded.models.find((item) => item.relay_id === relay?.id)?.id || ''
-      if (project) {
-        await loadProject(project.id)
-      }
+      canvas.value = projectCanvas
+      lastScheduledLayout = canvasLayoutFromCanvas(projectCanvas)
+      if (project) options.value.prompt_actions = await imageAgentService.promptActions(project.id)
       projectWatchReady = true
     } catch (error) {
       showError(error, '读取 AI 生图配置失败')
@@ -65,30 +89,22 @@ export function useImageWorkspace() {
     }
   }
 
-  async function loadProject(projectId: string) {
-    if (!projectId) {
-      canvas.value = undefined
-      references.value = []
-      return
-    }
-    references.value = []
-    const [projectOptions, projectCanvas] = await Promise.all([
-      imageAgentService.options(projectId),
-      imageAgentService.canvas(projectId),
-    ])
-    options.value = { ...projectOptions, prompt_actions: projectOptions.prompt_actions }
-    canvas.value = projectCanvas
+  function beginCanvasLoad() {
+    canvasEpoch++
+    promptActionRequest++
+    window.clearTimeout(saveTimer)
+    pendingCanvasPatch = undefined
+    return canvasEpoch
   }
 
   watch(() => form.value.projectId, async (projectId, previous) => {
     if (!projectWatchReady || !projectId || projectId === previous) return
-    loading.value = true
+    const request = ++promptActionRequest
     try {
-      await loadProject(projectId)
+      const actions = await imageAgentService.promptActions(projectId)
+      if (request === promptActionRequest && projectId === form.value.projectId) options.value.prompt_actions = actions
     } catch (error) {
-      showError(error, '切换项目失败')
-    } finally {
-      loading.value = false
+      showError(error, '读取项目功能按键失败')
     }
   })
 
@@ -176,12 +192,8 @@ export function useImageWorkspace() {
   }
 
   async function deleteCanvasNode(nodeId: string) {
-    if (!nodeId || deletingNodeId.value || !canvas.value || !form.value.projectId) return
-    if (!selectedProject.value?.enabled) {
-      ElMessage.warning('项目已停用，历史画布仅可查看')
-      return
-    }
-    const projectId = form.value.projectId
+    if (!nodeId || deletingNodeId.value || !canvas.value) return
+    const currentCanvasID = canvas.value.id
     deletingNodeId.value = nodeId
     try {
       await drainCanvasSave()
@@ -189,13 +201,13 @@ export function useImageWorkspace() {
       while (canvas.value?.nodes.some((node) => node.id === nodeId)) {
         const deletedNode = canvas.value.nodes.find((node) => node.id === nodeId)
         try {
-          canvas.value = await imageAgentService.deleteCanvasNode(projectId, nodeId, canvas.value.version)
+          canvas.value = await imageAgentService.deleteCanvasNodeById(currentCanvasID, nodeId, canvas.value.version)
           if (deletedNode?.asset_id) removeReference(deletedNode.asset_id)
           ElMessage.success('图片已从画布删除')
           return
         } catch (error) {
           if (error instanceof ApiError && error.status === 409 && retryConflict) {
-            canvas.value = await imageAgentService.canvas(projectId)
+            canvas.value = await imageAgentService.canvasById(currentCanvasID)
             retryConflict = false
             continue
           }
@@ -211,8 +223,21 @@ export function useImageWorkspace() {
   }
 
   function scheduleCanvasSave(value: { viewport: ImageViewport; nodes: ImageCanvasNode[] }) {
-    if (!canvas.value || !selectedProject.value?.enabled || importing.value) return
-    pendingCanvasPatch = value
+    if (!canvas.value || importing.value) return
+    const layout = cloneCanvasLayout(value)
+    const baseline = lastScheduledLayout || canvasLayoutFromCanvas(canvas.value)
+    if (sameCanvasLayout(baseline, layout)) return
+
+    canvasRevision++
+    pendingCanvasPatch = {
+      ...layout,
+      canvasId: canvas.value.id,
+      epoch: canvasEpoch,
+      revision: canvasRevision,
+      conflictAttempts: 0,
+    }
+    lastScheduledLayout = cloneCanvasLayout(layout)
+    canvas.value = applyLocalCanvasLayout(canvas.value, layout)
     window.clearTimeout(saveTimer)
     saveTimer = window.setTimeout(flushCanvasSave, 550)
   }
@@ -220,23 +245,27 @@ export function useImageWorkspace() {
   function flushCanvasSave(): Promise<void> {
     if (savePromise) return savePromise
     if (!pendingCanvasPatch || !canvas.value) return Promise.resolve()
+    const task = pendingCanvasPatch
+    if (!isCurrentCanvasTask(task)) {
+      pendingCanvasPatch = undefined
+      return Promise.resolve()
+    }
     saveInFlight = true
-    const patch = pendingCanvasPatch
     pendingCanvasPatch = undefined
     savePromise = (async () => {
       try {
-        const saved = await imageAgentService.saveCanvas(form.value.projectId, {
-          viewport: patch.viewport,
-          nodes: patch.nodes,
+        const saved = await imageAgentService.saveCanvasById(task.canvasId, {
+          viewport: task.viewport,
+          nodes: task.nodes,
           version: canvas.value!.version,
         })
-        canvas.value!.version = saved.version
-        canvas.value!.viewport = patch.viewport
-        canvas.value!.nodes = patch.nodes
+        if (isCurrentCanvasTask(task) && canvas.value) {
+          canvas.value.version = Math.max(canvas.value.version, saved.version)
+          canvas.value.updated_at = saved.updated_at
+        }
       } catch (error) {
         if (error instanceof ApiError && error.status === 409) {
-          canvas.value = await imageAgentService.canvas(form.value.projectId)
-          ElMessage.warning('画布已在其他页面更新，已加载最新版本')
+          await recoverCanvasConflict(task)
         } else {
           showError(error, '保存画布位置失败')
         }
@@ -249,6 +278,38 @@ export function useImageWorkspace() {
     return savePromise
   }
 
+  function isCurrentCanvasTask(task: CanvasSaveTask) {
+    return task.epoch === canvasEpoch
+      && task.canvasId === canvas.value?.id
+  }
+
+  async function recoverCanvasConflict(task: CanvasSaveTask) {
+    if (!isCurrentCanvasTask(task) || !canvas.value) return
+    const remote = await imageAgentService.canvasById(task.canvasId)
+    if (!isCurrentCanvasTask(task) || remote.id !== task.canvasId || !canvas.value) return
+
+    if (task.conflictAttempts >= 1) {
+      pendingCanvasPatch = undefined
+      canvas.value = remote
+      lastScheduledLayout = canvasLayoutFromCanvas(remote)
+      ElMessage.warning('画布持续发生版本冲突，已停止自动保存并加载服务器版本')
+      return
+    }
+
+    const merged = mergeRemoteCanvasWithLocalLayout(remote, canvas.value)
+    canvas.value = merged
+    const retryLayout = canvasLayoutFromCanvas(merged)
+    canvasRevision++
+    pendingCanvasPatch = {
+      ...retryLayout,
+      canvasId: merged.id,
+      epoch: canvasEpoch,
+      revision: canvasRevision,
+      conflictAttempts: task.conflictAttempts + 1,
+    }
+    lastScheduledLayout = cloneCanvasLayout(retryLayout)
+  }
+
   async function drainCanvasSave() {
     window.clearTimeout(saveTimer)
     while (savePromise || pendingCanvasPatch || saveInFlight) {
@@ -256,6 +317,18 @@ export function useImageWorkspace() {
       else await flushCanvasSave()
       window.clearTimeout(saveTimer)
     }
+  }
+
+  async function refreshCanvas(currentCanvasID: string, epoch = canvasEpoch) {
+    const remote = await imageAgentService.canvasById(currentCanvasID)
+    if (epoch !== canvasEpoch || currentCanvasID !== canvas.value?.id) return
+
+    const local = canvas.value
+    const next = local?.id === remote.id
+      ? mergeRemoteCanvasWithLocalLayout(remote, local)
+      : remote
+    canvas.value = next
+    lastScheduledLayout = canvasLayoutFromCanvas(next)
   }
 
   async function importToCanvas(files: File[], point: { x: number; y: number }, origin: CanvasImportOrigin) {
@@ -278,6 +351,7 @@ export function useImageWorkspace() {
     }
     importing.value = true
     const projectID = form.value.projectId
+    const currentCanvasID = canvas.value.id
     let succeeded = 0
     let failed = rejected.length
     let lastError: unknown
@@ -290,7 +364,7 @@ export function useImageWorkspace() {
         let retryConflict = true
         while (true) {
           try {
-            canvas.value = await imageAgentService.importCanvasAsset(projectID, accepted[index], {
+            canvas.value = await imageAgentService.importCanvasAssetById(currentCanvasID, projectID, accepted[index], {
               ...positions[index],
               version: canvas.value!.version,
               origin,
@@ -299,7 +373,7 @@ export function useImageWorkspace() {
             break
           } catch (error) {
             if (error instanceof ApiError && error.status === 409 && retryConflict) {
-              canvas.value = await imageAgentService.canvas(projectID)
+              canvas.value = await imageAgentService.canvasById(currentCanvasID)
               retryConflict = false
               continue
             }
@@ -326,17 +400,21 @@ export function useImageWorkspace() {
   }
 
   async function submit(center: { x: number; y: number; anchorNodeId?: string } = { x: 0, y: 0 }) {
-    if (generating.value || !form.value.projectId || !form.value.modelId || !form.value.relayId) return
+    if (generating.value || !canvas.value || !form.value.projectId || !form.value.modelId || !form.value.relayId) return
     if (!selectedProject.value?.enabled) {
       ElMessage.warning('项目已停用，历史画布仅可查看')
       return
     }
     generating.value = true
     window.clearTimeout(pollTimer)
+    const projectId = form.value.projectId
+    const currentCanvasID = canvas.value.id
+    const epoch = canvasEpoch
     try {
       if (!form.value.reversePrompt) await drainCanvasSave()
       currentJob.value = await imageAgentService.createJob({
-        project_id: form.value.projectId,
+        canvas_id: currentCanvasID,
+        project_id: projectId,
         relay_id: form.value.relayId,
         model_id: form.value.modelId,
         kind: form.value.reversePrompt ? 'reverse_prompt' : 'generate',
@@ -350,17 +428,19 @@ export function useImageWorkspace() {
         placement_y: center.y,
         anchor_node_id: center.anchorNodeId || undefined,
       })
-      if (!form.value.reversePrompt) canvas.value = await imageAgentService.canvas(form.value.projectId)
-      pollJob(currentJob.value.id)
+      if (!form.value.reversePrompt) await refreshCanvas(currentCanvasID, epoch)
+      pollJob(currentJob.value.id, currentCanvasID, epoch)
     } catch (error) {
       generating.value = false
       showError(error, form.value.reversePrompt ? '创建图片反推任务失败' : '创建生图任务失败')
     }
   }
 
-  async function pollJob(id: string) {
+  async function pollJob(id: string, currentCanvasID: string, epoch: number) {
+    if (epoch !== canvasEpoch || currentCanvasID !== canvas.value?.id) return
     try {
       const job = await imageAgentService.job(id)
+      if (epoch !== canvasEpoch || currentCanvasID !== canvas.value?.id) return
       currentJob.value = job
       if (job.status === 'succeeded' || job.status === 'partial' || job.status === 'failed' || job.status === 'cancelled') {
         generating.value = false
@@ -369,15 +449,15 @@ export function useImageWorkspace() {
           form.value.reversePrompt = false
           ElMessage.success('图片描述已反推完成')
         } else {
-          canvas.value = await imageAgentService.canvas(form.value.projectId)
+          await refreshCanvas(currentCanvasID, epoch)
           if (job.status === 'succeeded') ElMessage.success('图片生成完成')
           else if (job.status === 'partial') ElMessage.warning(`部分图片生成成功：${job.error || '可重试失败项'}`)
           else if (job.status === 'failed') ElMessage.error(job.error || '图片生成失败')
         }
         return
       }
-      if (job.kind === 'generate') canvas.value = await imageAgentService.canvas(form.value.projectId)
-      pollTimer = window.setTimeout(() => pollJob(id), 1500)
+      if (job.kind === 'generate') await refreshCanvas(currentCanvasID, epoch)
+      pollTimer = window.setTimeout(() => pollJob(id, currentCanvasID, epoch), 1500)
     } catch (error) {
       generating.value = false
       showError(error, '读取生图任务状态失败')
@@ -395,6 +475,8 @@ export function useImageWorkspace() {
   }
 
   onBeforeUnmount(() => {
+    canvasEpoch++
+    pendingCanvasPatch = undefined
     window.clearTimeout(saveTimer)
     window.clearTimeout(pollTimer)
   })

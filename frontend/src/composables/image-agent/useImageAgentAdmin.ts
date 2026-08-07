@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { directoryService } from '@/services/admin'
+import { ApiError } from '@/services/api'
 import { imageAgentAdminService } from '@/services/image-agent'
 import type { DirectoryOptions } from '@/types/domain'
 import type {
@@ -89,6 +90,9 @@ export function useImageAgentAdmin() {
       upsert(projects.value, value)
       ElMessage.success('项目配置已保存')
       return value
+    } catch (error) {
+      ElMessage.error(`项目保存失败：${requestErrorMessage(error, '请检查项目标识、名称和可见范围')}`)
+      throw error
     } finally {
       saving.value = false
     }
@@ -108,13 +112,16 @@ export function useImageAgentAdmin() {
       try {
         if (preview.file) value = await imageAgentAdminService.updatePromptActionPreview(value.id, preview.file)
         else if (preview.remove && value.has_preview) value = await imageAgentAdminService.deletePromptActionPreview(value.id)
-      } catch {
-        ElMessage.warning('功能按键已保存，但预览图更新失败，请在当前窗口重试')
+      } catch (error) {
+        ElMessage.warning(`功能按键已保存，但预览图更新失败：${requestErrorMessage(error, '请在当前窗口重试')}`)
         return { action: value, preview_error: true }
       }
       upsert(promptActions.value, value)
       ElMessage.success('功能按键已保存')
       return { action: value }
+    } catch (error) {
+      ElMessage.error(`功能按键保存失败：${requestErrorMessage(error, '请检查填写内容后重试')}`)
+      throw error
     } finally {
       saving.value = false
     }
@@ -130,6 +137,12 @@ export function useImageAgentAdmin() {
     relays, models, projects, promptActions, directory, loading, saving, acting,
     load, saveRelay, testRelay, syncModels, saveModel, saveProject, savePromptAction, deletePromptAction,
   }
+}
+
+function requestErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof ApiError) return error.detail?.trim() || error.message || fallback
+  if (error instanceof Error) return error.message || fallback
+  return fallback
 }
 
 function upsert<T extends { id: string }>(values: T[], value: T) {

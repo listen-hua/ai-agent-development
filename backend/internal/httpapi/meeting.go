@@ -3,7 +3,10 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strconv"
+	"strings"
 
+	"internal-ai-agent/backend/internal/service"
 	"internal-ai-agent/backend/internal/store"
 )
 
@@ -48,6 +51,69 @@ func (s *Server) listMeetingBookings(w http.ResponseWriter, r *http.Request) {
 	}
 	values, err := s.meetings.ListBookings(r.Context(), currentUser(r))
 	respond(w, values, err)
+}
+
+func (s *Server) prepareMeetingBookingCancellation(w http.ResponseWriter, r *http.Request) {
+	if s.meetings == nil {
+		writeError(w, http.StatusServiceUnavailable, "会议室预约服务未启用", nil)
+		return
+	}
+	action, err := s.meetings.PrepareCancellationForBooking(r.Context(), currentUser(r), r.PathValue("id"), "h5", "")
+	if err != nil {
+		writeMeetingError(w, "创建取消确认失败", err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, action)
+}
+
+func (s *Server) searchMeetingAttendees(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	values, err := s.meetings.SearchAttendees(r.Context(), currentUser(r), strings.TrimSpace(r.URL.Query().Get("q")), limit)
+	if err != nil {
+		writeMeetingError(w, "搜索飞书员工失败", err)
+		return
+	}
+	if s.directory != nil {
+		if departments, directoryErr := s.directory.Departments(r.Context()); directoryErr == nil {
+			names := make(map[string]string, len(departments))
+			for _, department := range departments {
+				names[department.OpenDepartmentID] = department.Name
+			}
+			for index := range values {
+				for _, departmentID := range values[index].DepartmentIDs {
+					if name := names[departmentID]; name != "" {
+						values[index].DepartmentNames = append(values[index].DepartmentNames, name)
+					}
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, values)
+}
+
+func (s *Server) updateMeetingBookingDraft(w http.ResponseWriter, r *http.Request) {
+	var input service.MeetingBookingDraftUpdate
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	result, err := s.meetings.UpdateDraft(r.Context(), currentUser(r), r.PathValue("id"), input)
+	if err != nil {
+		writeMeetingError(w, "更新会议预约信息失败", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func writeMeetingError(w http.ResponseWriter, message string, err error) {
+	status := http.StatusBadRequest
+	if errors.Is(err, store.ErrForbidden) {
+		status = http.StatusForbidden
+	} else if errors.Is(err, store.ErrNotFound) {
+		status = http.StatusNotFound
+	} else if errors.Is(err, store.ErrConflict) {
+		status = http.StatusConflict
+	}
+	writeError(w, status, message, err)
 }
 
 func (s *Server) listMeetingRooms(w http.ResponseWriter, r *http.Request) {

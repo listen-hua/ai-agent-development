@@ -67,6 +67,9 @@ func main() {
 	defer meetingLocker.Close()
 	meetings := service.NewMeeting(repo, feishuClient, meetingLocker, cfg.ReminderTimezone, cfg.FeishuMeetingCalendarID)
 	meetingDispatcher := service.NewMeetingDispatcher(repo, meetings)
+	var massageRepository store.MassageRepository = repo
+	massage := service.NewMassage(massageRepository, repo, feishuClient, cfg.FeishuAppLink, time.Duration(cfg.MassageResponseSeconds)*time.Second, time.Duration(cfg.MassageRetentionDays)*24*time.Hour)
+	massageDispatcher := service.NewMassageDispatcher(massage)
 	notifications := service.NewNotification(repo, feishuClient, provider)
 	interval := time.Duration(cfg.ReminderPollSeconds) * time.Second
 	if interval < time.Second {
@@ -87,6 +90,9 @@ func main() {
 	if err = imageDispatcher.Tick(ctx); err != nil {
 		logger.Error("initial image job tick failed", "error", err)
 	}
+	if err = massageDispatcher.Tick(ctx); err != nil {
+		logger.Error("initial massage tick failed", "error", err)
+	}
 	for {
 		select {
 		case <-ticker.C:
@@ -101,6 +107,9 @@ func main() {
 			}
 			if err = imageDispatcher.Tick(ctx); err != nil {
 				logger.Error("image job tick failed", "error", err)
+			}
+			if err = massageDispatcher.Tick(ctx); err != nil {
+				logger.Error("massage tick failed", "error", err)
 			}
 		case <-ctx.Done():
 			logger.Info("worker stopped")
