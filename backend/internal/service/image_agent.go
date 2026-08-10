@@ -349,17 +349,24 @@ func (s *ImageAgent) SyncModels(ctx context.Context, actor domain.User, relayID 
 	for _, modelID := range remote {
 		values = append(values, domain.ImageModel{ID: ids.New("model"), RelayID: relay.ID, ModelID: modelID,
 			DisplayName: modelID, Protocol: "chat_completions", Enabled: false, SupportsReverse: true,
-			SupportedSizes: []string{"1K", "2K", "4K"}, MaxCount: 1, CreatedAt: now, UpdatedAt: now})
+			SupportedSizes: defaultImageModelSizes(modelID), MaxCount: 1, CreatedAt: now, UpdatedAt: now})
 	}
 	if err = s.repo.UpsertImageModels(ctx, values); err != nil {
 		return nil, err
 	}
 	s.appendAudit(ctx, actor, "image.models.sync", "image_relay", relay.ID, map[string]any{"discovered": len(values)})
-	return s.repo.ListImageModels(ctx, relay.ID)
+	return s.ListModels(ctx, relay.ID)
 }
 
 func (s *ImageAgent) ListModels(ctx context.Context, relayID string) ([]domain.ImageModel, error) {
-	return s.repo.ListImageModels(ctx, relayID)
+	models, err := s.repo.ListImageModels(ctx, relayID)
+	if err != nil {
+		return nil, err
+	}
+	for index := range models {
+		models[index].SupportedSizes = effectiveImageModelSizes(models[index].ModelID, models[index].SupportedSizes)
+	}
+	return models, nil
 }
 
 func (s *ImageAgent) SaveModel(ctx context.Context, actor domain.User, id string, input ImageModelInput) (domain.ImageModel, error) {
@@ -380,6 +387,13 @@ func (s *ImageAgent) SaveModel(ctx context.Context, actor domain.User, id string
 	sizes := normalizeSizes(input.SupportedSizes)
 	if len(sizes) == 0 {
 		return value, errors.New("至少需要开放一个分辨率档位")
+	}
+	if maximum := knownImageModelSizes(value.ModelID); maximum != nil {
+		for _, size := range sizes {
+			if !containsString(maximum, size) {
+				return value, fmt.Errorf("模型 %s 不支持 %s 生图分辨率", value.ModelID, size)
+			}
+		}
 	}
 	value.DisplayName, value.Protocol, value.Enabled = input.DisplayName, input.Protocol, input.Enabled
 	value.SupportsReference, value.SupportsReverse = input.SupportsReference, input.SupportsReverse
@@ -973,7 +987,8 @@ func (s *ImageAgent) CreateJob(ctx context.Context, user domain.User, input Imag
 	if model.Protocol == "images_generations" && len(input.ReferenceAssetIDs) > 0 && input.Kind == "generate" {
 		return domain.ImageJob{}, errors.New("当前 Images 协议未开放参考图编辑，请选择 Chat 生图模型")
 	}
-	if !validRatios[input.AspectRatio] || !validSizes[input.ImageSize] || !containsString(model.SupportedSizes, input.ImageSize) {
+	effectiveSizes := effectiveImageModelSizes(model.ModelID, model.SupportedSizes)
+	if !validRatios[input.AspectRatio] || !validSizes[input.ImageSize] || !containsString(effectiveSizes, input.ImageSize) {
 		return domain.ImageJob{}, errors.New("所选比例或分辨率不受支持")
 	}
 	if !validCounts[input.Count] || input.Count > model.MaxCount {
@@ -1226,11 +1241,16 @@ func importedNodeDimensions(pixelWidth, pixelHeight int) (float64, float64) {
 }
 
 func imageDimensions(data []byte) (int, int) {
+	width, height, _ := decodeImageDimensions(data)
+	return width, height
+}
+
+func decodeImageDimensions(data []byte) (int, int, error) {
 	config, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return 0, 0
+		return 0, 0, err
 	}
-	return config.Width, config.Height
+	return config.Width, config.Height, nil
 }
 
 func normalizeHosts(values []string) []string {
@@ -1257,6 +1277,46 @@ func normalizeSizes(values []string) []string {
 		}
 	}
 	return result
+}
+
+func defaultImageModelSizes(modelID string) []string {
+	if sizes := knownImageModelSizes(modelID); sizes != nil {
+		return append([]string(nil), sizes...)
+	}
+	return []string{"1K"}
+}
+
+func effectiveImageModelSizes(modelID string, configured []string) []string {
+	configured = normalizeSizes(configured)
+	maximum := knownImageModelSizes(modelID)
+	if maximum == nil {
+		return configured
+	}
+	result := make([]string, 0, len(configured))
+	for _, size := range configured {
+		if containsString(maximum, size) {
+			result = append(result, size)
+		}
+	}
+	if len(result) == 0 && len(maximum) > 0 {
+		return []string{maximum[0]}
+	}
+	return result
+}
+
+func knownImageModelSizes(modelID string) []string {
+	normalized := strings.ToLower(strings.TrimSpace(modelID))
+	switch {
+	case strings.Contains(normalized, "gemini-2.5-flash-image"),
+		strings.Contains(normalized, "flash-lite"):
+		return []string{"1K"}
+	case strings.Contains(normalized, "gemini-3-pro-image"),
+		strings.Contains(normalized, "gemini-3.1-flash-image"),
+		strings.Contains(normalized, "gemini-3-flash-image"):
+		return []string{"1K", "2K", "4K"}
+	default:
+		return nil
+	}
 }
 
 func containsString(values []string, expected string) bool {

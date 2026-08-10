@@ -20,6 +20,27 @@ type ImageDispatcher struct {
 	retention time.Duration
 }
 
+type imageGenerator interface {
+	GenerateChat(context.Context, string, string, string, string, []string) (imageproxy.Image, error)
+	GenerateImage(context.Context, string, string, string, string) (imageproxy.Image, error)
+}
+
+type imageResolutionError struct {
+	RequestedTier string
+	AspectRatio   string
+	ActualWidth   int
+	ActualHeight  int
+	RetryCount    int
+}
+
+func (e *imageResolutionError) Error() string {
+	message := fmt.Sprintf("中转站返回图片分辨率不足：请求 %s（%s），实际 %dx%d", e.RequestedTier, e.AspectRatio, e.ActualWidth, e.ActualHeight)
+	if e.RetryCount > 0 {
+		message += fmt.Sprintf("，已自动重试 %d 次", e.RetryCount)
+	}
+	return message
+}
+
 func NewImageDispatcher(agent *ImageAgent, retention time.Duration) *ImageDispatcher {
 	if retention <= 0 {
 		retention = 90 * 24 * time.Hour
@@ -73,15 +94,20 @@ func (d *ImageDispatcher) process(ctx context.Context, job domain.ImageJob) erro
 	}
 
 	pending := make([]domain.ImageJobOutput, 0, len(job.Outputs))
-	completed := job.CompletedCount
+	completed, terminalFailed := 0, 0
+	var firstErr error
 	for _, output := range job.Outputs {
-		if output.Status == "succeeded" {
-			if completed == 0 {
-				completed++
+		switch output.Status {
+		case "succeeded":
+			completed++
+		case "failed":
+			terminalFailed++
+			if firstErr == nil && output.Error != "" {
+				firstErr = errors.New(output.Error)
 			}
-			continue
+		default:
+			pending = append(pending, output)
 		}
-		pending = append(pending, output)
 	}
 	type outputResult struct {
 		output domain.ImageJobOutput
@@ -108,36 +134,42 @@ func (d *ImageDispatcher) process(ctx context.Context, job domain.ImageJob) erro
 	wg.Wait()
 	close(results)
 
-	var firstErr error
-	failed := 0
+	retryPending := false
 	for result := range results {
 		if result.err == nil {
 			completed++
 			continue
 		}
-		failed++
 		if firstErr == nil {
 			firstErr = result.err
 		}
-		if !retryableImageError(result.err) || job.Attempts >= 3 {
-			result.output.Status, result.output.Error, result.output.Attempts, result.output.UpdatedAt =
-				"failed", result.err.Error(), job.Attempts, time.Now()
-			_ = d.agent.repo.UpdateImageJobOutputFailure(ctx, result.output, domain.ImageCanvasNode{
-				JobID: job.ID, OutputIndex: result.output.OutputIndex, Error: result.err.Error(), UpdatedAt: time.Now(),
-			})
+		if shouldRetryImageError(result.err, job.Attempts) {
+			retryPending = true
+			continue
 		}
+		terminalFailed++
+		result.output.Status, result.output.Error, result.output.Attempts, result.output.UpdatedAt =
+			"failed", result.err.Error(), job.Attempts, time.Now()
+		_ = d.agent.repo.UpdateImageJobOutputFailure(ctx, result.output, domain.ImageCanvasNode{
+			JobID: job.ID, OutputIndex: result.output.OutputIndex, Error: result.err.Error(), UpdatedAt: time.Now(),
+		})
 	}
 	job.CompletedCount, job.LockedUntil, job.UpdatedAt = completed, nil, time.Now()
+	failureMessage := "image generation failed"
+	if firstErr != nil {
+		failureMessage = firstErr.Error()
+	}
 	switch {
-	case failed == 0:
-		job.Status, job.Error = "succeeded", ""
-	case completed > 0 && (job.Attempts >= 3 || !retryableImageError(firstErr)):
-		job.Status, job.Error = "partial", firstErr.Error()
-	case completed == 0 && (job.Attempts >= 3 || !retryableImageError(firstErr)):
-		job.Status, job.Error = "failed", firstErr.Error()
-	default:
-		job.Status, job.Error = "retry", firstErr.Error()
+	case retryPending:
+		job.Status = "retry"
+		job.Error = failureMessage
 		job.NextAttemptAt = time.Now().Add(backoff(job.Attempts))
+	case terminalFailed == 0:
+		job.Status, job.Error = "succeeded", ""
+	case completed > 0:
+		job.Status, job.Error = "partial", failureMessage
+	default:
+		job.Status, job.Error = "failed", failureMessage
 	}
 	if err = d.agent.repo.UpdateImageJob(ctx, job); err != nil {
 		return err
@@ -145,7 +177,7 @@ func (d *ImageDispatcher) process(ctx context.Context, job domain.ImageJob) erro
 	return firstErr
 }
 
-func (d *ImageDispatcher) generateOne(ctx context.Context, job domain.ImageJob, model domain.ImageModel, client *imageproxy.Client, references []string, output domain.ImageJobOutput) error {
+func (d *ImageDispatcher) generateOne(ctx context.Context, job domain.ImageJob, model domain.ImageModel, client imageGenerator, references []string, output domain.ImageJobOutput) error {
 	var generated imageproxy.Image
 	var err error
 	if model.Protocol == "images_generations" {
@@ -155,6 +187,15 @@ func (d *ImageDispatcher) generateOne(ctx context.Context, job domain.ImageJob, 
 	}
 	if err != nil {
 		return err
+	}
+	width, height, err := decodeImageDimensions(generated.Data)
+	if err != nil {
+		return fmt.Errorf("decode generated image dimensions: %w", err)
+	}
+	expectedWidth, expectedHeight := imageproxy.ExpectedDimensions(job.AspectRatio, job.ImageSize)
+	if !imageResolutionAccepted(width, height, expectedWidth, expectedHeight) {
+		return &imageResolutionError{RequestedTier: job.ImageSize, AspectRatio: job.AspectRatio,
+			ActualWidth: width, ActualHeight: height, RetryCount: max(job.Attempts-1, 0)}
 	}
 	if err = d.agent.scanner.Scan(ctx, generated.Data); err != nil {
 		return fmt.Errorf("generated image security scan: %w", err)
@@ -166,7 +207,6 @@ func (d *ImageDispatcher) generateOne(ctx context.Context, job domain.ImageJob, 
 	} else if generated.MIME == "image/webp" {
 		extension = ".webp"
 	}
-	width, height := imageDimensions(generated.Data)
 	asset := domain.ImageAsset{ID: ids.New("asset"), OwnerID: job.UserID, ProjectID: job.ProjectID,
 		ObjectKey: path.Join("image-agent", job.UserID, job.ID, fmt.Sprintf("%d%s", output.OutputIndex, extension)),
 		MIMEType:  generated.MIME, FileName: fmt.Sprintf("%s-%d%s", job.ID, output.OutputIndex+1, extension),
@@ -212,7 +252,7 @@ func (d *ImageDispatcher) referenceDataURLs(ctx context.Context, job domain.Imag
 
 func (d *ImageDispatcher) finishRetryOrFail(ctx context.Context, job domain.ImageJob, cause error) error {
 	job.Error, job.LockedUntil, job.UpdatedAt = cause.Error(), nil, time.Now()
-	if job.Attempts < 3 && retryableImageError(cause) {
+	if shouldRetryImageError(cause, job.Attempts) {
 		job.Status, job.NextAttemptAt = "retry", time.Now().Add(backoff(job.Attempts))
 	} else {
 		job.Status = "failed"
@@ -221,6 +261,21 @@ func (d *ImageDispatcher) finishRetryOrFail(ctx context.Context, job domain.Imag
 		return err
 	}
 	return cause
+}
+
+func shouldRetryImageError(err error, attempt int) bool {
+	var resolutionErr *imageResolutionError
+	if errors.As(err, &resolutionErr) {
+		return attempt < 2
+	}
+	return attempt < 3 && retryableImageError(err)
+}
+
+func imageResolutionAccepted(actualWidth, actualHeight, expectedWidth, expectedHeight int) bool {
+	if actualWidth <= 0 || actualHeight <= 0 || expectedWidth <= 0 || expectedHeight <= 0 {
+		return false
+	}
+	return actualWidth*10 >= expectedWidth*9 && actualHeight*10 >= expectedHeight*9
 }
 
 func retryableImageError(err error) bool {

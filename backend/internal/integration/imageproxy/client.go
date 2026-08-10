@@ -116,27 +116,7 @@ func (c *Client) Models(ctx context.Context) ([]string, error) {
 }
 
 func (c *Client) GenerateChat(ctx context.Context, model, prompt, aspectRatio, imageSize string, references []string) (Image, error) {
-	content := []map[string]any{{"type": "text", "text": prompt}}
-	for _, reference := range references {
-		content = append(content, map[string]any{"type": "image_url", "image_url": map[string]string{"url": reference}})
-	}
-	input := map[string]any{
-		"model":      model,
-		"messages":   []map[string]any{{"role": "user", "content": content}},
-		"modalities": []string{"image"},
-		"n":          1,
-		"extra_body": map[string]any{
-			"aspect_ratio": aspectRatio,
-			"image_size":   imageSize,
-			"google": map[string]any{
-				"generation_config": map[string]any{
-					"responseModalities": []string{"IMAGE"},
-					"candidateCount":     1,
-					"imageConfig":        map[string]string{"aspectRatio": aspectRatio, "imageSize": imageSize},
-				},
-			},
-		},
-	}
+	input := chatGenerationInput(model, prompt, aspectRatio, imageSize, references)
 	var response map[string]any
 	if err := c.request(ctx, http.MethodPost, "/chat/completions", input, &response); err != nil {
 		return Image{}, err
@@ -148,6 +128,24 @@ func (c *Client) GenerateChat(ctx context.Context, model, prompt, aspectRatio, i
 	return c.decodeImage(ctx, values[0])
 }
 
+func chatGenerationInput(model, prompt, aspectRatio, imageSize string, references []string) map[string]any {
+	content := []map[string]any{{"type": "text", "text": prompt}}
+	for _, reference := range references {
+		content = append(content, map[string]any{"type": "image_url", "image_url": map[string]string{"url": reference}})
+	}
+	return map[string]any{
+		"model":      model,
+		"messages":   []map[string]any{{"role": "user", "content": content}},
+		"modalities": []string{"image"},
+		"n":          1,
+		"extra_body": map[string]any{
+			"google": map[string]any{
+				"image_config": map[string]string{"aspect_ratio": aspectRatio, "image_size": imageSize},
+			},
+		},
+	}
+}
+
 func (c *Client) GenerateImage(ctx context.Context, model, prompt, aspectRatio, imageSize string) (Image, error) {
 	input := map[string]any{
 		"model":           model,
@@ -155,7 +153,6 @@ func (c *Client) GenerateImage(ctx context.Context, model, prompt, aspectRatio, 
 		"n":               1,
 		"response_format": "b64_json",
 		"size":            pixelSize(aspectRatio, imageSize),
-		"extra_body":      map[string]string{"aspect_ratio": aspectRatio, "image_size": imageSize},
 	}
 	var response map[string]any
 	if err := c.request(ctx, http.MethodPost, "/images/generations", input, &response); err != nil {
@@ -408,15 +405,23 @@ func validateImage(data []byte) (Image, error) {
 }
 
 func pixelSize(aspectRatio, tier string) string {
+	width, height := ExpectedDimensions(aspectRatio, tier)
+	return fmt.Sprintf("%dx%d", width, height)
+}
+
+func ExpectedDimensions(aspectRatio, tier string) (int, int) {
 	base := map[string][2]int{
 		"1:1": {1024, 1024}, "16:9": {1344, 768}, "9:16": {768, 1344},
 		"4:3": {1152, 896}, "3:4": {896, 1152},
 	}[aspectRatio]
+	if base == [2]int{} {
+		base = [2]int{1024, 1024}
+	}
 	scale := 1
 	if tier == "2K" {
 		scale = 2
 	} else if tier == "4K" {
 		scale = 4
 	}
-	return fmt.Sprintf("%dx%d", base[0]*scale, base[1]*scale)
+	return base[0] * scale, base[1] * scale
 }

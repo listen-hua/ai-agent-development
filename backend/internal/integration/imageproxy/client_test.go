@@ -28,6 +28,52 @@ func TestPixelSizePreservesRatioAcrossTiers(t *testing.T) {
 	}
 }
 
+func TestChatGenerationInputUsesGeminiImageConfig(t *testing.T) {
+	input := chatGenerationInput("gemini-3.1-flash-image", "draw a cat", "16:9", "4K", nil)
+	extraBody, ok := input["extra_body"].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected extra_body: %#v", input["extra_body"])
+	}
+	if _, exists := extraBody["aspect_ratio"]; exists {
+		t.Fatal("aspect_ratio must be nested under google.image_config")
+	}
+	if _, exists := extraBody["image_size"]; exists {
+		t.Fatal("image_size must be nested under google.image_config")
+	}
+	google, ok := extraBody["google"].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected google config: %#v", extraBody["google"])
+	}
+	if _, exists := google["generation_config"]; exists {
+		t.Fatal("obsolete google.generation_config must not be sent")
+	}
+	config, ok := google["image_config"].(map[string]string)
+	if !ok {
+		t.Fatalf("unexpected image_config: %#v", google["image_config"])
+	}
+	if config["aspect_ratio"] != "16:9" || config["image_size"] != "4K" {
+		t.Fatalf("unexpected image_config values: %#v", config)
+	}
+}
+
+func TestExpectedDimensionsAcrossRatiosAndTiers(t *testing.T) {
+	tests := []struct {
+		ratio, tier   string
+		width, height int
+	}{
+		{ratio: "1:1", tier: "1K", width: 1024, height: 1024},
+		{ratio: "16:9", tier: "2K", width: 2688, height: 1536},
+		{ratio: "9:16", tier: "4K", width: 3072, height: 5376},
+		{ratio: "4:3", tier: "4K", width: 4608, height: 3584},
+	}
+	for _, test := range tests {
+		width, height := ExpectedDimensions(test.ratio, test.tier)
+		if width != test.width || height != test.height {
+			t.Fatalf("%s %s: got %dx%d, want %dx%d", test.ratio, test.tier, width, height, test.width, test.height)
+		}
+	}
+}
+
 func TestDecodeImageReportsRejectedHostWithoutFullURL(t *testing.T) {
 	client, err := New("https://relay.example.com/v1", "test", time.Second, []string{"relay.example.com"})
 	if err != nil {
