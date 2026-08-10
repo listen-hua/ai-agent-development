@@ -193,8 +193,13 @@ func (d *ImageDispatcher) referenceDataURLs(ctx context.Context, job domain.Imag
 		if err != nil {
 			return nil, err
 		}
-		if asset.OwnerID != job.UserID || asset.ProjectID != job.ProjectID {
-			return nil, errors.New("reference asset no longer belongs to this job")
+		// A canvas may contain images generated or imported under different
+		// projects. CreateJob already validates both the selected target project
+		// and every reference asset's source project, so the worker must not
+		// require their project IDs to match. The immutable owner relationship is
+		// the security boundary that still needs to hold while the job executes.
+		if asset.OwnerID != job.UserID {
+			return nil, errors.New("reference asset no longer belongs to this user")
 		}
 		data, err := d.agent.blobs.Get(ctx, asset.ObjectKey)
 		if err != nil {

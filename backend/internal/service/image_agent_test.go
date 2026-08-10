@@ -16,9 +16,17 @@ import (
 	"internal-ai-agent/backend/internal/store"
 )
 
-func TestEnsureDefaultsAllowsKnownComflyImageHosts(t *testing.T) {
+func TestEnsureDefaultsAllowsKnownRelayImageHosts(t *testing.T) {
 	ctx := context.Background()
 	repo := store.NewMemory(domain.AgentConfig{})
+	existingXGAPI := domain.ImageRelay{
+		ID: "existing-xgapi", RelayKey: "xgapi", Name: "Configured XGAPI",
+		BaseURL: "https://api.xgapi.top/v1", AllowedOutputHosts: []string{"api.xgapi.top"},
+		EncryptedAPIKey: "keep-encrypted-key", CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	if err := repo.UpsertImageRelay(ctx, existingXGAPI); err != nil {
+		t.Fatal(err)
+	}
 	agent, err := NewImageAgent(repo, repo, blob.Noop{}, security.NoopScanner{}, "test-image-secret")
 	if err != nil {
 		t.Fatal(err)
@@ -30,16 +38,30 @@ func TestEnsureDefaultsAllowsKnownComflyImageHosts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, relay := range relays {
-		if relay.RelayKey != "comfly" {
-			continue
-		}
-		if !slices.Contains(relay.AllowedOutputHosts, "webstatic.apiproxy.vip") {
-			t.Fatalf("Comfly output host allowlist was not initialized: %#v", relay.AllowedOutputHosts)
-		}
-		return
+	expectedHosts := map[string][]string{
+		"xgapi":  {"api.xgapi.top", "image.xgapiproxy.win"},
+		"comfly": {"ai.comfly.org", "files.closeai.fans", "webstatic.apiproxy.vip"},
 	}
-	t.Fatal("Comfly relay was not initialized")
+	for relayKey, hosts := range expectedHosts {
+		var relay domain.ImageRelay
+		for _, candidate := range relays {
+			if candidate.RelayKey == relayKey {
+				relay = candidate
+				break
+			}
+		}
+		if relay.ID == "" {
+			t.Fatalf("%s relay was not initialized", relayKey)
+		}
+		for _, host := range hosts {
+			if !slices.Contains(relay.AllowedOutputHosts, host) {
+				t.Fatalf("%s output host %q was not initialized: %#v", relayKey, host, relay.AllowedOutputHosts)
+			}
+		}
+		if relayKey == "xgapi" && relay.EncryptedAPIKey != existingXGAPI.EncryptedAPIKey {
+			t.Fatal("merging required hosts must preserve the configured API key")
+		}
+	}
 }
 
 func TestValidateCartoonStrength(t *testing.T) {
@@ -341,6 +363,69 @@ func (b *imageTestBlob) Delete(_ context.Context, key string) error {
 	delete(b.objects, key)
 	b.deleted[key] = true
 	return nil
+}
+
+func TestReferenceDataURLsAllowSameOwnerAssetsAcrossProjects(t *testing.T) {
+	ctx := context.Background()
+	repo := store.NewMemory(domain.AgentConfig{})
+	user, err := repo.GetUser(ctx, store.DemoEmployeeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blobs := newImageTestBlob()
+	agent, err := NewImageAgent(repo, repo, blobs, security.NoopScanner{}, "test-image-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset := domain.ImageAsset{
+		ID: "asset-from-another-project", OwnerID: user.ID, ProjectID: "source-project",
+		ObjectKey: "image-agent/reference.png", MIMEType: "image/png", SizeBytes: 3,
+	}
+	if err = repo.CreateImageAsset(ctx, asset); err != nil {
+		t.Fatal(err)
+	}
+	if err = blobs.Put(ctx, asset.ObjectKey, []byte{1, 2, 3}, asset.MIMEType); err != nil {
+		t.Fatal(err)
+	}
+
+	dispatcher := NewImageDispatcher(agent, time.Hour)
+	references, err := dispatcher.referenceDataURLs(ctx, domain.ImageJob{
+		ID: "job-cross-project", UserID: user.ID, ProjectID: "target-project",
+		ReferenceAssetIDs: []string{asset.ID},
+	})
+	if err != nil {
+		t.Fatalf("same-owner cross-project reference should be readable: %v", err)
+	}
+	if len(references) != 1 || references[0] != "data:image/png;base64,AQID" {
+		t.Fatalf("unexpected reference data URL: %#v", references)
+	}
+}
+
+func TestReferenceDataURLsRejectAssetsOwnedByAnotherUser(t *testing.T) {
+	ctx := context.Background()
+	repo := store.NewMemory(domain.AgentConfig{})
+	user, _ := repo.GetUser(ctx, store.DemoEmployeeID)
+	other, _ := repo.GetUser(ctx, store.DemoAdminID)
+	blobs := newImageTestBlob()
+	agent, err := NewImageAgent(repo, repo, blobs, security.NoopScanner{}, "test-image-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset := domain.ImageAsset{
+		ID: "asset-owned-by-other-user", OwnerID: other.ID, ProjectID: "target-project",
+		ObjectKey: "image-agent/private.png", MIMEType: "image/png", SizeBytes: 3,
+	}
+	if err = repo.CreateImageAsset(ctx, asset); err != nil {
+		t.Fatal(err)
+	}
+
+	dispatcher := NewImageDispatcher(agent, time.Hour)
+	if _, err = dispatcher.referenceDataURLs(ctx, domain.ImageJob{
+		ID: "job-wrong-owner", UserID: user.ID, ProjectID: "target-project",
+		ReferenceAssetIDs: []string{asset.ID},
+	}); err == nil || !strings.Contains(err.Error(), "no longer belongs to this user") {
+		t.Fatalf("another user's reference asset must be rejected, got %v", err)
+	}
 }
 
 func TestImportCanvasAssetCreatesReadyCenteredNode(t *testing.T) {

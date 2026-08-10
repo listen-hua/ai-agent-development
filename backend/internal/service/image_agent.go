@@ -142,16 +142,31 @@ func (s *ImageAgent) EnsureDefaults(ctx context.Context) error {
 		return err
 	}
 	defaults := []domain.ImageRelay{
-		{ID: "00000000-0000-4000-8000-000000000201", RelayKey: "xgapi", Name: "XGAPI", BaseURL: "https://api.xgapi.top/v1", Enabled: true, TimeoutSeconds: 120, AllowedOutputHosts: []string{"api.xgapi.top"}, CreatedAt: now, UpdatedAt: now},
+		{ID: "00000000-0000-4000-8000-000000000201", RelayKey: "xgapi", Name: "XGAPI", BaseURL: "https://api.xgapi.top/v1", Enabled: true, TimeoutSeconds: 120, AllowedOutputHosts: []string{"api.xgapi.top", "image.xgapiproxy.win"}, CreatedAt: now, UpdatedAt: now},
 		{ID: "00000000-0000-4000-8000-000000000202", RelayKey: "comfly", Name: "Comfly AI", BaseURL: "https://ai.comfly.org/v1", Enabled: true, TimeoutSeconds: 120, AllowedOutputHosts: []string{"ai.comfly.org", "files.closeai.fans", "webstatic.apiproxy.vip"}, CreatedAt: now, UpdatedAt: now},
 	}
-	existing := map[string]bool{}
+	existing := map[string]domain.ImageRelay{}
 	for _, relay := range relays {
-		existing[relay.RelayKey] = true
+		existing[relay.RelayKey] = relay
 	}
-	for _, value := range defaults {
-		if !existing[value.RelayKey] {
-			if err = s.repo.UpsertImageRelay(ctx, value); err != nil {
+	for _, defaultRelay := range defaults {
+		current, found := existing[defaultRelay.RelayKey]
+		if !found {
+			if err = s.repo.UpsertImageRelay(ctx, defaultRelay); err != nil {
+				return err
+			}
+			continue
+		}
+		changed := false
+		for _, host := range defaultRelay.AllowedOutputHosts {
+			if !containsString(current.AllowedOutputHosts, host) {
+				current.AllowedOutputHosts = append(current.AllowedOutputHosts, host)
+				changed = true
+			}
+		}
+		if changed {
+			current.UpdatedAt = now
+			if err = s.repo.UpsertImageRelay(ctx, current); err != nil {
 				return err
 			}
 		}

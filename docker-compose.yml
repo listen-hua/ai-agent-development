@@ -29,6 +29,7 @@ services:
       - ./backend/migrations/018_meeting_booking_drafts.sql:/docker-entrypoint-initdb.d/018_meeting_booking_drafts.sql:ro
       - ./backend/migrations/019_massage_queue.sql:/docker-entrypoint-initdb.d/019_massage_queue.sql:ro
       - ./backend/migrations/020_image_canvas_multi.sql:/docker-entrypoint-initdb.d/020_image_canvas_multi.sql:ro
+      - ./backend/migrations/021_xgapi_image_output_host.sql:/docker-entrypoint-initdb.d/021_xgapi_image_output_host.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ai_agent -d ai_agent"]
       interval: 5s
