@@ -66,7 +66,7 @@ func (p *Postgres) UpsertImageRelay(ctx context.Context, value domain.ImageRelay
 }
 
 func (p *Postgres) ListImageModels(ctx context.Context, relayID string) ([]domain.ImageModel, error) {
-	query := `SELECT id,relay_id,model_id,display_name,protocol,enabled,supports_reference,supports_reverse,
+	query := `SELECT id,relay_id,model_id,request_model_id,remote_endpoint_types,display_name,protocol,enabled,supports_reference,supports_reverse,
 		supported_sizes,max_count,created_at,updated_at FROM image_models`
 	args := []any{}
 	if relayID != "" {
@@ -82,7 +82,7 @@ func (p *Postgres) ListImageModels(ctx context.Context, relayID string) ([]domai
 	result := []domain.ImageModel{}
 	for rows.Next() {
 		var value domain.ImageModel
-		if err = rows.Scan(&value.ID, &value.RelayID, &value.ModelID, &value.DisplayName, &value.Protocol, &value.Enabled,
+		if err = rows.Scan(&value.ID, &value.RelayID, &value.ModelID, &value.RequestModelID, &value.RemoteEndpointTypes, &value.DisplayName, &value.Protocol, &value.Enabled,
 			&value.SupportsReference, &value.SupportsReverse, &value.SupportedSizes, &value.MaxCount, &value.CreatedAt, &value.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -93,9 +93,9 @@ func (p *Postgres) ListImageModels(ctx context.Context, relayID string) ([]domai
 
 func (p *Postgres) GetImageModel(ctx context.Context, id string) (domain.ImageModel, error) {
 	var value domain.ImageModel
-	err := p.pool.QueryRow(ctx, `SELECT id,relay_id,model_id,display_name,protocol,enabled,supports_reference,supports_reverse,
+	err := p.pool.QueryRow(ctx, `SELECT id,relay_id,model_id,request_model_id,remote_endpoint_types,display_name,protocol,enabled,supports_reference,supports_reverse,
 		supported_sizes,max_count,created_at,updated_at FROM image_models WHERE id=$1`, id).
-		Scan(&value.ID, &value.RelayID, &value.ModelID, &value.DisplayName, &value.Protocol, &value.Enabled,
+		Scan(&value.ID, &value.RelayID, &value.ModelID, &value.RequestModelID, &value.RemoteEndpointTypes, &value.DisplayName, &value.Protocol, &value.Enabled,
 			&value.SupportsReference, &value.SupportsReverse, &value.SupportedSizes, &value.MaxCount, &value.CreatedAt, &value.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return value, ErrNotFound
@@ -110,11 +110,12 @@ func (p *Postgres) UpsertImageModels(ctx context.Context, values []domain.ImageM
 	}
 	defer tx.Rollback(ctx)
 	for _, value := range values {
-		_, err = tx.Exec(ctx, `INSERT INTO image_models(id,relay_id,model_id,display_name,protocol,enabled,supports_reference,
+		_, err = tx.Exec(ctx, `INSERT INTO image_models(id,relay_id,model_id,request_model_id,remote_endpoint_types,display_name,protocol,enabled,supports_reference,
 			supports_reverse,supported_sizes,max_count,created_at,updated_at)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-			ON CONFLICT(relay_id,model_id) DO UPDATE SET display_name=EXCLUDED.display_name,updated_at=EXCLUDED.updated_at`,
-			value.ID, value.RelayID, value.ModelID, value.DisplayName, value.Protocol, value.Enabled,
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+			ON CONFLICT(relay_id,model_id) DO UPDATE SET request_model_id=EXCLUDED.request_model_id,
+			remote_endpoint_types=EXCLUDED.remote_endpoint_types,updated_at=EXCLUDED.updated_at`,
+			value.ID, value.RelayID, value.ModelID, value.RequestModelID, value.RemoteEndpointTypes, value.DisplayName, value.Protocol, value.Enabled,
 			value.SupportsReference, value.SupportsReverse, value.SupportedSizes, value.MaxCount, value.CreatedAt, value.UpdatedAt)
 		if err != nil {
 			return err
@@ -124,9 +125,10 @@ func (p *Postgres) UpsertImageModels(ctx context.Context, values []domain.ImageM
 }
 
 func (p *Postgres) UpdateImageModel(ctx context.Context, value domain.ImageModel) error {
-	tag, err := p.pool.Exec(ctx, `UPDATE image_models SET display_name=$2,protocol=$3,enabled=$4,supports_reference=$5,
-		supports_reverse=$6,supported_sizes=$7,max_count=$8,updated_at=$9 WHERE id=$1`,
-		value.ID, value.DisplayName, value.Protocol, value.Enabled, value.SupportsReference, value.SupportsReverse,
+	tag, err := p.pool.Exec(ctx, `UPDATE image_models SET request_model_id=$2,remote_endpoint_types=$3,display_name=$4,protocol=$5,enabled=$6,supports_reference=$7,
+		supports_reverse=$8,supported_sizes=$9,max_count=$10,updated_at=$11 WHERE id=$1`,
+		value.ID, value.RequestModelID, value.RemoteEndpointTypes,
+		value.DisplayName, value.Protocol, value.Enabled, value.SupportsReference, value.SupportsReverse,
 		value.SupportedSizes, value.MaxCount, value.UpdatedAt)
 	if err == nil && tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -182,13 +184,57 @@ func (p *Postgres) UpsertImageProject(ctx context.Context, value domain.ImagePro
 	return err
 }
 
+func (p *Postgres) DeleteImageProject(ctx context.Context, id string) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var lockedID string
+	if err = tx.QueryRow(ctx, `SELECT id::text FROM image_projects WHERE id=$1 FOR UPDATE`, id).Scan(&lockedID); errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	var dependencies int
+	if err = tx.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM image_assets WHERE project_id=$1) +
+		(SELECT count(*) FROM image_jobs WHERE project_id=$1) +
+		(SELECT count(*) FROM image_canvases WHERE project_id=$1)`, id).Scan(&dependencies); err != nil {
+		return err
+	}
+	if dependencies > 0 {
+		return ErrConflict
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM image_prompt_actions
+		WHERE project_ids @> ARRAY[$1::uuid] AND cardinality(project_ids)=1`, id); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE image_prompt_actions
+		SET project_ids=array_remove(project_ids,$1::uuid),
+			project_id=(array_remove(project_ids,$1::uuid))[1],
+			updated_at=now()
+		WHERE project_ids @> ARRAY[$1::uuid]`, id); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `DELETE FROM image_projects WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit(ctx)
+}
+
 func (p *Postgres) ListImagePromptActions(ctx context.Context, projectID string) ([]domain.ImagePromptAction, error) {
-	query := `SELECT id,action_key,name,prompt_template,COALESCE(project_id::text,''),enabled,sort_order,
+	query := `SELECT id,action_key,name,prompt_template,COALESCE(project_id::text,''),COALESCE(project_ids::text[],ARRAY[]::text[]),enabled,sort_order,
 		preview_object_key,preview_mime_type,preview_size_bytes,preview_width,preview_height,
 		COALESCE(created_by::text,''),COALESCE(updated_by::text,''),created_at,updated_at FROM image_prompt_actions`
 	args := []any{}
 	if projectID != "" {
-		query += ` WHERE project_id IS NULL OR project_id=$1`
+		query += ` WHERE (project_id IS NULL AND cardinality(project_ids)=0) OR project_id=$1 OR project_ids @> ARRAY[$1::uuid]`
 		args = append(args, projectID)
 	}
 	query += ` ORDER BY sort_order,name`
@@ -200,7 +246,7 @@ func (p *Postgres) ListImagePromptActions(ctx context.Context, projectID string)
 	result := []domain.ImagePromptAction{}
 	for rows.Next() {
 		var value domain.ImagePromptAction
-		if err = rows.Scan(&value.ID, &value.ActionKey, &value.Name, &value.PromptTemplate, &value.ProjectID,
+		if err = rows.Scan(&value.ID, &value.ActionKey, &value.Name, &value.PromptTemplate, &value.ProjectID, &value.ProjectIDs,
 			&value.Enabled, &value.SortOrder, &value.PreviewObjectKey, &value.PreviewMIMEType,
 			&value.PreviewSizeBytes, &value.PreviewWidth, &value.PreviewHeight,
 			&value.CreatedBy, &value.UpdatedBy, &value.CreatedAt, &value.UpdatedAt); err != nil {
@@ -214,10 +260,10 @@ func (p *Postgres) ListImagePromptActions(ctx context.Context, projectID string)
 
 func (p *Postgres) GetImagePromptAction(ctx context.Context, id string) (domain.ImagePromptAction, error) {
 	var value domain.ImagePromptAction
-	err := p.pool.QueryRow(ctx, `SELECT id,action_key,name,prompt_template,COALESCE(project_id::text,''),enabled,sort_order,
+	err := p.pool.QueryRow(ctx, `SELECT id,action_key,name,prompt_template,COALESCE(project_id::text,''),COALESCE(project_ids::text[],ARRAY[]::text[]),enabled,sort_order,
 		preview_object_key,preview_mime_type,preview_size_bytes,preview_width,preview_height,
 		COALESCE(created_by::text,''),COALESCE(updated_by::text,''),created_at,updated_at FROM image_prompt_actions WHERE id=$1`, id).
-		Scan(&value.ID, &value.ActionKey, &value.Name, &value.PromptTemplate, &value.ProjectID, &value.Enabled,
+		Scan(&value.ID, &value.ActionKey, &value.Name, &value.PromptTemplate, &value.ProjectID, &value.ProjectIDs, &value.Enabled,
 			&value.SortOrder, &value.PreviewObjectKey, &value.PreviewMIMEType, &value.PreviewSizeBytes,
 			&value.PreviewWidth, &value.PreviewHeight, &value.CreatedBy, &value.UpdatedBy, &value.CreatedAt, &value.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -228,13 +274,13 @@ func (p *Postgres) GetImagePromptAction(ctx context.Context, id string) (domain.
 }
 
 func (p *Postgres) UpsertImagePromptAction(ctx context.Context, value domain.ImagePromptAction) error {
-	_, err := p.pool.Exec(ctx, `INSERT INTO image_prompt_actions(id,action_key,name,prompt_template,project_id,enabled,sort_order,
+	_, err := p.pool.Exec(ctx, `INSERT INTO image_prompt_actions(id,action_key,name,prompt_template,project_id,project_ids,enabled,sort_order,
 		created_by,updated_by,created_at,updated_at)
-		VALUES($1,$2,$3,$4,NULLIF($5,'')::uuid,$6,$7,NULLIF($8,'')::uuid,NULLIF($9,'')::uuid,$10,$11)
+		VALUES($1,$2,$3,$4,NULLIF($5,'')::uuid,$6::uuid[],$7,$8,NULLIF($9,'')::uuid,NULLIF($10,'')::uuid,$11,$12)
 		ON CONFLICT(id) DO UPDATE SET action_key=EXCLUDED.action_key,name=EXCLUDED.name,prompt_template=EXCLUDED.prompt_template,
-		project_id=EXCLUDED.project_id,enabled=EXCLUDED.enabled,sort_order=EXCLUDED.sort_order,
+		project_id=EXCLUDED.project_id,project_ids=EXCLUDED.project_ids,enabled=EXCLUDED.enabled,sort_order=EXCLUDED.sort_order,
 		updated_by=EXCLUDED.updated_by,updated_at=EXCLUDED.updated_at`,
-		value.ID, value.ActionKey, value.Name, value.PromptTemplate, value.ProjectID, value.Enabled, value.SortOrder,
+		value.ID, value.ActionKey, value.Name, value.PromptTemplate, value.ProjectID, value.ProjectIDs, value.Enabled, value.SortOrder,
 		value.CreatedBy, value.UpdatedBy, value.CreatedAt, value.UpdatedAt)
 	return err
 }
@@ -402,8 +448,10 @@ func (p *Postgres) GetOrCreateImageCanvas(ctx context.Context, userID, projectID
 }
 
 func (p *Postgres) listImageCanvasNodes(ctx context.Context, canvasID string) ([]domain.ImageCanvasNode, error) {
-	rows, err := p.pool.Query(ctx, `SELECT id,canvas_id,COALESCE(asset_id::text,''),COALESCE(job_id::text,''),output_index,
-		status,x,y,width,height,z_index,error,created_at,updated_at
+	rows, err := p.pool.Query(ctx, `SELECT id,canvas_id,COALESCE(asset_id::text,''),COALESCE(job_id::text,''),
+		COALESCE(background_removal_job_id::text,''),COALESCE(source_node_id::text,''),output_index,
+		status,x,y,width,height,z_index,error,requested_size,actual_width,actual_height,resolution_warning,
+		generation_relay_name,generation_model_name,generation_model_key,created_at,updated_at
 		FROM image_canvas_nodes WHERE canvas_id=$1 ORDER BY z_index,created_at`, canvasID)
 	if err != nil {
 		return nil, err
@@ -412,8 +460,11 @@ func (p *Postgres) listImageCanvasNodes(ctx context.Context, canvasID string) ([
 	result := []domain.ImageCanvasNode{}
 	for rows.Next() {
 		var value domain.ImageCanvasNode
-		if err = rows.Scan(&value.ID, &value.CanvasID, &value.AssetID, &value.JobID, &value.OutputIndex, &value.Status,
-			&value.X, &value.Y, &value.Width, &value.Height, &value.ZIndex, &value.Error, &value.CreatedAt, &value.UpdatedAt); err != nil {
+		if err = rows.Scan(&value.ID, &value.CanvasID, &value.AssetID, &value.JobID, &value.BackgroundRemovalJobID,
+			&value.SourceNodeID, &value.OutputIndex, &value.Status,
+			&value.X, &value.Y, &value.Width, &value.Height, &value.ZIndex, &value.Error, &value.RequestedSize,
+			&value.ActualWidth, &value.ActualHeight, &value.ResolutionWarning, &value.GenerationRelayName,
+			&value.GenerationModelName, &value.GenerationModelKey, &value.CreatedAt, &value.UpdatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, value)
@@ -495,6 +546,10 @@ func (p *Postgres) ImportImageCanvasAsset(ctx context.Context, canvas domain.Ima
 }
 
 func (p *Postgres) DeleteImageCanvasNode(ctx context.Context, canvas domain.ImageCanvas, nodeID string, expectedVersion int64) (domain.ImageCanvas, error) {
+	return p.DeleteImageCanvasNodes(ctx, canvas, []string{nodeID}, expectedVersion)
+}
+
+func (p *Postgres) DeleteImageCanvasNodes(ctx context.Context, canvas domain.ImageCanvas, nodeIDs []string, expectedVersion int64) (domain.ImageCanvas, error) {
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return canvas, err
@@ -510,11 +565,11 @@ func (p *Postgres) DeleteImageCanvasNode(ctx context.Context, canvas domain.Imag
 	if err != nil {
 		return canvas, err
 	}
-	tag, err := tx.Exec(ctx, `DELETE FROM image_canvas_nodes WHERE id=$1 AND canvas_id=$2`, nodeID, canvas.ID)
+	tag, err := tx.Exec(ctx, `DELETE FROM image_canvas_nodes WHERE canvas_id=$1 AND id=ANY($2::uuid[])`, canvas.ID, nodeIDs)
 	if err != nil {
 		return canvas, err
 	}
-	if tag.RowsAffected() == 0 {
+	if tag.RowsAffected() != int64(len(nodeIDs)) {
 		return canvas, ErrNotFound
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -522,9 +577,13 @@ func (p *Postgres) DeleteImageCanvasNode(ctx context.Context, canvas domain.Imag
 	}
 	canvas.Version = version
 	canvas.UpdatedAt = time.Now()
-	nodes := make([]domain.ImageCanvasNode, 0, len(canvas.Nodes)-1)
+	deleting := make(map[string]bool, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		deleting[nodeID] = true
+	}
+	nodes := make([]domain.ImageCanvasNode, 0, len(canvas.Nodes)-len(nodeIDs))
 	for _, node := range canvas.Nodes {
-		if node.ID != nodeID {
+		if !deleting[node.ID] {
 			nodes = append(nodes, node)
 		}
 	}
@@ -542,9 +601,10 @@ func (p *Postgres) CreateImageAsset(ctx context.Context, value domain.ImageAsset
 
 func (p *Postgres) GetImageAsset(ctx context.Context, id string) (domain.ImageAsset, error) {
 	var value domain.ImageAsset
-	err := p.pool.QueryRow(ctx, `SELECT id,owner_id,project_id,object_key,mime_type,file_name,width,height,size_bytes,source,created_at
+	err := p.pool.QueryRow(ctx, `SELECT id,owner_id,project_id,object_key,mime_type,file_name,width,height,size_bytes,source,
+		COALESCE(source_asset_id::text,''),created_at
 		FROM image_assets WHERE id=$1`, id).Scan(&value.ID, &value.OwnerID, &value.ProjectID, &value.ObjectKey,
-		&value.MIMEType, &value.FileName, &value.Width, &value.Height, &value.SizeBytes, &value.Source, &value.CreatedAt)
+		&value.MIMEType, &value.FileName, &value.Width, &value.Height, &value.SizeBytes, &value.Source, &value.SourceAssetID, &value.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return value, ErrNotFound
 	}
@@ -583,16 +643,18 @@ func (p *Postgres) CreateImageJob(ctx context.Context, value domain.ImageJob, no
 		}
 	}
 	for index := 0; index < value.Count; index++ {
-		if _, err = tx.Exec(ctx, `INSERT INTO image_job_outputs(id,job_id,output_index,status,created_at,updated_at)
-			VALUES($1,$2,$3,'pending',$4,$4)`, ids.New("output"), value.ID, index, value.CreatedAt); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO image_job_outputs(id,job_id,output_index,status,requested_size,created_at,updated_at)
+			VALUES($1,$2,$3,'pending',$4,$5,$5)`, ids.New("output"), value.ID, index, value.ImageSize, value.CreatedAt); err != nil {
 			return value, err
 		}
 	}
 	for _, node := range nodes {
-		if _, err = tx.Exec(ctx, `INSERT INTO image_canvas_nodes(id,canvas_id,job_id,output_index,status,x,y,width,height,z_index,error,created_at,updated_at)
-			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		if _, err = tx.Exec(ctx, `INSERT INTO image_canvas_nodes(id,canvas_id,job_id,output_index,status,x,y,width,height,z_index,error,requested_size,
+			generation_relay_name,generation_model_name,generation_model_key,created_at,updated_at)
+			VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
 			node.ID, node.CanvasID, node.JobID, node.OutputIndex, node.Status, node.X, node.Y, node.Width, node.Height,
-			node.ZIndex, node.Error, node.CreatedAt, node.UpdatedAt); err != nil {
+			node.ZIndex, node.Error, node.RequestedSize, node.GenerationRelayName, node.GenerationModelName,
+			node.GenerationModelKey, node.CreatedAt, node.UpdatedAt); err != nil {
 			return value, err
 		}
 	}
@@ -640,7 +702,8 @@ func scanImageJob(row rowScanner) (domain.ImageJob, error) {
 }
 
 func (p *Postgres) listImageJobOutputs(ctx context.Context, jobID string) ([]domain.ImageJobOutput, error) {
-	rows, err := p.pool.Query(ctx, `SELECT id,job_id,output_index,COALESCE(asset_id::text,''),status,error,attempts,created_at,updated_at
+	rows, err := p.pool.Query(ctx, `SELECT id,job_id,output_index,COALESCE(asset_id::text,''),status,error,attempts,
+		requested_size,actual_width,actual_height,resolution_warning,created_at,updated_at
 		FROM image_job_outputs WHERE job_id=$1 ORDER BY output_index`, jobID)
 	if err != nil {
 		return nil, err
@@ -650,7 +713,8 @@ func (p *Postgres) listImageJobOutputs(ctx context.Context, jobID string) ([]dom
 	for rows.Next() {
 		var value domain.ImageJobOutput
 		if err = rows.Scan(&value.ID, &value.JobID, &value.OutputIndex, &value.AssetID, &value.Status, &value.Error,
-			&value.Attempts, &value.CreatedAt, &value.UpdatedAt); err != nil {
+			&value.Attempts, &value.RequestedSize, &value.ActualWidth, &value.ActualHeight,
+			&value.ResolutionWarning, &value.CreatedAt, &value.UpdatedAt); err != nil {
 			return nil, err
 		}
 		result = append(result, value)
@@ -737,13 +801,17 @@ func (p *Postgres) SaveImageJobOutput(ctx context.Context, output domain.ImageJo
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE image_job_outputs SET asset_id=$2,status='succeeded',error='',attempts=$3,updated_at=$4
-		WHERE id=$1`, output.ID, asset.ID, output.Attempts, output.UpdatedAt)
+	_, err = tx.Exec(ctx, `UPDATE image_job_outputs SET asset_id=$2,status='succeeded',error='',attempts=$3,
+		requested_size=$4,actual_width=$5,actual_height=$6,resolution_warning=$7,updated_at=$8 WHERE id=$1`,
+		output.ID, asset.ID, output.Attempts, output.RequestedSize, output.ActualWidth, output.ActualHeight,
+		output.ResolutionWarning, output.UpdatedAt)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE image_canvas_nodes SET asset_id=$3,status='ready',error='',width=$4,height=$5,updated_at=$6
-		WHERE job_id=$1 AND output_index=$2`, output.JobID, output.OutputIndex, asset.ID, node.Width, node.Height, node.UpdatedAt)
+	_, err = tx.Exec(ctx, `UPDATE image_canvas_nodes SET asset_id=$3,status='ready',error='',width=$4,height=$5,
+		requested_size=$6,actual_width=$7,actual_height=$8,resolution_warning=$9,updated_at=$10
+		WHERE job_id=$1 AND output_index=$2`, output.JobID, output.OutputIndex, asset.ID, node.Width, node.Height,
+		node.RequestedSize, node.ActualWidth, node.ActualHeight, node.ResolutionWarning, node.UpdatedAt)
 	if err != nil {
 		return err
 	}

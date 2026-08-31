@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -21,7 +22,7 @@ func TestEnsureDefaultsAllowsKnownRelayImageHosts(t *testing.T) {
 	repo := store.NewMemory(domain.AgentConfig{})
 	existingXGAPI := domain.ImageRelay{
 		ID: "existing-xgapi", RelayKey: "xgapi", Name: "Configured XGAPI",
-		BaseURL: "https://api.xgapi.top/v1", AllowedOutputHosts: []string{"api.xgapi.top"},
+		BaseURL: "https://api.xgapiproxy.win/v1", AllowedOutputHosts: []string{"api.xgapiproxy.win"},
 		EncryptedAPIKey: "keep-encrypted-key", CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	if err := repo.UpsertImageRelay(ctx, existingXGAPI); err != nil {
@@ -39,8 +40,8 @@ func TestEnsureDefaultsAllowsKnownRelayImageHosts(t *testing.T) {
 		t.Fatal(err)
 	}
 	expectedHosts := map[string][]string{
-		"xgapi":  {"api.xgapi.top", "image.xgapiproxy.win"},
-		"comfly": {"ai.comfly.org", "files.closeai.fans", "webstatic.apiproxy.vip"},
+		"xgapi":  {"api.xgapiproxy.win", "image.xgapiproxy.win", "webstatic.apiproxy.vip"},
+		"comfly": {"ai.comfly.org", "files.closeai.fans", "webstatic.apiproxy.vip", "webstatic.aiproxy.vip"},
 	}
 	for relayKey, hosts := range expectedHosts {
 		var relay domain.ImageRelay
@@ -87,6 +88,86 @@ func TestValidateCartoonStrength(t *testing.T) {
 	}
 }
 
+func TestValidateImageJobPromptAllowsFifteenThousandCharacters(t *testing.T) {
+	if err := validateImageJobPrompt("generate", strings.Repeat("图", imagePromptMaxLength)); err != nil {
+		t.Fatalf("a %d-character prompt should be accepted: %v", imagePromptMaxLength, err)
+	}
+	if err := validateImageJobPrompt("generate", strings.Repeat("图", imagePromptMaxLength+1)); err == nil || !strings.Contains(err.Error(), "15000") {
+		t.Fatalf("a prompt above the limit should be rejected with the configured limit, got %v", err)
+	}
+}
+
+func TestCreateImageJobSnapshotsRelayAndModelOnCanvasNodes(t *testing.T) {
+	ctx := context.Background()
+	repo := store.NewMemory(domain.AgentConfig{})
+	user, _ := repo.GetUser(ctx, store.DemoEmployeeID)
+	now := time.Now()
+	project := domain.ImageProject{ID: "project-source", ProjectKey: "source", Name: "来源测试", ACL: domain.ACL{Scope: "all"}, Enabled: true, CreatedAt: now, UpdatedAt: now}
+	relay := domain.ImageRelay{ID: "relay-source", RelayKey: "source-relay", Name: "Comfly", BaseURL: "https://example.com/v1", Enabled: true, EncryptedAPIKey: "configured", CreatedAt: now, UpdatedAt: now}
+	model := domain.ImageModel{ID: "model-source", RelayID: relay.ID, ModelID: "gpt-image-2", DisplayName: "GPT Image 2", Protocol: "gpt_image_2", Enabled: true, SupportedSizes: []string{"1K"}, MaxCount: 1, CreatedAt: now, UpdatedAt: now}
+	if err := repo.UpsertImageProject(ctx, project); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertImageRelay(ctx, relay); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertImageModels(ctx, []domain.ImageModel{model}); err != nil {
+		t.Fatal(err)
+	}
+	agent, _ := NewImageAgent(repo, repo, blob.Noop{}, security.NoopScanner{}, "test-image-secret")
+	canvas, err := agent.CreateCanvas(ctx, user, "来源测试画布")
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := agent.CreateJob(ctx, user, ImageJobInput{CanvasID: canvas.ID, ProjectID: project.ID, RelayID: relay.ID,
+		ModelID: model.ID, Kind: "generate", Prompt: "a cat", AspectRatio: "1:1", ImageSize: "1K", Count: 1, IdempotencyKey: "source-snapshot"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := agent.CanvasByID(ctx, user, canvas.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Nodes) != 1 {
+		t.Fatalf("expected one generated node, got %+v", updated.Nodes)
+	}
+	node := updated.Nodes[0]
+	if node.GenerationRelayName != relay.Name || node.GenerationModelName != model.DisplayName || node.GenerationModelKey != model.ModelID {
+		t.Fatalf("generation source snapshot was not preserved: %+v", node)
+	}
+
+	relay.Name, model.DisplayName = "Renamed relay", "Renamed model"
+	if err = repo.UpsertImageRelay(ctx, relay); err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.UpsertImageModels(ctx, []domain.ImageModel{model}); err != nil {
+		t.Fatal(err)
+	}
+	unchanged, _ := agent.CanvasByID(ctx, user, canvas.ID, false)
+	if unchanged.Nodes[0].GenerationRelayName != "Comfly" || unchanged.Nodes[0].GenerationModelName != "GPT Image 2" {
+		t.Fatalf("historical source names must remain snapshots: %+v", unchanged.Nodes[0])
+	}
+
+	output := created.Outputs[0]
+	output.RequestedSize, output.ActualWidth, output.ActualHeight, output.UpdatedAt = "1K", 1024, 1024, time.Now()
+	asset := domain.ImageAsset{ID: "generated-source-asset", OwnerID: user.ID, ProjectID: project.ID, ObjectKey: "images/source.png", MIMEType: "image/png", FileName: "source.png", Width: 1024, Height: 1024, SizeBytes: 1024, Source: "generated", CreatedAt: time.Now()}
+	if err = repo.SaveImageJobOutput(ctx, output, asset, domain.ImageCanvasNode{Width: 360, Height: 360}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = agent.SavePixianConfig(ctx, user, PixianConfigInput{Enabled: true, TestMode: true, APIID: "test-id", APISecret: "test-secret", TimeoutSeconds: 180, Concurrency: 2, MaxPixels: 25_000_000}); err != nil {
+		t.Fatal(err)
+	}
+	readyCanvas, _ := agent.CanvasByID(ctx, user, canvas.ID, false)
+	if _, err = agent.CreateBackgroundRemovalJob(ctx, user, canvas.ID, BackgroundRemovalJobInput{NodeIDs: []string{readyCanvas.Nodes[0].ID}, Version: readyCanvas.Version, IdempotencyKey: "source-cutout"}); err != nil {
+		t.Fatal(err)
+	}
+	withCutout, _ := agent.CanvasByID(ctx, user, canvas.ID, false)
+	cutout := withCutout.Nodes[1]
+	if cutout.GenerationRelayName != "Comfly" || cutout.GenerationModelName != "GPT Image 2" || cutout.GenerationModelKey != "gpt-image-2" {
+		t.Fatalf("Pixian result must inherit the original generation source: %+v", cutout)
+	}
+}
+
 func TestSaveProjectReturnsSpecificValidationErrors(t *testing.T) {
 	repo := store.NewMemory(domain.AgentConfig{})
 	agent, err := NewImageAgent(repo, repo, blob.Noop{}, security.NoopScanner{}, "test-image-secret")
@@ -116,6 +197,82 @@ func TestSaveProjectReturnsSpecificValidationErrors(t *testing.T) {
 	}
 }
 
+func TestDeleteUnusedProjectCleansPromptActionScopes(t *testing.T) {
+	ctx := context.Background()
+	repo := store.NewMemory(domain.AgentConfig{})
+	blobs := newImageTestBlob()
+	agent, err := NewImageAgent(repo, repo, blobs, security.NoopScanner{}, "test-image-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor, _ := repo.GetUser(ctx, store.DemoAdminID)
+	first, err := agent.SaveProject(ctx, actor, "", ImageProjectInput{
+		ProjectKey: "unused-a", Name: "待删除项目", ACL: domain.ACL{Scope: "all"}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := agent.SaveProject(ctx, actor, "", ImageProjectInput{
+		ProjectKey: "unused-b", Name: "保留项目", ACL: domain.ACL{Scope: "all"}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	single, err := agent.SavePromptAction(ctx, actor, "", ImagePromptActionInput{
+		ActionKey: "only-first", PromptTemplate: "只属于待删除项目", ProjectIDs: []string{first.ID}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	multiple, err := agent.SavePromptAction(ctx, actor, "", ImagePromptActionInput{
+		ActionKey: "shared", PromptTemplate: "两个项目共享", ProjectIDs: []string{first.ID, second.ID}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = agent.DeleteProject(ctx, actor, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repo.GetImageProject(ctx, first.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleted project must be removed, got %v", err)
+	}
+	if _, err = repo.GetImagePromptAction(ctx, single.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("single-project action must be removed, got %v", err)
+	}
+	updated, err := repo.GetImagePromptAction(ctx, multiple.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(updated.ProjectIDs, []string{second.ID}) || updated.ProjectID != second.ID {
+		t.Fatalf("shared action should retain only the remaining project: %+v", updated)
+	}
+}
+
+func TestDeleteProjectRejectsExistingAssets(t *testing.T) {
+	ctx := context.Background()
+	repo := store.NewMemory(domain.AgentConfig{})
+	agent, err := NewImageAgent(repo, repo, blob.Noop{}, security.NoopScanner{}, "test-image-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor, _ := repo.GetUser(ctx, store.DemoAdminID)
+	project, err := agent.SaveProject(ctx, actor, "", ImageProjectInput{
+		ProjectKey: "used-project", Name: "已有数据项目", ACL: domain.ACL{Scope: "all"}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = repo.CreateImageAsset(ctx, domain.ImageAsset{ID: "asset-project-delete", OwnerID: actor.ID, ProjectID: project.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err = agent.DeleteProject(ctx, actor, project.ID); err == nil || !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("used project deletion must be rejected, got %v", err)
+	}
+	if _, err = repo.GetImageProject(ctx, project.ID); err != nil {
+		t.Fatalf("rejected deletion must keep the project: %v", err)
+	}
+}
+
 func TestNodeDimensions(t *testing.T) {
 	width, height := nodeDimensions("16:9")
 	if width != 360 || height >= width {
@@ -133,7 +290,7 @@ func TestPlaceholderNodesUseSelectedAnchorAndAvoidOccupiedSpace(t *testing.T) {
 	}
 	job := domain.ImageJob{ID: "job-placement", AspectRatio: "1:1", Count: 1}
 
-	nodes := placeholderNodes(canvas, job, "anchor", 5000, 5000)
+	nodes := placeholderNodes(canvas, job, "anchor", 5000, 5000, 0, 0)
 
 	if len(nodes) != 1 {
 		t.Fatalf("expected one placeholder, got %d", len(nodes))
@@ -156,7 +313,7 @@ func TestPlaceholderNodesFallBackToNearestViewportNode(t *testing.T) {
 	}
 	job := domain.ImageJob{ID: "job-nearest", AspectRatio: "16:9", Count: 1}
 
-	nodes := placeholderNodes(canvas, job, "not-on-this-canvas", 1000, 560)
+	nodes := placeholderNodes(canvas, job, "not-on-this-canvas", 1000, 560, 0, 0)
 
 	if nodes[0].X != 1124 || nodes[0].Y != 500 {
 		t.Fatalf("expected nearest node fallback with top alignment, got x=%v y=%v", nodes[0].X, nodes[0].Y)
@@ -167,7 +324,7 @@ func TestPlaceholderNodesCenterTwoColumnGroupOnEmptyCanvas(t *testing.T) {
 	canvas := domain.ImageCanvas{ID: "canvas-empty"}
 	job := domain.ImageJob{ID: "job-grid", AspectRatio: "1:1", Count: 4}
 
-	nodes := placeholderNodes(canvas, job, "", 1000, 600)
+	nodes := placeholderNodes(canvas, job, "", 1000, 600, 0, 0)
 
 	expected := [][2]float64{{628, 228}, {1012, 228}, {628, 612}, {1012, 612}}
 	if len(nodes) != len(expected) {
@@ -186,7 +343,7 @@ func TestPlaceholderNodesKeepTwoColumnGridForSupportedCounts(t *testing.T) {
 			nodes := placeholderNodes(
 				domain.ImageCanvas{ID: "canvas-grid"},
 				domain.ImageJob{ID: "job-grid", AspectRatio: "1:1", Count: count},
-				"", 1000, 1000,
+				"", 1000, 1000, 0, 0,
 			)
 			if len(nodes) != count {
 				t.Fatalf("expected %d placeholders, got %d", count, len(nodes))
@@ -198,6 +355,41 @@ func TestPlaceholderNodesKeepTwoColumnGridForSupportedCounts(t *testing.T) {
 				if index >= 2 && current.Y-nodes[index-2].Y != 384 {
 					t.Fatalf("vertical gap for node %d is not 24", index)
 				}
+			}
+		})
+	}
+}
+
+func TestPlaceholderNodesUseFirstReferenceExactRatio(t *testing.T) {
+	nodes := placeholderNodes(
+		domain.ImageCanvas{ID: "canvas-original"},
+		domain.ImageJob{ID: "job-original", AspectRatio: "original", Count: 1},
+		"", 500, 500, 1000, 427,
+	)
+	if len(nodes) != 1 || nodes[0].Width != 360 || math.Abs(nodes[0].Height-153.72) > 0.001 {
+		t.Fatalf("original placeholder should preserve the first reference ratio: %+v", nodes)
+	}
+}
+
+func TestOriginalRatioRequiresReferenceCapableChatModel(t *testing.T) {
+	valid := ImageJobInput{Kind: "generate", AspectRatio: "original", ReferenceAssetIDs: []string{"asset"}}
+	chatModel := domain.ImageModel{Protocol: "chat_completions", SupportsReference: true}
+	if err := validateOriginalAspectRatio(valid, chatModel); err != nil {
+		t.Fatalf("reference-capable chat model should accept original ratio: %v", err)
+	}
+	invalid := []struct {
+		name  string
+		input ImageJobInput
+		model domain.ImageModel
+	}{
+		{name: "no reference", input: ImageJobInput{Kind: "generate", AspectRatio: "original"}, model: chatModel},
+		{name: "images protocol", input: valid, model: domain.ImageModel{Protocol: "images_generations", SupportsReference: true}},
+		{name: "unsupported reference", input: valid, model: domain.ImageModel{Protocol: "chat_completions"}},
+	}
+	for _, test := range invalid {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateOriginalAspectRatio(test.input, test.model); err == nil {
+				t.Fatal("invalid original ratio request should be rejected")
 			}
 		})
 	}
@@ -235,6 +427,63 @@ func TestSavePromptActionAcceptsChineseButtonKey(t *testing.T) {
 		ActionKey: "-invalid", PromptTemplate: "prompt", Enabled: true,
 	}); err == nil {
 		t.Fatal("button keys must start with a letter")
+	}
+}
+
+func TestPromptActionSupportsMultipleProjectScopes(t *testing.T) {
+	ctx := context.Background()
+	repo := store.NewMemory(domain.AgentConfig{})
+	admin, _ := repo.GetUser(ctx, store.DemoAdminID)
+	employee, _ := repo.GetUser(ctx, store.DemoEmployeeID)
+	projects := []domain.ImageProject{
+		{ID: "project-multi-a", ProjectKey: "multi-a", Name: "项目 A", ACL: domain.ACL{Scope: "all"}, Enabled: true},
+		{ID: "project-multi-b", ProjectKey: "multi-b", Name: "项目 B", ACL: domain.ACL{Scope: "all"}, Enabled: true},
+		{ID: "project-multi-c", ProjectKey: "multi-c", Name: "项目 C", ACL: domain.ACL{Scope: "all"}, Enabled: true},
+	}
+	for _, project := range projects {
+		if err := repo.UpsertImageProject(ctx, project); err != nil {
+			t.Fatal(err)
+		}
+	}
+	agent, err := NewImageAgent(repo, repo, newImageTestBlob(), security.NoopScanner{}, "test-image-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoped, err := agent.SavePromptAction(ctx, admin, "", ImagePromptActionInput{
+		ActionKey: "shared-style", PromptTemplate: "项目专属风格", ProjectIDs: []string{projects[1].ID, projects[0].ID}, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(scoped.ProjectIDs, []string{projects[0].ID, projects[1].ID}) || scoped.ProjectID != projects[0].ID {
+		t.Fatalf("project scopes should be deduplicated, sorted and retain a legacy primary project: %+v", scoped)
+	}
+	for _, projectID := range []string{projects[0].ID, projects[1].ID} {
+		actions, listErr := agent.PromptActions(ctx, employee, projectID)
+		if listErr != nil || len(actions) != 1 || actions[0].ID != scoped.ID {
+			t.Fatalf("scoped action should be available in %s: actions=%+v err=%v", projectID, actions, listErr)
+		}
+	}
+	if actions, listErr := agent.PromptActions(ctx, employee, projects[2].ID); listErr != nil || len(actions) != 0 {
+		t.Fatalf("scoped action must not leak into unrelated projects: actions=%+v err=%v", actions, listErr)
+	}
+
+	global, err := agent.SavePromptAction(ctx, admin, "", ImagePromptActionInput{
+		ActionKey: "shared-style", PromptTemplate: "全局风格", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actions, _ := agent.PromptActions(ctx, employee, projects[0].ID); len(actions) != 1 || actions[0].ID != scoped.ID {
+		t.Fatalf("multi-project action should override the global action in its projects: %+v", actions)
+	}
+	if actions, _ := agent.PromptActions(ctx, employee, projects[2].ID); len(actions) != 1 || actions[0].ID != global.ID {
+		t.Fatalf("global action should remain available outside the selected projects: %+v", actions)
+	}
+	if _, err = agent.SavePromptAction(ctx, admin, "", ImagePromptActionInput{
+		ActionKey: "shared-style", PromptTemplate: "重复项目风格", ProjectIDs: []string{projects[1].ID}, Enabled: true,
+	}); err == nil || !strings.Contains(err.Error(), "已存在相同按键标识") {
+		t.Fatalf("overlapping project scopes with the same action key must be rejected, got %v", err)
 	}
 }
 
@@ -545,5 +794,38 @@ func TestImageCanvasLifecycleAndOwnership(t *testing.T) {
 	}
 	if restored.Name == "市场宣传图" || restored.DeletedAt != nil {
 		t.Fatalf("restore should resolve an active name conflict: %+v", restored)
+	}
+}
+
+func TestCreateBackgroundRemovalJobPlacesResultToRight(t *testing.T) {
+	ctx := context.Background()
+	repo := store.NewMemory(domain.AgentConfig{})
+	user, _ := repo.GetUser(ctx, store.DemoEmployeeID)
+	project := domain.ImageProject{ID: "project-bg", ProjectKey: "background", Name: "抠图", ACL: domain.ACL{Scope: "all"}, Enabled: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	_ = repo.UpsertImageProject(ctx, project)
+	blobs := newImageTestBlob()
+	agent, _ := NewImageAgent(repo, repo, blobs, security.NoopScanner{}, "test-image-secret")
+	_, err := agent.SavePixianConfig(ctx, user, PixianConfigInput{Enabled: true, TestMode: true, APIID: "test-id", APISecret: "test-secret", TimeoutSeconds: 180, Concurrency: 2, MaxPixels: 25_000_000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	canvas, _ := agent.CreateCanvas(ctx, user, "抠图画布")
+	png, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAADUlEQVR42mNk+M/wHwAEAQH/5agzWQAAAABJRU5ErkJggg==")
+	canvas, err = agent.ImportCanvasAssetByID(ctx, user, canvas.ID, project.ID, ImageCanvasImport{FileName: "source.png", DeclaredMIME: "image/png", Data: png, X: 200, Y: 200, Version: canvas.Version, Origin: "drop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := canvas.Nodes[0]
+	job, err := agent.CreateBackgroundRemovalJob(ctx, user, canvas.ID, BackgroundRemovalJobInput{NodeIDs: []string{source.ID}, Version: canvas.Version, IdempotencyKey: "remove-once"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, _ := agent.CanvasByID(ctx, user, canvas.ID, false)
+	if len(updated.Nodes) != 2 {
+		t.Fatalf("expected source plus placeholder, got %+v", updated.Nodes)
+	}
+	placeholder := updated.Nodes[1]
+	if placeholder.X != source.X+source.Width+imageCanvasNodeGap || placeholder.SourceNodeID != source.ID || placeholder.BackgroundRemovalJobID != job.ID {
+		t.Fatalf("unexpected placeholder placement: source=%+v placeholder=%+v", source, placeholder)
 	}
 }

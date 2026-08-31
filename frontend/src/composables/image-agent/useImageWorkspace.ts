@@ -13,10 +13,10 @@ import {
 } from '@/utils/imageCanvasPersistence'
 import type {
   ImageAgentOptions, ImageAsset, ImageCanvas, ImageFormState, ImageJob, ImagePromptAction, ImageViewport,
-  ImageCanvasNode,
+  ImageCanvasNode, BackgroundRemovalJob,
 } from '@/types/image-agent'
 
-const emptyOptions = (): ImageAgentOptions => ({ relays: [], models: [], projects: [], prompt_actions: [] })
+const emptyOptions = (): ImageAgentOptions => ({ relays: [], models: [], projects: [], prompt_actions: [], background_removal_enabled: false })
 
 interface CanvasSaveTask extends ImageCanvasLayout {
   canvasId: string
@@ -44,12 +44,16 @@ export function useImageWorkspace(canvasId: Ref<string>) {
   const importing = ref(false)
   const importProgress = ref('')
   const deletingNodeId = ref('')
+  const batchDeletingCount = ref(0)
   const generating = ref(false)
   const currentJob = ref<ImageJob>()
+  const backgroundRemovalJob = ref<BackgroundRemovalJob>()
+  const backgroundRemovingCount = ref(0)
   const selectedProject = computed(() => options.value.projects.find((item) => item.id === form.value.projectId))
   const selectedModel = computed(() => options.value.models.find((item) => item.id === form.value.modelId))
   let saveTimer: number | undefined
   let pollTimer: number | undefined
+  let backgroundRemovalPollTimer: number | undefined
   let saveInFlight = false
   let savePromise: Promise<void> | undefined
   let pendingCanvasPatch: CanvasSaveTask | undefined
@@ -119,6 +123,17 @@ export function useImageWorkspace(canvasId: Ref<string>) {
     if (!model.supported_sizes.includes(form.value.imageSize)) form.value.imageSize = model.supported_sizes[0] || '1K'
     if (form.value.count > model.max_count) form.value.count = model.max_count
     if (!model.supports_reverse) form.value.reversePrompt = false
+	if (form.value.aspectRatio === 'original' && (!['chat_completions', 'gpt_image_2'].includes(model.protocol) || !model.supports_reference)) {
+      form.value.aspectRatio = '1:1'
+      ElMessage.info('当前模型不支持原图比例，已切换为 1:1')
+    }
+  })
+
+  watch(() => references.value.length, (count, previous) => {
+    if (previous > 0 && count === 0 && form.value.aspectRatio === 'original') {
+      form.value.aspectRatio = '1:1'
+      ElMessage.info('参考图已移除，画面比例已切换为 1:1')
+    }
   })
 
   async function upload(files: File[]) {
@@ -219,6 +234,109 @@ export function useImageWorkspace(canvasId: Ref<string>) {
       showError(error, '删除画布图片失败')
     } finally {
       deletingNodeId.value = ''
+    }
+  }
+
+  async function deleteCanvasNodes(nodeIds: string[]) {
+    if (!canvas.value || deletingNodeId.value) return false
+    const uniqueNodeIDs = [...new Set(nodeIds.filter(Boolean))]
+    if (!uniqueNodeIDs.length) return false
+    const currentCanvasID = canvas.value.id
+    deletingNodeId.value = '__batch__'
+    batchDeletingCount.value = uniqueNodeIDs.length
+    try {
+      await drainCanvasSave()
+      let pendingIDs = uniqueNodeIDs
+      let retryConflict = true
+      while (pendingIDs.length) {
+        const nodes = canvas.value?.nodes || []
+        const deletingNodes = nodes.filter((node) => pendingIDs.includes(node.id))
+        pendingIDs = deletingNodes.map((node) => node.id)
+        if (!pendingIDs.length || !canvas.value) break
+        try {
+          canvas.value = await imageAgentService.deleteCanvasNodesById(currentCanvasID, pendingIDs, canvas.value.version)
+          const deletedAssets = new Set(deletingNodes.map((node) => node.asset_id).filter(Boolean))
+          references.value = references.value.filter((asset) => !deletedAssets.has(asset.id))
+          ElMessage.success(`已从画布删除 ${pendingIDs.length} 张图片`)
+          return true
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 409 && retryConflict) {
+            canvas.value = await imageAgentService.canvasById(currentCanvasID)
+            retryConflict = false
+            continue
+          }
+          throw error
+        }
+      }
+      ElMessage.info('所选图片已经不在当前画布中')
+      return true
+    } catch (error) {
+      showError(error, '批量删除画布图片失败，请刷新后重试')
+      return false
+    } finally {
+      deletingNodeId.value = ''
+      batchDeletingCount.value = 0
+    }
+  }
+
+  async function removeBackground(nodeIds: string[]) {
+    if (!canvas.value || backgroundRemovingCount.value || !options.value.background_removal_enabled) return false
+    const uniqueNodeIDs = [...new Set(nodeIds.filter(Boolean))]
+    if (!uniqueNodeIDs.length || uniqueNodeIDs.length > 20) {
+      ElMessage.warning('每次最多选择 20 张已完成图片进行抠图')
+      return false
+    }
+    const currentCanvasID = canvas.value.id
+    backgroundRemovingCount.value = uniqueNodeIDs.length
+    try {
+      await drainCanvasSave()
+      let retry = true
+      while (canvas.value) {
+        const remaining = uniqueNodeIDs.filter((id) => canvas.value?.nodes.some((node) => node.id === id))
+        if (!remaining.length) throw new Error('所选图片已经不在当前画布中')
+        try {
+          backgroundRemovalJob.value = await imageAgentService.createBackgroundRemovalJob(currentCanvasID, {
+            node_ids: remaining, version: canvas.value.version, idempotency_key: createClientUUID(),
+          })
+          await refreshCanvas(currentCanvasID)
+          pollBackgroundRemoval(backgroundRemovalJob.value.id, currentCanvasID, canvasEpoch)
+          ElMessage.success(`已创建 ${remaining.length} 张图片的智能抠图任务`)
+          return true
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 409 && retry) {
+            canvas.value = await imageAgentService.canvasById(currentCanvasID)
+            retry = false
+            continue
+          }
+          throw error
+        }
+      }
+      return false
+    } catch (error) {
+      backgroundRemovingCount.value = 0
+      showError(error, '创建智能抠图任务失败')
+      return false
+    }
+  }
+
+  async function pollBackgroundRemoval(id: string, currentCanvasID: string, epoch: number) {
+    if (epoch !== canvasEpoch || currentCanvasID !== canvas.value?.id) return
+    try {
+      const job = await imageAgentService.backgroundRemovalJob(id)
+      if (epoch !== canvasEpoch || currentCanvasID !== canvas.value?.id) return
+      backgroundRemovalJob.value = job
+      await refreshCanvas(currentCanvasID, epoch)
+      if (['succeeded', 'partial', 'failed', 'cancelled'].includes(job.status)) {
+        backgroundRemovingCount.value = 0
+        if (job.status === 'succeeded') ElMessage.success('智能抠图完成，透明 PNG 已放到原图右侧')
+        else if (job.status === 'partial') ElMessage.warning(job.error || '部分图片抠图失败')
+        else if (job.status === 'failed') ElMessage.error(job.error || '智能抠图失败')
+        return
+      }
+      backgroundRemovalPollTimer = window.setTimeout(() => pollBackgroundRemoval(id, currentCanvasID, epoch), 1500)
+    } catch (error) {
+      backgroundRemovingCount.value = 0
+      showError(error, '读取智能抠图任务状态失败')
     }
   }
 
@@ -407,6 +525,7 @@ export function useImageWorkspace(canvasId: Ref<string>) {
     }
     generating.value = true
     window.clearTimeout(pollTimer)
+    window.clearTimeout(backgroundRemovalPollTimer)
     const projectId = form.value.projectId
     const currentCanvasID = canvas.value.id
     const epoch = canvasEpoch
@@ -450,7 +569,9 @@ export function useImageWorkspace(canvasId: Ref<string>) {
           ElMessage.success('图片描述已反推完成')
         } else {
           await refreshCanvas(currentCanvasID, epoch)
-          if (job.status === 'succeeded') ElMessage.success('图片生成完成')
+		  const resolutionWarnings = [...new Set(job.outputs.map((item) => item.resolution_warning).filter(Boolean))]
+		  if (job.status === 'succeeded' && resolutionWarnings.length) ElMessage.warning(resolutionWarnings[0]!)
+		  else if (job.status === 'succeeded') ElMessage.success('图片生成完成')
           else if (job.status === 'partial') ElMessage.warning(`部分图片生成成功：${job.error || '可重试失败项'}`)
           else if (job.status === 'failed') ElMessage.error(job.error || '图片生成失败')
         }
@@ -482,8 +603,8 @@ export function useImageWorkspace(canvasId: Ref<string>) {
   })
 
   return {
-    options, canvas, references, form, loading, uploading, importing, importProgress, deletingNodeId, generating, currentJob, selectedProject,
-    initialize, upload, importToCanvas, addCanvasReference, removeReference, deleteCanvasNode, scheduleCanvasSave, submit, applyAction,
+    options, canvas, references, form, loading, uploading, importing, importProgress, deletingNodeId, batchDeletingCount, generating, currentJob, backgroundRemovalJob, backgroundRemovingCount, selectedProject,
+    initialize, upload, importToCanvas, addCanvasReference, removeReference, deleteCanvasNode, deleteCanvasNodes, removeBackground, scheduleCanvasSave, submit, applyAction,
   }
 }
 

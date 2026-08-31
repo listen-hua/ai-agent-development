@@ -72,4 +72,37 @@ describe('auth store initialization', () => {
     expect(authService.iamExchange).toHaveBeenCalledWith(18)
     expect(me).not.toHaveBeenCalled()
   })
+
+  it('re-exchanges the IAM session when a runtime request expires', async () => {
+    vi.spyOn(iamService, 'isFeishuClient').mockReturnValue(false)
+    vi.spyOn(authService, 'iamConfig').mockResolvedValue({ app_id: 'shimmer-ai', enabled: true })
+    vi.spyOn(iamService, 'initializeIAM').mockResolvedValue({ apiURL: '', permissions: [], userID: 18 })
+    vi.spyOn(authService, 'iamExchange').mockResolvedValue({
+      ...employee,
+      iam_user_id: 18,
+      auth_source: 'iam',
+      permissions: ['agent_use', 'image_manage'],
+    })
+    const auth = useAuthStore()
+    auth.acceptResolvedUser(employee)
+
+    await auth.recoverSession()
+
+    expect(auth.authSource).toBe('iam')
+    expect(auth.can('image_manage')).toBe(true)
+    expect(authService.iamExchange).toHaveBeenCalledWith(18)
+  })
+
+  it('clears stale user state when session recovery fails', async () => {
+    vi.spyOn(iamService, 'isFeishuClient').mockReturnValue(false)
+    vi.spyOn(authService, 'iamConfig').mockRejectedValue(new Error('IAM unavailable'))
+    const auth = useAuthStore()
+    auth.acceptResolvedUser(employee)
+
+    await expect(auth.recoverSession()).rejects.toThrow('IAM unavailable')
+
+    expect(auth.user).toBeNull()
+    expect(auth.permissions).toEqual([])
+    expect(auth.initialized).toBe(false)
+  })
 })

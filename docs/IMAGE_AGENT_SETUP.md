@@ -4,7 +4,7 @@
 
 数据库迁移 `011_image_agent.sql` 会创建两个默认中转站：
 
-- XGAPI：`https://api.xgapi.top/v1`
+- XGAPI：`https://api.xgapiproxy.win/v1`
 - Comfly AI：`https://ai.comfly.org/v1`
 
 `https://ai.comfly.org/topup` 是充值页面，不是 API Base URL。

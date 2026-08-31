@@ -7,7 +7,7 @@ vi.mock('./api', () => ({ api, resolveApiURL: (value: string) => value }))
 
 describe('image agent response normalization', () => {
   it('supplies empty collections when an older or empty API response omits them', () => {
-    expect(normalizeImageAgentOptions({})).toEqual({ relays: [], models: [], projects: [], prompt_actions: [] })
+    expect(normalizeImageAgentOptions({})).toEqual({ relays: [], models: [], projects: [], prompt_actions: [], background_removal_enabled: false })
     const canvas = normalizeImageCanvas({
       id: 'canvas-1', user_id: 'user-1', project_id: 'project-1', version: 1,
       viewport: { x: 0, y: 0, zoom: 1 }, nodes: undefined,

@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS image_models (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   relay_id uuid NOT NULL REFERENCES image_relays(id) ON DELETE CASCADE,
   model_id text NOT NULL,
+  request_model_id text NOT NULL DEFAULT '',
+  remote_endpoint_types text[] NOT NULL DEFAULT ARRAY[]::text[],
   display_name text NOT NULL,
   protocol text NOT NULL DEFAULT 'chat_completions'
     CHECK (protocol IN ('chat_completions','images_generations')),
@@ -152,7 +154,7 @@ CREATE TABLE IF NOT EXISTS image_job_outputs (
 
 INSERT INTO image_relays(id,relay_key,name,base_url,enabled,timeout_seconds,allowed_output_hosts)
 VALUES
-  ('00000000-0000-4000-8000-000000000201','xgapi','XGAPI','https://api.xgapi.top/v1',true,120,ARRAY['api.xgapi.top']),
+  ('00000000-0000-4000-8000-000000000201','xgapi','XGAPI','https://api.xgapiproxy.win/v1',true,120,ARRAY['api.xgapiproxy.win']),
   ('00000000-0000-4000-8000-000000000202','comfly','Comfly AI','https://ai.comfly.org/v1',true,120,ARRAY['ai.comfly.org'])
 ON CONFLICT(relay_key) DO UPDATE SET name=EXCLUDED.name,base_url=EXCLUDED.base_url;
 

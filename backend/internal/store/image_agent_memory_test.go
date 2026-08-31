@@ -98,3 +98,67 @@ func TestDeleteImageCanvasNodeAtomicallyClaimsCanvasVersion(t *testing.T) {
 		t.Fatalf("canvas deletion should retain the asset for job history and audit: %v", err)
 	}
 }
+
+func TestDeleteImageCanvasNodesRemovesAllNodesWithOneVersion(t *testing.T) {
+	ctx := context.Background()
+	repo := NewMemory(domain.AgentConfig{})
+	canvas, err := repo.GetOrCreateImageCanvas(ctx, "user-batch-delete", "project-batch-delete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	for index, id := range []string{"node-one", "node-two", "node-three"} {
+		asset := domain.ImageAsset{ID: "asset-" + id, OwnerID: canvas.UserID, ProjectID: canvas.ProjectID, Source: "upload", CreatedAt: now}
+		node := domain.ImageCanvasNode{ID: id, CanvasID: canvas.ID, AssetID: asset.ID, Status: "ready", ZIndex: index + 1, CreatedAt: now, UpdatedAt: now}
+		canvas, err = repo.ImportImageCanvasAsset(ctx, canvas, canvas.Version, asset, node)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	beforeVersion := canvas.Version
+	updated, err := repo.DeleteImageCanvasNodes(ctx, canvas, []string{"node-one", "node-three"}, beforeVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Version != beforeVersion+1 || len(updated.Nodes) != 1 || updated.Nodes[0].ID != "node-two" {
+		t.Fatalf("unexpected batch deletion result: version=%d nodes=%+v", updated.Version, updated.Nodes)
+	}
+	if _, err = repo.DeleteImageCanvasNodes(ctx, updated, []string{"node-two", "missing"}, updated.Version); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing member must roll back the whole batch, got %v", err)
+	}
+	unchanged, _ := repo.GetOrCreateImageCanvas(ctx, canvas.UserID, canvas.ProjectID)
+	if unchanged.Version != updated.Version || len(unchanged.Nodes) != 1 {
+		t.Fatalf("failed batch must not change canvas: version=%d nodes=%d", unchanged.Version, len(unchanged.Nodes))
+	}
+}
+
+func TestCreateBackgroundRemovalJobAtomicallyAddsPlaceholders(t *testing.T) {
+	ctx := context.Background()
+	repo := NewMemory(domain.AgentConfig{})
+	canvas, err := repo.GetOrCreateImageCanvas(ctx, "user-bg", "project-bg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	job := domain.BackgroundRemovalJob{ID: "bg-job", UserID: canvas.UserID, CanvasID: canvas.ID, Status: "pending", IdempotencyKey: "request-bg", NextAttemptAt: now, CreatedAt: now, UpdatedAt: now}
+	node := domain.ImageCanvasNode{ID: "bg-placeholder", CanvasID: canvas.ID, BackgroundRemovalJobID: job.ID, SourceNodeID: "source-node", Status: "pending", Width: 360, Height: 240, CreatedAt: now, UpdatedAt: now}
+	item := domain.BackgroundRemovalItem{ID: "bg-item", JobID: job.ID, SourceNodeID: "source-node", SourceAssetID: "source-asset", ProjectID: "project-bg", PlaceholderNodeID: node.ID, Status: "pending", CreatedAt: now, UpdatedAt: now}
+	created, err := repo.CreateBackgroundRemovalJob(ctx, job, []domain.BackgroundRemovalItem{item}, []domain.ImageCanvasNode{node}, canvas.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created.Items) != 1 {
+		t.Fatalf("unexpected job items: %+v", created.Items)
+	}
+	updated, _ := repo.GetImageCanvas(ctx, canvas.ID)
+	if updated.Version != canvas.Version+1 || len(updated.Nodes) != 1 || updated.Nodes[0].BackgroundRemovalJobID != job.ID {
+		t.Fatalf("placeholder and version must be atomic: %+v", updated)
+	}
+	duplicate := job
+	duplicate.ID = "bg-job-duplicate"
+	again, err := repo.CreateBackgroundRemovalJob(ctx, duplicate, []domain.BackgroundRemovalItem{item}, []domain.ImageCanvasNode{node}, updated.Version)
+	if err != nil || again.ID != job.ID {
+		t.Fatalf("idempotent request must return existing job: %+v err=%v", again, err)
+	}
+}

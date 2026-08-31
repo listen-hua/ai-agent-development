@@ -4,7 +4,7 @@ import { Delete, MagicStick, PictureRounded, Promotion } from '@element-plus/ico
 import CartoonStrengthControl from './CartoonStrengthControl.vue'
 import ImagePromptActionButton from './ImagePromptActionButton.vue'
 import ReferenceImageSlots from './ReferenceImageSlots.vue'
-import { cartoonStrength, replaceCartoonStrength } from '@/utils/imagePrompt'
+import { cartoonStrength, IMAGE_PROMPT_MAX_LENGTH, replaceCartoonStrength } from '@/utils/imagePrompt'
 import type {
   ImageAsset, ImageCount, ImageFormState, ImageModel, ImageProject, ImagePromptAction,
   ImageRatio, ImageRelay, ImageSize,
@@ -33,13 +33,23 @@ const emit = defineEmits<{
 const module = ref<'text' | 'workflow'>('text')
 const selectedModel = computed(() => props.models.find((item) => item.id === props.modelValue.modelId))
 const relayModels = computed(() => props.models.filter((item) => item.relay_id === props.modelValue.relayId))
+const canUseOriginalRatio = computed(() => Boolean(
+	props.references.length && ['chat_completions', 'gpt_image_2'].includes(selectedModel.value?.protocol || '') && selectedModel.value?.supports_reference,
+))
 const strength = computed(() => cartoonStrength(props.modelValue.prompt))
 const sizes: Array<{ value: ImageSize; label: string; detail: string }> = [
   { value: '1K', label: '标准', detail: '1024 级' },
   { value: '2K', label: '高清', detail: '2048 级' },
   { value: '4K', label: '超清', detail: '4096 级' },
 ]
-const ratios: ImageRatio[] = ['1:1', '16:9', '9:16', '4:3', '3:4']
+const ratios: Array<{ value: ImageRatio; label: string }> = [
+  { value: 'original', label: '原图' },
+  { value: '1:1', label: '1:1' },
+  { value: '16:9', label: '16:9' },
+  { value: '9:16', label: '9:16' },
+  { value: '4:3', label: '4:3' },
+  { value: '3:4', label: '3:4' },
+]
 const counts: ImageCount[] = [1, 2, 4, 8]
 
 function update(patch: Partial<ImageFormState>) {
@@ -47,6 +57,7 @@ function update(patch: Partial<ImageFormState>) {
   if (patch.relayId !== undefined && !props.models.some((item) => item.relay_id === patch.relayId && item.id === next.modelId)) {
     next.modelId = props.models.find((item) => item.relay_id === patch.relayId)?.id || ''
   }
+  if (next.reversePrompt && next.aspectRatio === 'original') next.aspectRatio = '1:1'
   emit('update:modelValue', next)
 }
 
@@ -83,7 +94,7 @@ function updateStrength(value: number) {
             :model-value="modelValue.prompt"
             type="textarea"
             :rows="7"
-            maxlength="4000"
+            :maxlength="IMAGE_PROMPT_MAX_LENGTH"
             show-word-limit
             resize="none"
             placeholder="描述主体、场景、构图、光线、材质、色彩和风格……"
@@ -108,7 +119,14 @@ function updateStrength(value: number) {
       <section class="form-section">
         <header><strong>画面比例</strong></header>
         <div class="choice-grid ratio-grid">
-          <button v-for="ratio in ratios" :key="ratio" :class="{ active: modelValue.aspectRatio === ratio }" @click="update({ aspectRatio: ratio })">{{ ratio }}</button>
+          <button
+            v-for="ratio in ratios"
+            :key="ratio.value"
+            :disabled="ratio.value === 'original' && !canUseOriginalRatio"
+            :title="ratio.value === 'original' && !canUseOriginalRatio ? '请先添加参考图并选择支持参考图的 Chat 生图模型' : undefined"
+            :class="{ active: modelValue.aspectRatio === ratio.value }"
+            @click="update({ aspectRatio: ratio.value })"
+          >{{ ratio.label }}</button>
         </div>
       </section>
 
@@ -188,7 +206,7 @@ function updateStrength(value: number) {
 .prompt-editor footer label { color: #6f6877; display: flex; align-items: center; gap: 7px; font-size: 12px; }
 .prompt-editor footer :deep(.el-switch) { --el-switch-on-color: #8056ad; transform: scale(.8); transform-origin: left center; margin-right: -7px; }
 .prompt-editor footer .el-button { color: #9b6f7c; font-size: 12px; }
-.choice-grid { display: grid; gap: 6px; }.ratio-grid { grid-template-columns: repeat(5, 1fr); }.size-grid { grid-template-columns: repeat(3, 1fr); }.count-grid { grid-template-columns: repeat(4, 1fr); }
+.choice-grid { display: grid; gap: 6px; }.ratio-grid { grid-template-columns: repeat(6, 1fr); }.size-grid { grid-template-columns: repeat(3, 1fr); }.count-grid { grid-template-columns: repeat(4, 1fr); }
 .choice-grid button { min-width: 0; height: 34px; border: 1px solid #e3dee8; border-radius: 9px; color: #777080; background: white; cursor: pointer; font-size: 12px; }
 .choice-grid button.active { border-color: #8b64b7; color: #72459f; background: #f7f1fc; box-shadow: inset 0 0 0 1px #8b64b7; }
 .choice-grid button:disabled { opacity: .36; cursor: not-allowed; }.size-grid button { height: 48px; display: flex; justify-content: center; flex-direction: column; gap: 2px; }

@@ -112,6 +112,18 @@ func (s *Server) deleteImageCanvasNodeByID(w http.ResponseWriter, r *http.Reques
 	respondImage(w, value, err)
 }
 
+func (s *Server) batchDeleteImageCanvasNodes(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		NodeIDs []string `json:"node_ids"`
+		Version int64    `json:"version"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	value, err := s.imageAgent.DeleteCanvasNodesByID(r.Context(), currentUser(r), r.PathValue("canvasID"), input.NodeIDs, input.Version)
+	respondImage(w, value, err)
+}
+
 func (s *Server) imageCanvas(w http.ResponseWriter, r *http.Request) {
 	markLegacyImageCanvasEndpoint(w)
 	value, err := s.imageAgent.Canvas(r.Context(), currentUser(r), r.PathValue("id"))
@@ -405,13 +417,23 @@ func (s *Server) updateImageProject(w http.ResponseWriter, r *http.Request) {
 	respondImage(w, value, err)
 }
 
+func (s *Server) deleteImageProject(w http.ResponseWriter, r *http.Request) {
+	err := s.imageAgent.DeleteProject(r.Context(), currentUser(r), r.PathValue("id"))
+	if err != nil {
+		respondImage(w, nil, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 type imagePromptActionPayload struct {
-	ActionKey      string `json:"action_key"`
-	Name           string `json:"name"`
-	PromptTemplate string `json:"prompt_template"`
-	ProjectID      string `json:"project_id"`
-	Enabled        bool   `json:"enabled"`
-	SortOrder      int    `json:"sort_order"`
+	ActionKey      string   `json:"action_key"`
+	Name           string   `json:"name"`
+	PromptTemplate string   `json:"prompt_template"`
+	ProjectID      string   `json:"project_id"`
+	ProjectIDs     []string `json:"project_ids"`
+	Enabled        bool     `json:"enabled"`
+	SortOrder      int      `json:"sort_order"`
 }
 
 func (s *Server) listImagePromptActions(w http.ResponseWriter, r *http.Request) {
@@ -426,7 +448,7 @@ func (s *Server) createImagePromptAction(w http.ResponseWriter, r *http.Request)
 	}
 	value, err := s.imageAgent.SavePromptAction(r.Context(), currentUser(r), "", service.ImagePromptActionInput{
 		ActionKey: input.ActionKey, Name: input.Name, PromptTemplate: input.PromptTemplate,
-		ProjectID: input.ProjectID, Enabled: input.Enabled, SortOrder: input.SortOrder,
+		ProjectID: input.ProjectID, ProjectIDs: input.ProjectIDs, Enabled: input.Enabled, SortOrder: input.SortOrder,
 	})
 	if err == nil {
 		writeJSON(w, http.StatusCreated, value)
@@ -442,7 +464,7 @@ func (s *Server) updateImagePromptAction(w http.ResponseWriter, r *http.Request)
 	}
 	value, err := s.imageAgent.SavePromptAction(r.Context(), currentUser(r), r.PathValue("id"), service.ImagePromptActionInput{
 		ActionKey: input.ActionKey, Name: input.Name, PromptTemplate: input.PromptTemplate,
-		ProjectID: input.ProjectID, Enabled: input.Enabled, SortOrder: input.SortOrder,
+		ProjectID: input.ProjectID, ProjectIDs: input.ProjectIDs, Enabled: input.Enabled, SortOrder: input.SortOrder,
 	})
 	respondImage(w, value, err)
 }

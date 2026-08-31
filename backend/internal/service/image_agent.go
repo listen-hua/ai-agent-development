@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	_ "golang.org/x/image/webp"
 	"internal-ai-agent/backend/internal/blob"
@@ -33,10 +34,12 @@ var (
 	imageProjectKeyPattern = regexp.MustCompile(`^[\p{L}][\p{L}\p{N}_-]{0,49}$`)
 	promptActionKeyPattern = regexp.MustCompile(`^[\p{L}][\p{L}\p{N}_-]{0,49}$`)
 	cartoonStrengthPattern = regexp.MustCompile(`(?m)("cartoonization_strength"\s*:\s*)(-?(?:\d+(?:\.\d*)?|\.\d+))`)
-	validRatios            = map[string]bool{"1:1": true, "16:9": true, "9:16": true, "4:3": true, "3:4": true}
+	validRatios            = map[string]bool{"original": true, "1:1": true, "16:9": true, "9:16": true, "4:3": true, "3:4": true}
 	validSizes             = map[string]bool{"1K": true, "2K": true, "4K": true}
 	validCounts            = map[int]bool{1: true, 2: true, 4: true, 8: true}
 )
+
+const imagePromptMaxLength = 15_000
 
 type ImageRelayInput struct {
 	RelayKey           string
@@ -71,6 +74,7 @@ type ImagePromptActionInput struct {
 	Name           string
 	PromptTemplate string
 	ProjectID      string
+	ProjectIDs     []string
 	Enabled        bool
 	SortOrder      int
 }
@@ -142,8 +146,8 @@ func (s *ImageAgent) EnsureDefaults(ctx context.Context) error {
 		return err
 	}
 	defaults := []domain.ImageRelay{
-		{ID: "00000000-0000-4000-8000-000000000201", RelayKey: "xgapi", Name: "XGAPI", BaseURL: "https://api.xgapi.top/v1", Enabled: true, TimeoutSeconds: 120, AllowedOutputHosts: []string{"api.xgapi.top", "image.xgapiproxy.win"}, CreatedAt: now, UpdatedAt: now},
-		{ID: "00000000-0000-4000-8000-000000000202", RelayKey: "comfly", Name: "Comfly AI", BaseURL: "https://ai.comfly.org/v1", Enabled: true, TimeoutSeconds: 120, AllowedOutputHosts: []string{"ai.comfly.org", "files.closeai.fans", "webstatic.apiproxy.vip"}, CreatedAt: now, UpdatedAt: now},
+		{ID: "00000000-0000-4000-8000-000000000201", RelayKey: "xgapi", Name: "XGAPI", BaseURL: "https://api.xgapiproxy.win/v1", Enabled: true, TimeoutSeconds: 120, AllowedOutputHosts: []string{"api.xgapiproxy.win", "image.xgapiproxy.win", "webstatic.apiproxy.vip"}, CreatedAt: now, UpdatedAt: now},
+		{ID: "00000000-0000-4000-8000-000000000202", RelayKey: "comfly", Name: "Comfly AI", BaseURL: "https://ai.comfly.org/v1", Enabled: true, TimeoutSeconds: 120, AllowedOutputHosts: []string{"ai.comfly.org", "files.closeai.fans", "webstatic.apiproxy.vip", "webstatic.aiproxy.vip"}, CreatedAt: now, UpdatedAt: now},
 	}
 	existing := map[string]domain.ImageRelay{}
 	for _, relay := range relays {
@@ -201,6 +205,9 @@ func (s *ImageAgent) Options(ctx context.Context, user domain.User) (domain.Imag
 		return domain.ImageAgentOptions{}, err
 	}
 	result := domain.ImageAgentOptions{Relays: []domain.ImageRelay{}, Models: []domain.ImageModel{}, Projects: []domain.ImageProject{}, PromptActions: []domain.ImagePromptAction{}}
+	if config, configErr := s.repo.GetPixianBackgroundRemovalConfig(ctx); configErr == nil {
+		result.BackgroundRemovalEnabled = config.Enabled && config.EncryptedAPIID != "" && config.EncryptedAPISecret != ""
+	}
 	relayVisible := map[string]bool{}
 	for _, relay := range relays {
 		if relay.Enabled && relay.EncryptedAPIKey != "" {
@@ -212,6 +219,7 @@ func (s *ImageAgent) Options(ctx context.Context, user domain.User) (domain.Imag
 	}
 	for _, model := range models {
 		if model.Enabled && relayVisible[model.RelayID] {
+			normalizeImageModelMetadata(&model)
 			result.Models = append(result.Models, model)
 		}
 	}
@@ -248,7 +256,7 @@ func (s *ImageAgent) PromptActions(ctx context.Context, user domain.User, projec
 			continue
 		}
 		existing, exists := overrides[value.ActionKey]
-		if !exists || (existing.ProjectID == "" && value.ProjectID == projectID) {
+		if !exists || (!promptActionScopedToProject(existing, projectID) && promptActionScopedToProject(value, projectID)) {
 			overrides[value.ActionKey] = value
 		}
 	}
@@ -345,17 +353,44 @@ func (s *ImageAgent) SyncModels(ctx context.Context, actor domain.User, relayID 
 		return nil, err
 	}
 	now := time.Now()
-	values := make([]domain.ImageModel, 0, len(remote))
-	for _, modelID := range remote {
-		values = append(values, domain.ImageModel{ID: ids.New("model"), RelayID: relay.ID, ModelID: modelID,
-			DisplayName: modelID, Protocol: "chat_completions", Enabled: false, SupportsReverse: true,
-			SupportedSizes: defaultImageModelSizes(modelID), MaxCount: 1, CreatedAt: now, UpdatedAt: now})
-	}
+	values := syncedImageModels(relay, remote, now)
 	if err = s.repo.UpsertImageModels(ctx, values); err != nil {
 		return nil, err
 	}
 	s.appendAudit(ctx, actor, "image.models.sync", "image_relay", relay.ID, map[string]any{"discovered": len(values)})
 	return s.ListModels(ctx, relay.ID)
+}
+
+func syncedImageModels(relay domain.ImageRelay, remote []imageproxy.RemoteModel, now time.Time) []domain.ImageModel {
+	remoteByID := make(map[string]imageproxy.RemoteModel, len(remote))
+	for _, remoteModel := range remote {
+		remoteByID[remoteModel.ID] = remoteModel
+	}
+	values := make([]domain.ImageModel, 0, len(remote))
+	for _, remoteModel := range remote {
+		modelID := remoteModel.ID
+		requestModelID := modelID
+		protocol := "chat_completions"
+		supportsReference, supportsReverse := false, true
+		if isGPTImage2Model(modelID) {
+			supportsReference, supportsReverse = true, false
+			if relayUsesGPTImage2Protocol(relay.RelayKey) || containsFolded(remoteModel.SupportedEndpointTypes, "image-generation") {
+				protocol = "gpt_image_2"
+			}
+		}
+		if relay.RelayKey == "xgapi" {
+			if canonical := xgapiEditModelID(modelID); canonical != modelID {
+				if target, ok := remoteByID[canonical]; ok && containsFolded(target.SupportedEndpointTypes, "image-generation") {
+					requestModelID, supportsReference = canonical, true
+				}
+			}
+		}
+		values = append(values, domain.ImageModel{ID: ids.New("model"), RelayID: relay.ID, ModelID: modelID,
+			RequestModelID: requestModelID, RemoteEndpointTypes: remoteModel.SupportedEndpointTypes,
+			DisplayName: modelID, Protocol: protocol, Enabled: false, SupportsReference: supportsReference, SupportsReverse: supportsReverse,
+			SupportedSizes: defaultImageModelSizes(modelID), MaxCount: 1, CreatedAt: now, UpdatedAt: now})
+	}
+	return values
 }
 
 func (s *ImageAgent) ListModels(ctx context.Context, relayID string) ([]domain.ImageModel, error) {
@@ -364,6 +399,7 @@ func (s *ImageAgent) ListModels(ctx context.Context, relayID string) ([]domain.I
 		return nil, err
 	}
 	for index := range models {
+		normalizeImageModelMetadata(&models[index])
 		models[index].SupportedSizes = effectiveImageModelSizes(models[index].ModelID, models[index].SupportedSizes)
 	}
 	return models, nil
@@ -378,8 +414,20 @@ func (s *ImageAgent) SaveModel(ctx context.Context, actor domain.User, id string
 	if input.DisplayName == "" {
 		input.DisplayName = value.ModelID
 	}
-	if input.Protocol != "chat_completions" && input.Protocol != "images_generations" {
+	if input.Protocol != "chat_completions" && input.Protocol != "images_generations" && input.Protocol != "gpt_image_2" {
 		return value, errors.New("无效的生图协议")
+	}
+	if isGPTImage2Model(value.ModelID) {
+		input.Protocol, input.SupportsReference, input.SupportsReverse = "chat_completions", true, false
+		relay, relayErr := s.repo.GetImageRelay(ctx, value.RelayID)
+		if relayErr != nil {
+			return value, relayErr
+		}
+		if relayUsesGPTImage2Protocol(relay.RelayKey) || containsFolded(value.RemoteEndpointTypes, "image-generation") {
+			input.Protocol = "gpt_image_2"
+		}
+	} else if input.Protocol == "gpt_image_2" {
+		return value, errors.New("GPT Image 2 专用协议只能用于 gpt-image-2 模型")
 	}
 	if !validCounts[input.MaxCount] {
 		return value, errors.New("最大生成数量只能是 1、2、4 或 8")
@@ -394,6 +442,9 @@ func (s *ImageAgent) SaveModel(ctx context.Context, actor domain.User, id string
 				return value, fmt.Errorf("模型 %s 不支持 %s 生图分辨率", value.ModelID, size)
 			}
 		}
+	}
+	if value.RequestModelID == "" {
+		value.RequestModelID = value.ModelID
 	}
 	value.DisplayName, value.Protocol, value.Enabled = input.DisplayName, input.Protocol, input.Enabled
 	value.SupportsReference, value.SupportsReverse = input.SupportsReference, input.SupportsReverse
@@ -441,6 +492,37 @@ func (s *ImageAgent) SaveProject(ctx context.Context, actor domain.User, id stri
 	return value, nil
 }
 
+func (s *ImageAgent) DeleteProject(ctx context.Context, actor domain.User, id string) error {
+	project, err := s.repo.GetImageProject(ctx, id)
+	if err != nil {
+		return err
+	}
+	actions, err := s.repo.ListImagePromptActions(ctx, id)
+	if err != nil {
+		return err
+	}
+	removedActions := make([]domain.ImagePromptAction, 0)
+	for _, action := range actions {
+		projectIDs := effectivePromptActionProjectIDs(action)
+		if len(projectIDs) == 1 && projectIDs[0] == id {
+			removedActions = append(removedActions, action)
+		}
+	}
+	if err = s.repo.DeleteImageProject(ctx, id); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			return fmt.Errorf("项目已产生图片、任务或历史画布，请先停用项目，不能直接删除: %w", err)
+		}
+		return err
+	}
+	for _, action := range removedActions {
+		s.cleanupPromptActionPreview(ctx, actor, action.ID, action.PreviewObjectKey)
+	}
+	s.appendAudit(ctx, actor, "image.project.delete", "image_project", id, map[string]any{
+		"project_key": project.ProjectKey, "name": project.Name,
+	})
+	return nil
+}
+
 func (s *ImageAgent) ListPromptActions(ctx context.Context, projectID string) ([]domain.ImagePromptAction, error) {
 	return s.repo.ListImagePromptActions(ctx, projectID)
 }
@@ -448,6 +530,7 @@ func (s *ImageAgent) ListPromptActions(ctx context.Context, projectID string) ([
 func (s *ImageAgent) SavePromptAction(ctx context.Context, actor domain.User, id string, input ImagePromptActionInput) (domain.ImagePromptAction, error) {
 	input.ActionKey = strings.ToLower(strings.TrimSpace(input.ActionKey))
 	input.PromptTemplate = strings.TrimSpace(input.PromptTemplate)
+	input.ProjectIDs = normalizePromptActionProjectIDs(input.ProjectIDs, input.ProjectID)
 	if !promptActionKeyPattern.MatchString(input.ActionKey) {
 		return domain.ImagePromptAction{}, errors.New("功能按键标识需以中文或英文字母开头，只能包含中文、字母、数字、下划线和短横线，长度不超过 50 个字符")
 	}
@@ -457,8 +540,8 @@ func (s *ImageAgent) SavePromptAction(ctx context.Context, actor domain.User, id
 	if err := ValidateCartoonStrength(input.PromptTemplate); err != nil {
 		return domain.ImagePromptAction{}, err
 	}
-	if input.ProjectID != "" {
-		if _, err := s.repo.GetImageProject(ctx, input.ProjectID); err != nil {
+	for _, projectID := range input.ProjectIDs {
+		if _, err := s.repo.GetImageProject(ctx, projectID); err != nil {
 			return domain.ImagePromptAction{}, err
 		}
 	}
@@ -470,10 +553,26 @@ func (s *ImageAgent) SavePromptAction(ctx context.Context, actor domain.User, id
 		}
 		existing = loaded
 	}
+	values, err := s.repo.ListImagePromptActions(ctx, "")
+	if err != nil {
+		return domain.ImagePromptAction{}, err
+	}
+	for _, candidate := range values {
+		if candidate.ID == id || candidate.ActionKey != input.ActionKey {
+			continue
+		}
+		if promptActionScopesOverlap(effectivePromptActionProjectIDs(candidate), input.ProjectIDs) {
+			return domain.ImagePromptAction{}, errors.New("所选项目中已存在相同按键标识的功能按键")
+		}
+	}
 	input.Name = promptActionName(input.Name, input.ActionKey, existing.Name)
 	now := time.Now()
+	legacyProjectID := ""
+	if len(input.ProjectIDs) > 0 {
+		legacyProjectID = input.ProjectIDs[0]
+	}
 	value := domain.ImagePromptAction{ID: id, ActionKey: input.ActionKey, Name: input.Name,
-		PromptTemplate: input.PromptTemplate, ProjectID: input.ProjectID, Enabled: input.Enabled,
+		PromptTemplate: input.PromptTemplate, ProjectID: legacyProjectID, ProjectIDs: input.ProjectIDs, Enabled: input.Enabled,
 		SortOrder: input.SortOrder, UpdatedBy: actor.ID, UpdatedAt: now}
 	if id == "" {
 		value.ID, value.CreatedBy, value.CreatedAt = ids.New("action"), actor.ID, now
@@ -489,7 +588,9 @@ func (s *ImageAgent) SavePromptAction(ctx context.Context, actor domain.User, id
 	if err := s.repo.UpsertImagePromptAction(ctx, value); err != nil {
 		return value, err
 	}
-	s.appendAudit(ctx, actor, "image.prompt_action.save", "image_prompt_action", value.ID, map[string]any{"action_key": value.ActionKey})
+	s.appendAudit(ctx, actor, "image.prompt_action.save", "image_prompt_action", value.ID, map[string]any{
+		"action_key": value.ActionKey, "project_ids": value.ProjectIDs,
+	})
 	return value, nil
 }
 
@@ -566,9 +667,17 @@ func (s *ImageAgent) PromptActionPreviewContent(ctx context.Context, user domain
 		if !value.Enabled {
 			return value, nil, store.ErrForbidden
 		}
-		if value.ProjectID != "" {
-			if _, err = s.authorizedProject(ctx, user, value.ProjectID, false); err != nil {
-				return value, nil, err
+		projectIDs := effectivePromptActionProjectIDs(value)
+		if len(projectIDs) > 0 {
+			allowed := false
+			for _, projectID := range projectIDs {
+				if _, accessErr := s.authorizedProject(ctx, user, projectID, false); accessErr == nil {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				return value, nil, store.ErrForbidden
 			}
 		} else {
 			projects, listErr := s.repo.ListImageProjects(ctx)
@@ -637,6 +746,43 @@ func promptActionName(provided, actionKey, existing string) string {
 		return value
 	}
 	return actionKey
+}
+
+func normalizePromptActionProjectIDs(projectIDs []string, legacyProjectID string) []string {
+	if len(projectIDs) == 0 && strings.TrimSpace(legacyProjectID) != "" {
+		projectIDs = []string{legacyProjectID}
+	}
+	seen := map[string]bool{}
+	result := make([]string, 0, len(projectIDs))
+	for _, projectID := range projectIDs {
+		projectID = strings.TrimSpace(projectID)
+		if projectID != "" && !seen[projectID] {
+			seen[projectID] = true
+			result = append(result, projectID)
+		}
+	}
+	sort.Strings(result)
+	return result
+}
+
+func effectivePromptActionProjectIDs(action domain.ImagePromptAction) []string {
+	return normalizePromptActionProjectIDs(action.ProjectIDs, action.ProjectID)
+}
+
+func promptActionScopedToProject(action domain.ImagePromptAction, projectID string) bool {
+	return containsString(effectivePromptActionProjectIDs(action), projectID)
+}
+
+func promptActionScopesOverlap(left, right []string) bool {
+	if len(left) == 0 || len(right) == 0 {
+		return len(left) == 0 && len(right) == 0
+	}
+	for _, projectID := range left {
+		if containsString(right, projectID) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *ImageAgent) DeletePromptAction(ctx context.Context, actor domain.User, id string) error {
@@ -768,6 +914,47 @@ func (s *ImageAgent) DeleteCanvasNodeByID(ctx context.Context, user domain.User,
 		return canvas, err
 	}
 	return s.deleteCanvasNode(ctx, user, canvas, nodeID, version, "")
+}
+
+func (s *ImageAgent) DeleteCanvasNodesByID(ctx context.Context, user domain.User, canvasID string, nodeIDs []string, version int64) (domain.ImageCanvas, error) {
+	canvas, err := s.CanvasByID(ctx, user, canvasID, false)
+	if err != nil {
+		return canvas, err
+	}
+	unique := make([]string, 0, len(nodeIDs))
+	seen := make(map[string]bool, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		nodeID = strings.TrimSpace(nodeID)
+		if nodeID != "" && !seen[nodeID] {
+			seen[nodeID] = true
+			unique = append(unique, nodeID)
+		}
+	}
+	if len(unique) == 0 || version < 1 {
+		return domain.ImageCanvas{}, errors.New("画布节点或版本无效")
+	}
+	byID := make(map[string]domain.ImageCanvasNode, len(canvas.Nodes))
+	for _, node := range canvas.Nodes {
+		byID[node.ID] = node
+	}
+	assets := make([]string, 0, len(unique))
+	statuses := make([]string, 0, len(unique))
+	for _, nodeID := range unique {
+		node, ok := byID[nodeID]
+		if !ok {
+			return canvas, store.ErrNotFound
+		}
+		assets = append(assets, node.AssetID)
+		statuses = append(statuses, node.Status)
+	}
+	updated, err := s.repo.DeleteImageCanvasNodes(ctx, canvas, unique, version)
+	if err != nil {
+		return canvas, err
+	}
+	s.appendAudit(ctx, user, "image.canvas_nodes.batch_delete", "image_canvas", canvas.ID, map[string]any{
+		"node_count": len(unique), "node_ids": unique, "asset_ids": assets, "statuses": statuses,
+	})
+	return updated, nil
 }
 
 func (s *ImageAgent) DeleteCanvasNode(ctx context.Context, user domain.User, projectID, nodeID string, version int64) (domain.ImageCanvas, error) {
@@ -972,8 +1159,8 @@ func (s *ImageAgent) CreateJob(ctx context.Context, user domain.User, input Imag
 		return domain.ImageJob{}, errors.New("无效的任务类型")
 	}
 	input.Prompt = strings.TrimSpace(input.Prompt)
-	if input.Kind == "generate" && input.Prompt == "" {
-		return domain.ImageJob{}, errors.New("请输入文本描述")
+	if err = validateImageJobPrompt(input.Kind, input.Prompt); err != nil {
+		return domain.ImageJob{}, err
 	}
 	if input.Kind == "reverse_prompt" && (len(input.ReferenceAssetIDs) == 0 || !model.SupportsReverse) {
 		return domain.ImageJob{}, errors.New("当前模型不支持图片反推或尚未上传参考图")
@@ -984,8 +1171,15 @@ func (s *ImageAgent) CreateJob(ctx context.Context, user domain.User, input Imag
 	if len(input.ReferenceAssetIDs) > 0 && (!model.SupportsReference && input.Kind == "generate") {
 		return domain.ImageJob{}, errors.New("当前模型不支持参考图")
 	}
+	if input.Kind == "generate" && len(input.ReferenceAssetIDs) > 0 && relay.RelayKey == "xgapi" &&
+		xgapiEditModelID(model.ModelID) != model.ModelID && effectiveImageRequestModelID(model) == model.ModelID {
+		return domain.ImageJob{}, errors.New("XGAPI 当前模型缺少可用的图像编辑通道，请在生图管理中重新同步模型")
+	}
 	if model.Protocol == "images_generations" && len(input.ReferenceAssetIDs) > 0 && input.Kind == "generate" {
 		return domain.ImageJob{}, errors.New("当前 Images 协议未开放参考图编辑，请选择 Chat 生图模型")
+	}
+	if err = validateOriginalAspectRatio(input, model); err != nil {
+		return domain.ImageJob{}, err
 	}
 	effectiveSizes := effectiveImageModelSizes(model.ModelID, model.SupportedSizes)
 	if !validRatios[input.AspectRatio] || !validSizes[input.ImageSize] || !containsString(effectiveSizes, input.ImageSize) {
@@ -1001,6 +1195,7 @@ func (s *ImageAgent) CreateJob(ctx context.Context, user domain.User, input Imag
 		input.IdempotencyKey = ids.New("request")
 	}
 	var referenceBytes int64
+	var referenceWidth, referenceHeight int
 	for _, assetID := range input.ReferenceAssetIDs {
 		asset, getErr := s.repo.GetImageAsset(ctx, assetID)
 		if getErr != nil {
@@ -1013,6 +1208,9 @@ func (s *ImageAgent) CreateJob(ctx context.Context, user domain.User, input Imag
 			return domain.ImageJob{}, getErr
 		}
 		referenceBytes += asset.SizeBytes
+		if referenceWidth == 0 && referenceHeight == 0 {
+			referenceWidth, referenceHeight = asset.Width, asset.Height
+		}
 	}
 	if referenceBytes > 30<<20 {
 		return domain.ImageJob{}, errors.New("参考图总大小不能超过 30 MB")
@@ -1027,7 +1225,13 @@ func (s *ImageAgent) CreateJob(ctx context.Context, user domain.User, input Imag
 	for attempt := 0; attempt < 2; attempt++ {
 		nodes := []domain.ImageCanvasNode{}
 		if input.Kind == "generate" {
-			nodes = placeholderNodes(canvas, job, input.AnchorNodeID, input.PlacementX, input.PlacementY)
+			nodes = placeholderNodes(canvas, job, input.AnchorNodeID, input.PlacementX, input.PlacementY, referenceWidth, referenceHeight)
+			for index := range nodes {
+				nodes[index].RequestedSize = input.ImageSize
+				nodes[index].GenerationRelayName = relay.Name
+				nodes[index].GenerationModelName = model.DisplayName
+				nodes[index].GenerationModelKey = effectiveImageRequestModelID(model)
+			}
 		}
 		created, err = s.repo.CreateImageJob(ctx, job, nodes, canvas.Version)
 		if !errors.Is(err, store.ErrConflict) || input.Kind != "generate" {
@@ -1044,6 +1248,27 @@ func (s *ImageAgent) CreateJob(ctx context.Context, user domain.User, input Imag
 		})
 	}
 	return created, err
+}
+
+func validateImageJobPrompt(kind, prompt string) error {
+	if kind == "generate" && prompt == "" {
+		return errors.New("请输入文本描述")
+	}
+	if utf8.RuneCountInString(prompt) > imagePromptMaxLength {
+		return fmt.Errorf("文本描述最多 %d 个字符", imagePromptMaxLength)
+	}
+	return nil
+}
+
+func validateOriginalAspectRatio(input ImageJobInput, model domain.ImageModel) error {
+	if input.AspectRatio != "original" {
+		return nil
+	}
+	if input.Kind != "generate" || len(input.ReferenceAssetIDs) == 0 ||
+		(model.Protocol != "chat_completions" && model.Protocol != "gpt_image_2") || !model.SupportsReference {
+		return errors.New("原图比例仅支持已添加参考图且支持编辑的生图模型")
+	}
+	return nil
 }
 
 func (s *ImageAgent) ensureAgentEnabled(ctx context.Context) error {
@@ -1127,7 +1352,7 @@ type imageCanvasRect struct {
 	height float64
 }
 
-func placeholderNodes(canvas domain.ImageCanvas, job domain.ImageJob, anchorNodeID string, x, y float64) []domain.ImageCanvasNode {
+func placeholderNodes(canvas domain.ImageCanvas, job domain.ImageJob, anchorNodeID string, x, y float64, referenceWidth, referenceHeight int) []domain.ImageCanvasNode {
 	if x == 0 && y == 0 {
 		zoom := canvas.Viewport.Zoom
 		if zoom <= 0 {
@@ -1136,6 +1361,9 @@ func placeholderNodes(canvas domain.ImageCanvas, job domain.ImageJob, anchorNode
 		x, y = (600-canvas.Viewport.X)/zoom, (360-canvas.Viewport.Y)/zoom
 	}
 	width, height := nodeDimensions(job.AspectRatio)
+	if job.AspectRatio == "original" {
+		width, height = importedNodeDimensions(referenceWidth, referenceHeight)
+	}
 	result := make([]domain.ImageCanvasNode, 0, job.Count)
 	columns := 2
 	if job.Count == 1 {
@@ -1307,6 +1535,8 @@ func effectiveImageModelSizes(modelID string, configured []string) []string {
 func knownImageModelSizes(modelID string) []string {
 	normalized := strings.ToLower(strings.TrimSpace(modelID))
 	switch {
+	case isGPTImage2Model(normalized):
+		return []string{"1K", "2K", "4K"}
 	case strings.Contains(normalized, "gemini-2.5-flash-image"),
 		strings.Contains(normalized, "flash-lite"):
 		return []string{"1K"}
@@ -1317,6 +1547,52 @@ func knownImageModelSizes(modelID string) []string {
 	default:
 		return nil
 	}
+}
+
+func isGPTImage2Model(modelID string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(modelID))
+	normalized = strings.TrimPrefix(normalized, "openai/")
+	return normalized == "gpt-image-2"
+}
+
+func relayUsesGPTImage2Protocol(relayKey string) bool {
+	return strings.EqualFold(strings.TrimSpace(relayKey), "comfly") || strings.EqualFold(strings.TrimSpace(relayKey), "xgapi")
+}
+
+func effectiveImageRequestModelID(model domain.ImageModel) string {
+	if value := strings.TrimSpace(model.RequestModelID); value != "" {
+		return value
+	}
+	return model.ModelID
+}
+
+func normalizeImageModelMetadata(model *domain.ImageModel) {
+	if model.RequestModelID == "" {
+		model.RequestModelID = model.ModelID
+	}
+	if model.RemoteEndpointTypes == nil {
+		model.RemoteEndpointTypes = []string{}
+	}
+}
+
+func xgapiEditModelID(modelID string) string {
+	const base = "gemini-3.1-flash-image-preview"
+	normalized := strings.ToLower(strings.TrimSpace(modelID))
+	for _, suffix := range []string{"-1k", "-2k", "-4k"} {
+		if normalized == base+suffix {
+			return base
+		}
+	}
+	return strings.TrimSpace(modelID)
+}
+
+func containsFolded(values []string, expected string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), expected) {
+			return true
+		}
+	}
+	return false
 }
 
 func containsString(values []string, expected string) bool {

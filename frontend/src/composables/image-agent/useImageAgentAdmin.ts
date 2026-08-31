@@ -98,6 +98,18 @@ export function useImageAgentAdmin() {
     }
   }
 
+  async function deleteProject(id: string) {
+    try {
+      await imageAgentAdminService.deleteProject(id)
+      projects.value = projects.value.filter((item) => item.id !== id)
+      promptActions.value = await imageAgentAdminService.promptActions()
+      ElMessage.success('项目已删除')
+    } catch (error) {
+      ElMessage.error(`项目删除失败：${requestErrorMessage(error, '只有尚未产生图片、任务或历史画布的项目可以删除')}`)
+      throw error
+    }
+  }
+
   async function savePromptAction(
     id: string | undefined,
     input: ImagePromptActionInput,
@@ -135,7 +147,7 @@ export function useImageAgentAdmin() {
 
   return {
     relays, models, projects, promptActions, directory, loading, saving, acting,
-    load, saveRelay, testRelay, syncModels, saveModel, saveProject, savePromptAction, deletePromptAction,
+    load, saveRelay, testRelay, syncModels, saveModel, saveProject, deleteProject, savePromptAction, deletePromptAction,
   }
 }
 

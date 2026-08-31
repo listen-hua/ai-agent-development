@@ -32,14 +32,21 @@ const preview = ref<ImagePromptActionPreviewChange>({ remove: false })
 const form = reactive<ImagePromptActionInput>({
   action_key: '',
   prompt_template: '',
-  project_id: '',
+  project_ids: [],
   enabled: true,
   sort_order: 0,
 })
 
-const projectName = (id?: string) => id
-  ? props.projects.find((item) => item.id === id)?.name || id
-  : '全局'
+const actionProjectIDs = (value: ImagePromptAction) => value.project_ids?.length
+  ? value.project_ids
+  : value.project_id ? [value.project_id] : []
+
+const projectNames = (value: ImagePromptAction) => {
+  const ids = actionProjectIDs(value)
+  return ids.length
+    ? ids.map((id) => props.projects.find((item) => item.id === id)?.name || id).join('、')
+    : '全局'
+}
 
 function open(value?: ImagePromptAction) {
   editingId.value = value?.id
@@ -48,13 +55,13 @@ function open(value?: ImagePromptAction) {
   Object.assign(form, value ? {
     action_key: value.action_key,
     prompt_template: value.prompt_template,
-    project_id: value.project_id || '',
+    project_ids: [...actionProjectIDs(value)],
     enabled: value.enabled,
     sort_order: value.sort_order,
   } : {
     action_key: '',
     prompt_template: '',
-    project_id: '',
+    project_ids: [],
     enabled: true,
     sort_order: 0,
   })
@@ -80,7 +87,7 @@ async function save() {
   try {
     const result = await props.saveAction(
       editingId.value,
-      { ...form, action_key: actionKey, prompt_template: promptTemplate, project_id: form.project_id || undefined },
+      { ...form, action_key: actionKey, prompt_template: promptTemplate, project_id: undefined, project_ids: [...form.project_ids] },
       preview.value,
     )
     editingId.value = result.action.id
@@ -103,7 +110,7 @@ async function remove(id: string) {
     <header>
       <div>
         <h3>功能按键</h3>
-        <p>项目级相同 action_key 会覆盖全局配置；含卡通化字段时员工需调节后手动生成。</p>
+        <p>作用范围可同时选择多个项目；项目级相同 action_key 会覆盖全局配置。</p>
       </div>
       <el-button type="primary" :icon="Plus" @click="open()">新增按键</el-button>
     </header>
@@ -122,10 +129,10 @@ async function remove(id: string) {
         </template>
       </el-table-column>
       <el-table-column prop="action_key" label="按键标识" width="180" />
-      <el-table-column label="范围" width="130"><template #default="{ row }">{{ projectName(row.project_id) }}</template></el-table-column>
+      <el-table-column label="作用范围" min-width="190" show-overflow-tooltip><template #default="{ row }">{{ projectNames(row) }}</template></el-table-column>
       <el-table-column prop="prompt_template" label="提示词模板" min-width="280" show-overflow-tooltip />
       <el-table-column label="状态" width="80"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
-      <el-table-column label="操作" width="150"><template #default="{ row }"><el-button text :icon="Edit" @click="open(row)">编辑</el-button><el-button text type="danger" :icon="Delete" @click="remove(row.id)">删除</el-button></template></el-table-column>
+      <el-table-column label="操作" width="170"><template #default="{ row }"><div class="action-row"><el-button text :icon="Edit" @click="open(row)">编辑</el-button><el-button text type="danger" :icon="Delete" @click="remove(row.id)">删除</el-button></div></template></el-table-column>
     </el-table>
 
     <el-dialog v-model="dialog" :title="editingId ? '编辑功能按键' : '新增功能按键'" width="min(720px, 95vw)" top="4vh" class="prompt-action-dialog" destroy-on-close>
@@ -135,7 +142,12 @@ async function remove(id: string) {
           <small>支持中文、英文字母、数字、下划线和短横线；员工端默认显示此标识。</small>
         </el-form-item>
         <div class="form-grid">
-          <el-form-item label="作用范围"><el-select v-model="form.project_id" clearable placeholder="全局"><el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" /></el-select></el-form-item>
+          <el-form-item label="作用范围">
+            <el-select v-model="form.project_ids" multiple clearable collapse-tags collapse-tags-tooltip placeholder="留空表示全局">
+              <el-option v-for="project in projects" :key="project.id" :label="project.name" :value="project.id" />
+            </el-select>
+            <small>可选择多个项目；不选择任何项目时，该按键对所有项目生效。</small>
+          </el-form-item>
           <el-form-item label="排序"><el-input-number v-model="form.sort_order" :min="0" :max="999" /></el-form-item>
         </div>
         <el-form-item label="提示词模板"><el-input v-model="form.prompt_template" type="textarea" :rows="10" placeholder='例如：{"cartoonization_strength": 0, "prompt": "..."}' /></el-form-item>
@@ -155,5 +167,6 @@ async function remove(id: string) {
 <style scoped>
 .table-preview { display: block; width: 58px; height: 42px; border: 1px solid #ebe6ef; border-radius: 8px; object-fit: contain; background: #f7f5f8; }
 .no-preview { color: #aaa3b0; font-size: 12px; }
+.action-row { display: flex; align-items: center; flex-wrap: nowrap; white-space: nowrap; }
 :global(.prompt-action-dialog .el-dialog__body) { max-height: calc(92vh - 138px); overflow-y: auto; }
 </style>

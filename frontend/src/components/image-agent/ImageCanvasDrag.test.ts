@@ -15,6 +15,81 @@ function transfer(initial: Record<string, string> = {}) {
 }
 
 describe('image canvas reference drag and drop', () => {
+  it('shows the actual image resolution after the image loads', async () => {
+    const wrapper = mount(ImageCanvasNode, {
+      props: { data: { assetId: 'asset-resolution', status: 'ready' } },
+      global: { stubs: { ElIcon: true } },
+    })
+    const image = wrapper.get('img')
+    Object.defineProperties(image.element, {
+      naturalWidth: { value: 1024 },
+      naturalHeight: { value: 768 },
+    })
+
+    await image.trigger('load')
+
+		expect(wrapper.get('.node-resolution').text()).toBe('实际：1024 × 768')
+    expect(wrapper.get('.canvas-image-node').attributes('tabindex')).toBe('0')
+	})
+
+	it('shows the requested tier and downgrade warning with the actual resolution', async () => {
+		const wrapper = mount(ImageCanvasNode, {
+			props: { data: { assetId: 'asset-low-resolution', status: 'ready', requestedSize: '2K', resolutionWarning: '中转站未执行2K档位' } },
+		})
+		const image = wrapper.get('img')
+		Object.defineProperty(image.element, 'naturalWidth', { value: 1254 })
+		Object.defineProperty(image.element, 'naturalHeight', { value: 1254 })
+		await image.trigger('load')
+		expect(wrapper.get('.node-resolution').text()).toContain('请求：2K')
+		expect(wrapper.get('.node-resolution').text()).toContain('实际：1254 × 1254')
+		expect(wrapper.get('.node-resolution').text()).toContain('分辨率已降级')
+	})
+
+  it('shows the generation relay and model only for a ready AI image', () => {
+    const wrapper = mount(ImageCanvasNode, {
+      props: {
+        data: {
+          assetId: 'asset-generated',
+          status: 'ready',
+          generationRelayName: 'Comfly',
+          generationModelName: 'GPT Image 2',
+          generationModelKey: 'gpt-image-2',
+        },
+      },
+    })
+
+    const badge = wrapper.get('.generation-source-badge')
+    expect(badge.text()).toContain('中转站Comfly')
+    expect(badge.text()).toContain('模型GPT Image 2')
+    expect(badge.text()).toContain('模型 IDgpt-image-2')
+  })
+
+  it('marks a Pixian result while preserving its original model source', () => {
+    const wrapper = mount(ImageCanvasNode, {
+      props: {
+        data: {
+          assetId: 'asset-cutout',
+          status: 'ready',
+          backgroundRemoval: true,
+          generationRelayName: 'XGAPI',
+          generationModelName: 'Gemini Image',
+          generationModelKey: 'gemini-3.1-flash-image-preview',
+        },
+      },
+    })
+
+    expect(wrapper.get('.generation-source-badge').text()).toContain('Pixian 智能抠图')
+    expect(wrapper.get('.generation-source-badge').text()).toContain('XGAPI')
+  })
+
+  it('does not show an AI source for an ordinary uploaded image', () => {
+    const wrapper = mount(ImageCanvasNode, {
+      props: { data: { assetId: 'asset-upload', status: 'ready' } },
+    })
+
+    expect(wrapper.find('.generation-source-badge').exists()).toBe(false)
+  })
+
   it('emits a delete command from the canvas node action', async () => {
     const wrapper = mount(ImageCanvasNode, {
       props: { data: { assetId: 'asset-delete', status: 'ready' } },

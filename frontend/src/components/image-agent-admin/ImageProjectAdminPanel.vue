@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
-import { Edit, Plus } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { Delete, Edit, Plus } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import ACLEditor from '@/components/knowledge/ACLEditor.vue'
 import type { DirectoryOptions } from '@/types/domain'
 import type { ImageProject, ImageProjectInput } from '@/types/image-agent'
@@ -13,6 +13,7 @@ const props = defineProps<{
   saving: boolean
   saveProject: (id: string | undefined, input: ImageProjectInput) => Promise<ImageProject>
 }>()
+const emit = defineEmits<{ remove: [id: string] }>()
 const dialog = ref(false)
 const editingId = ref<string>()
 const form = reactive<ImageProjectInput>({ project_key: '', name: '', description: '', acl: { scope: 'all' }, enabled: true })
@@ -50,6 +51,15 @@ async function save() {
     // The composable displays the API error and the dialog stays open for retry.
   }
 }
+
+async function remove(value: ImageProject) {
+  await ElMessageBox.confirm(
+    `确定删除项目“${value.name}”吗？只有没有图片、任务和历史画布的项目可以删除。`,
+    '删除生图项目',
+    { type: 'warning', confirmButtonText: '删除', confirmButtonClass: 'el-button--danger' },
+  )
+  emit('remove', value.id)
+}
 </script>
 
 <template>
@@ -61,7 +71,7 @@ async function save() {
       <el-table-column prop="description" label="说明" min-width="220" show-overflow-tooltip />
       <el-table-column label="可见范围" width="130"><template #default="{ row }">{{ row.acl.scope === 'all' ? '公司全员' : '指定范围' }}</template></el-table-column>
       <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag></template></el-table-column>
-      <el-table-column label="操作" width="90"><template #default="{ row }"><el-button text :icon="Edit" @click="open(row)">编辑</el-button></template></el-table-column>
+      <el-table-column label="操作" width="170"><template #default="{ row }"><div class="action-row"><el-button text :icon="Edit" @click="open(row)">编辑</el-button><el-button text type="danger" :icon="Delete" @click="remove(row)">删除</el-button></div></template></el-table-column>
     </el-table>
     <el-dialog v-model="dialog" :title="editingId ? '编辑生图项目' : '新增生图项目'" width="min(720px, 95vw)">
       <el-form label-position="top">
@@ -74,3 +84,7 @@ async function save() {
     </el-dialog>
   </section>
 </template>
+
+<style scoped>
+.action-row { display: flex; align-items: center; flex-wrap: nowrap; white-space: nowrap; }
+</style>

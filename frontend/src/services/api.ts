@@ -27,6 +27,27 @@ const client = axios.create({
   headers: { Accept: 'application/json' },
 })
 
+export type SessionRecoveryHandler = () => Promise<void>
+
+let sessionRecoveryHandler: SessionRecoveryHandler | undefined
+let sessionRecoveryPromise: Promise<void> | undefined
+
+export function setSessionRecoveryHandler(handler?: SessionRecoveryHandler): void {
+  sessionRecoveryHandler = handler
+}
+
+async function recoverSession(): Promise<void> {
+  if (!sessionRecoveryHandler) {
+    throw new ApiError('登录已过期，请重新登录', 401, undefined, 510000)
+  }
+  if (!sessionRecoveryPromise) {
+    sessionRecoveryPromise = sessionRecoveryHandler().finally(() => {
+      sessionRecoveryPromise = undefined
+    })
+  }
+  await sessionRecoveryPromise
+}
+
 export function setApiBaseURL(value?: string): void {
   runtimeBaseURL = String(value || '').trim().replace(/\/+$/, '')
   client.defaults.baseURL = runtimeBaseURL || undefined
@@ -40,7 +61,27 @@ export function resolveApiURL(path: string): string {
   return runtimeBaseURL + (path.startsWith('/') ? path : `/${path}`)
 }
 
-async function request<T>(path: string, config: AxiosRequestConfig = {}): Promise<T> {
+function normalizeApiError(error: unknown): ApiError {
+  if (error instanceof ApiError) return error
+  if (error instanceof AxiosError) {
+    const payload = error.response?.data as ErrorPayload | undefined
+    return new ApiError(
+      payload?.message || payload?.error || error.message || '请求失败',
+      error.response?.status || 0,
+      payload?.detail,
+      payload?.code,
+    )
+  }
+  return new ApiError(error instanceof Error ? error.message : '请求失败', 0)
+}
+
+function shouldRecoverSession(path: string, error: ApiError, allowRecovery: boolean): boolean {
+  return allowRecovery
+    && !path.startsWith('/api/v1/auth/')
+    && (error.status === 401 || error.code === 510000)
+}
+
+async function request<T>(path: string, config: AxiosRequestConfig = {}, allowRecovery = true): Promise<T> {
   try {
     const response = await client.request<T>({
       ...config,
@@ -53,17 +94,12 @@ async function request<T>(path: string, config: AxiosRequestConfig = {}): Promis
     }
     return response.data
   } catch (error) {
-    if (error instanceof ApiError) throw error
-    if (error instanceof AxiosError) {
-      const payload = error.response?.data as ErrorPayload | undefined
-      throw new ApiError(
-        payload?.message || payload?.error || error.message || '请求失败',
-        error.response?.status || 0,
-        payload?.detail,
-        payload?.code,
-      )
+    const apiError = normalizeApiError(error)
+    if (shouldRecoverSession(path, apiError, allowRecovery)) {
+      await recoverSession()
+      return request<T>(path, config, false)
     }
-    throw error
+    throw apiError
   }
 }
 

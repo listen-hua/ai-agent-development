@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>微光 Shimmer 公司内网生产部署与运维手册</title>
+  <style>
+    :root{--bg:#f5f7fb;--paper:#fff;--ink:#172033;--muted:#69748a;--line:#dde3ee;--brand:#6f4bf2;--soft:#f1edff;--ok:#14845f;--okbg:#e9f8f1;--warn:#a76500;--warnbg:#fff6df;--danger:#bd2c45;--dangerbg:#fff0f2;--nav:292px}
+    *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:var(--bg);color:var(--ink);font:15.5px/1.78 system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}a{color:#5837dc;text-decoration:none}a:hover{text-decoration:underline}button,input{font:inherit}.progress{position:fixed;inset:0 0 auto;height:4px;z-index:90}.progress i{display:block;width:0;height:100%;background:linear-gradient(90deg,var(--brand),#b65cff)}
+    .sidebar{position:fixed;inset:0 auto 0 0;width:var(--nav);padding:25px 20px;background:#151827;color:#d8dced;overflow:auto;z-index:50}.brand{display:flex;gap:12px;align-items:center;margin-bottom:20px}.logo{width:40px;height:40px;border-radius:13px;background:radial-gradient(circle at 35% 28%,#fff 0 5%,#cdbfff 6% 15%,#8060ff 36%,#4328b8 78%);box-shadow:0 0 24px #7e5aff77}.brand strong{display:block;color:white;font-size:18px}.brand small,.side-meta{color:#929cb6}.search{width:100%;border:1px solid #353a51;border-radius:10px;background:#20243a;color:white;padding:10px 12px;outline:none}.search:focus{border-color:#8e74ff}.toc{margin:16px 0;padding:0;list-style:none}.toc a{display:block;color:#b9c0d4;padding:7px 10px;border-radius:8px;font-size:14px}.toc a:hover,.toc a.active{background:#292d46;color:white;text-decoration:none}.side-meta{border-top:1px solid #30354b;padding-top:15px;font-size:12px}.side-actions{display:flex;gap:8px;margin:11px 0}.side-actions button{border:1px solid #3a4058;border-radius:8px;background:#22263b;color:#d8dced;padding:7px 9px;cursor:pointer}
+    main{margin-left:var(--nav);padding:38px 44px 80px}.page{max-width:1120px;margin:auto}.hero{position:relative;overflow:hidden;padding:52px;border-radius:24px;background:linear-gradient(135deg,#211a50,#5e3ed1 62%,#9a66ef);color:white;box-shadow:0 16px 44px #282d4614}.hero:after{content:"";position:absolute;width:330px;height:330px;right:-75px;top:-115px;border-radius:50%;border:52px solid #ffffff14}.eyebrow{font-size:13px;letter-spacing:.12em;color:#d7ceff}.hero h1{font-size:40px;line-height:1.2;margin:12px 0 16px;max-width:780px}.hero p{max-width:790px;color:#e7e2ff;font-size:17px}.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:23px}.chip{border:1px solid #ffffff42;background:#ffffff17;padding:6px 11px;border-radius:99px;font-size:13px}.doc-meta{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:20px 0}.metric{padding:17px;border:1px solid var(--line);border-radius:14px;background:white}.metric b{display:block;font-size:20px}.metric span{color:var(--muted);font-size:13px}
+    section{margin-top:24px;padding:34px 38px;background:white;border:1px solid var(--line);border-radius:18px;box-shadow:0 8px 28px #282d4609}section.filtered{display:none}h2{font-size:27px;line-height:1.3;margin:0 0 18px}h3{font-size:20px;margin:28px 0 10px}h4{font-size:16px;margin:22px 0 7px}p{margin:9px 0}ul,ol{padding-left:23px}li{margin:5px 0}.lead{color:#4e586d;font-size:17px}.anchor{color:inherit}.anchor:hover{text-decoration:none}.anchor:after{content:" #";opacity:0;color:#8d76ea}.anchor:hover:after{opacity:1}
+    .callout{margin:17px 0;padding:15px 18px;border-left:4px solid var(--brand);border-radius:8px;background:var(--soft)}.callout strong{display:block;margin-bottom:3px}.callout.ok{border-color:var(--ok);background:var(--okbg)}.callout.warn{border-color:#e09a1b;background:var(--warnbg)}.callout.danger{border-color:var(--danger);background:var(--dangerbg)}.grid2,.grid3{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.grid3{grid-template-columns:repeat(3,minmax(0,1fr))}.card{padding:18px;border:1px solid var(--line);border-radius:13px}.card h4{margin-top:0}.badge{display:inline-block;padding:2px 8px;border-radius:99px;background:var(--soft);color:#593bc8;font-size:12px;font-weight:650}.badge.ok{background:var(--okbg);color:var(--ok)}.badge.warn{background:var(--warnbg);color:var(--warn)}
+    .table-wrap{overflow:auto;margin:14px 0;border:1px solid var(--line);border-radius:12px}table{width:100%;border-collapse:collapse;background:white}th,td{text-align:left;vertical-align:top;padding:11px 13px;border-bottom:1px solid var(--line)}th{background:#f4f2ff;color:#423478;white-space:nowrap}tr:last-child td{border-bottom:0}code{padding:.12em .38em;border-radius:5px;background:#f0eef9;color:#4e2bc3;font:13px/1.6 ui-monospace,Consolas,monospace}pre{position:relative;margin:14px 0;padding:19px 18px;overflow:auto;border-radius:12px;background:#111827;color:#e7edf8;font:13px/1.62 ui-monospace,Consolas,monospace;tab-size:2}pre code{padding:0;background:none;color:inherit}.copy{position:absolute;right:9px;top:9px;border:1px solid #3a455b;border-radius:7px;background:#202a3b;color:#d8e0ef;padding:5px 9px;cursor:pointer}.step{display:grid;grid-template-columns:38px 1fr;gap:12px;margin:15px 0}.step>i{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:var(--brand);color:white;font-style:normal;font-weight:700}.step h4{margin:2px 0 4px}.checklist{list-style:none;padding:0}.checklist li{position:relative;padding:8px 10px 8px 38px;border-bottom:1px dashed var(--line)}.checklist input{position:absolute;left:10px;top:12px;width:17px;height:17px;accent-color:var(--brand)}.diagram{margin:18px 0;padding:16px;border:1px solid var(--line);border-radius:14px;background:#fbfbfe}.diagram svg{display:block;width:100%;height:auto}.fill{min-width:210px;border-bottom:1px dashed #8b94a7;color:#9aa1af}.search-empty{display:none;margin:24px 0;padding:24px;text-align:center;background:white;border-radius:16px;color:var(--muted)}.search-empty.show{display:block}.back{position:fixed;right:23px;bottom:24px;width:44px;height:44px;border:0;border-radius:50%;background:var(--brand);color:white;box-shadow:0 8px 24px #492db94c;cursor:pointer;opacity:0;pointer-events:none}.back.show{opacity:1;pointer-events:auto}.muted{color:var(--muted)}.small{font-size:13px}.flow{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.flow span{padding:8px 11px;border:1px solid var(--line);border-radius:8px;background:#faf9ff}.flow i{color:var(--brand);font-style:normal;font-weight:800}
+    @media(max-width:900px){:root{--nav:0}.sidebar{position:relative;width:auto}.toc{columns:2}.side-meta{display:none}main{margin-left:0;padding:20px}.hero{padding:35px 28px}.hero h1{font-size:31px}.doc-meta{grid-template-columns:repeat(2,1fr)}.grid3{grid-template-columns:1fr 1fr}}
+    @media(max-width:620px){.toc{columns:1}.hero h1{font-size:27px}.doc-meta,.grid2,.grid3{grid-template-columns:1fr}section{padding:25px 20px}th,td{padding:9px 10px}}
+    @media print{body{background:white;font-size:11pt}.sidebar,.progress,.back,.copy,.side-actions{display:none!important}main{margin:0;padding:0}.page{max-width:none}.hero{box-shadow:none;border-radius:0;break-after:page}.doc-meta{grid-template-columns:repeat(4,1fr)}section{box-shadow:none;border:0;border-top:1px solid #bbb;border-radius:0;padding:22px 0}h2,h3,h4{break-after:avoid}pre,.table-wrap,.callout,.card{break-inside:avoid}a{color:inherit}.checklist input{appearance:none;border:1px solid #777}}
+  </style>
+</head>
+<body>
+  <div class="progress"><i id="progressBar"></i></div>
+  <aside class="sidebar">
+    <div class="brand"><span class="logo"></span><div><strong>微光 Shimmer</strong><small>生产部署与运维手册</small></div></div>
+    <input id="docSearch" class="search" type="search" placeholder="搜索章节、命令或错误码…">
+    <div class="side-actions"><button id="collapseToc">折叠目录</button><button onclick="window.print()">打印 / PDF</button></div>
+    <nav id="tocNav"><ul class="toc">
+      <li><a href="#overview">0. 使用说明</a></li><li><a href="#architecture">1. 架构与容量</a></li><li><a href="#preparation">2. 服务器与网络</a></li><li><a href="#harbor">3. Harbor 镜像</a></li><li><a href="#compose">4. 生产 Compose</a></li><li><a href="#external">5. 外部平台配置</a></li><li><a href="#first-deploy">6. 首次部署</a></li><li><a href="#acceptance">7. 上线验收</a></li><li><a href="#backup">8. 备份与恢复</a></li><li><a href="#upgrade">9. 升级与运维</a></li><li><a href="#limits">10. 当前边界</a></li><li><a href="#troubleshooting">11. 故障排查</a></li><li><a href="#appendix">附录：速查表</a></li>
+    </ul></nav>
+    <div class="side-meta">适用版本：当前工作区（迁移 001–029）<br>Ubuntu 24.04 + Compose + 公司HTTPS网关<br>更新日期：2026-08-21</div>
+  </aside>
+  <main><div class="page">
+    <header class="hero"><div class="eyebrow">PRODUCTION DEPLOYMENT RUNBOOK</div><h1>微光 Shimmer 公司内网生产部署与运维手册</h1><p>面向首次上线、日常发布和故障恢复的可执行手册。本文只使用脱敏占位符，部署前请由IT、安全、IAM、飞书应用管理员共同确认。</p><div class="chips"><span class="chip">Ubuntu 24.04 LTS</span><span class="chip">Docker Compose V2</span><span class="chip">Harbor 固定版本</span><span class="chip">公司 HTTPS 网关</span><span class="chip">PostgreSQL + pgvector</span><span class="chip">全新生产库</span></div></header>
+    <div class="doc-meta"><div class="metric"><b>8 核 / 32 GB</b><span>正式环境建议起点</span></div><div class="metric"><b>500 GB+</b><span>SSD，图片业务需扩容</span></div><div class="metric"><b>1 个入口</b><span>仅网关访问 8088</span></div><div class="metric"><b>001–029</b><span>完整数据库迁移</span></div></div>
+    <div id="searchEmpty" class="search-empty">没有找到匹配内容，请尝试“迁移”“飞书”“502”或“备份”。</div>
+    <section id="overview" class="searchable">
+      <h2><a class="anchor" href="#overview">0. 使用说明与上线原则</a></h2>
+      <p class="lead">生产部署不是把开发地址从127.0.0.1改成服务器IP。它同时涉及镜像可追溯、Secret稳定、数据持久化、HTTPS、出网白名单、平台配置、备份恢复和权限初始化。</p>
+      <div class="grid3"><div class="card"><span class="badge ok">确定方案</span><h4>单机Compose</h4><p>一台Linux服务器承载应用和数据，公司网关提供HTTPS，符合当前1–2台服务器规模。</p></div><div class="card"><span class="badge ok">确定方案</span><h4>全新生产数据</h4><p>不复制开发账号、历史会话和画布，组织、知识和配置在生产重新初始化。</p></div><div class="card"><span class="badge warn">重要边界</span><h4>不是高可用</h4><p>单机故障需要从备份恢复。本文通过备份和演练降低风险，不承诺零停机。</p></div></div>
+      <h3>上线角色分工</h3>
+      <div class="table-wrap"><table><thead><tr><th>角色</th><th>负责事项</th><th>上线前交付</th></tr></thead><tbody><tr><td>应用发布人</td><td>构建Backend/Web镜像、版本和迁移核验</td><td>Git提交、Tag、Digest、变更说明</td></tr><tr><td>Linux/容器运维</td><td>服务器、Compose、备份、监控</td><td>主机IP、磁盘、账号、备份目标</td></tr><tr><td>网络/网关</td><td>DNS、证书、反代、防火墙、出网</td><td>生产域名、证书、放行清单</td></tr><tr><td>IAM管理员</td><td>应用、可信域、八个权限键</td><td>App ID、服务端Secret、权限</td></tr><tr><td>飞书管理员</td><td>自建应用、权限、可见范围、事件</td><td>App ID/Secret、正式应用版本</td></tr><tr><td>行政/业务</td><td>制度、通知、会议室、按摩、生图验收</td><td>评测问题、测试人员和会议室</td></tr></tbody></table></div>
+      <div class="callout danger"><strong>四条红线</strong>生产不使用默认密码；不使用<code>latest</code>；不把数据组件端口开放给员工网络；没有可恢复备份时不执行升级或恢复。</div>
+      <h3>部署参数填写表</h3>
+      <div class="table-wrap"><table><tbody><tr><th>生产域名</th><td class="fill">https://____________________________</td><td>例：<code>https://shimmer.corp.example</code></td></tr><tr><th>应用服务器IP</th><td class="fill">____________________________</td><td>固定内网IPv4</td></tr><tr><th>HTTPS网关IP</th><td class="fill">____________________________</td><td>仅此来源可访问8088</td></tr><tr><th>Harbor版本</th><td class="fill">v___________________________</td><td>Backend/Web同一业务版本</td></tr><tr><th>备份目标</th><td class="fill">____________________________</td><td>异机NAS或备份服务</td></tr><tr><th>值班联系人</th><td class="fill">____________________________</td><td>应用、网络、IAM、飞书</td></tr></tbody></table></div>
+    </section>
+
+    <section id="architecture" class="searchable">
+      <h2><a class="anchor" href="#architecture">1. 生产架构与容量规划</a></h2>
+      <div class="diagram"><svg viewBox="0 0 1050 470" xmlns="http://www.w3.org/2000/svg"><defs><filter id="ds"><feDropShadow dx="0" dy="5" stdDeviation="6" flood-opacity=".12"/></filter><marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#7a5bed"/></marker></defs><style>.b{fill:#fff;stroke:#d9deea;stroke-width:2;filter:url(#ds)}.t{font:600 17px system-ui;fill:#20263a}.m{font:13px system-ui;fill:#69738a}.a{stroke:#7a5bed;stroke-width:3;fill:none;marker-end:url(#arr)}.z{fill:#f2efff;stroke:#ad98f7;stroke-dasharray:7 5}</style><rect class="b" x="25" y="55" rx="15" width="175" height="80"/><text class="t" x="112" y="88" text-anchor="middle">员工入口</text><text class="m" x="112" y="113" text-anchor="middle">浏览器 / 飞书 H5</text><rect class="b" x="255" y="55" rx="15" width="180" height="80"/><text class="t" x="345" y="88" text-anchor="middle">公司HTTPS网关</text><text class="m" x="345" y="113" text-anchor="middle">DNS / TLS / WAF</text><rect class="z" x="485" y="20" rx="20" width="535" height="425"/><text class="t" x="510" y="50">Ubuntu 24.04 应用服务器</text><rect class="b" x="530" y="70" rx="15" width="195" height="75"/><text class="t" x="628" y="101" text-anchor="middle">Web Nginx</text><text class="m" x="628" y="125" text-anchor="middle">Vue SPA + /api反代</text><rect class="b" x="780" y="70" rx="15" width="190" height="75"/><text class="t" x="875" y="101" text-anchor="middle">Go API</text><text class="m" x="875" y="125" text-anchor="middle">鉴权 / SSE / 飞书长连</text><rect class="b" x="780" y="175" rx="15" width="190" height="70"/><text class="t" x="875" y="204" text-anchor="middle">Go Worker</text><text class="m" x="875" y="228" text-anchor="middle">同步 / 提醒 / 生图任务</text><rect class="b" x="520" y="285" rx="13" width="150" height="72"/><text class="t" x="595" y="314" text-anchor="middle">PostgreSQL</text><text class="m" x="595" y="338" text-anchor="middle">业务数据 + pgvector</text><rect class="b" x="690" y="285" rx="13" width="120" height="72"/><text class="t" x="750" y="314" text-anchor="middle">Redis</text><text class="m" x="750" y="338" text-anchor="middle">缓存 / 锁</text><rect class="b" x="830" y="285" rx="13" width="140" height="72"/><text class="t" x="900" y="314" text-anchor="middle">MinIO</text><text class="m" x="900" y="338" text-anchor="middle">文件 / 图片</text><rect class="b" x="610" y="380" rx="13" width="120" height="50"/><text class="t" x="670" y="411" text-anchor="middle">Tika</text><rect class="b" x="765" y="380" rx="13" width="120" height="50"/><text class="t" x="825" y="411" text-anchor="middle">ClamAV</text><path class="a" d="M200 95H250"/><path class="a" d="M435 95H525"/><path class="a" d="M725 108H775"/><path class="a" d="M875 145V170"/><path class="a" d="M820 245C790 270 650 260 615 282"/><path class="a" d="M875 245V280"/><path class="a" d="M850 245C830 270 770 265 755 282"/></svg></div>
+      <h3>容器职责</h3>
+      <div class="table-wrap"><table><thead><tr><th>服务</th><th>职责</th><th>数据性质</th></tr></thead><tbody><tr><td><code>web</code></td><td>Vue静态文件、SPA回退、将<code>/api</code>代理到API</td><td>无状态</td></tr><tr><td><code>api</code></td><td>HTTP API、IAM/飞书鉴权、SSE、飞书长连接</td><td>无状态</td></tr><tr><td><code>worker</code></td><td>资料同步、提醒、通知、按摩、生图和抠图任务</td><td>无状态</td></tr><tr><td><code>migrate</code></td><td>按文件名执行全部幂等SQL后退出</td><td>一次性</td></tr><tr><td><code>postgres</code></td><td>业务、权限、审计、任务、知识切片和向量</td><td><strong>核心</strong></td></tr><tr><td><code>redis</code></td><td>缓存、令牌、限流和分布式锁</td><td>可重建</td></tr><tr><td><code>minio</code></td><td>制度原件、解析产物、图片和预览图</td><td><strong>核心</strong></td></tr><tr><td><code>tika</code></td><td>PDF、Office、HTML文本解析</td><td>无状态</td></tr><tr><td><code>clamav</code></td><td>上传文件病毒扫描</td><td>病毒库可重建</td></tr></tbody></table></div>
+      <div class="grid2"><div class="card"><h4>20–50人试点</h4><ul><li>4 vCPU、16GB RAM</li><li>200GB SSD</li><li>每日数据库与MinIO备份</li></ul></div><div class="card"><h4>首期正式环境</h4><ul><li>8 vCPU、32GB RAM</li><li>500GB以上企业级SSD</li><li>MinIO空间超过70%告警</li></ul></div></div>
+      <div class="callout warn"><strong>磁盘通常先成为瓶颈</strong>AI生图会保留原图、结果、画布资产和预览图。按“近30日日均增长 × 180天 × 1.3”估算半年容量。</div>
+    </section>
+
+    <section id="preparation" class="searchable">
+      <h2><a class="anchor" href="#preparation">2. 服务器、网络与目录准备</a></h2>
+      <h3>2.1 Ubuntu初始化</h3>
+      <pre><code>sudo timedatectl set-timezone Asia/Shanghai
+timedatectl status
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg openssl jq chrony
+sudo systemctl enable --now chrony
+chronyc tracking
+
+# 按公司规范安装Docker Engine与Compose V2后检查
+docker version
+docker compose version
+
+sudo adduser --disabled-password --gecos "Shimmer operator" shimmer
+sudo usermod -aG docker shimmer</code></pre>
+      <h3>2.2 目录与权限</h3>
+      <pre><code>sudo install -d -m 0750 -o shimmer -g shimmer /opt/shimmer
+sudo install -d -m 0750 -o shimmer -g shimmer /data/shimmer/{postgres,redis,minio,clamav}
+sudo install -d -m 0750 -o shimmer -g shimmer /backup/shimmer
+sudo install -d -m 0750 -o root -g shimmer /etc/shimmer
+sudo install -m 0640 -o root -g shimmer /dev/null /etc/shimmer/shimmer.env
+
+df -hT /opt/shimmer /data/shimmer /backup/shimmer
+findmnt /data/shimmer</code></pre>
+      <p><code>/opt/shimmer</code>放Compose和发布包；<code>/data/shimmer</code>放核心数据；<code>/backup/shimmer</code>只作本机中转，备份必须再复制到异机或NAS。</p>
+      <h3>2.3 端口矩阵</h3>
+      <div class="table-wrap"><table><thead><tr><th>端口</th><th>服务</th><th>允许来源</th><th>策略</th></tr></thead><tbody><tr><td>22</td><td>SSH</td><td>堡垒机/运维网</td><td>员工网禁止</td></tr><tr><td>8088</td><td>Web入口</td><td>仅HTTPS网关</td><td>精确限制源IP</td></tr><tr><td>443出站</td><td>IAM、飞书、模型、Harbor</td><td>白名单域名</td><td>HTTPS/WSS</td></tr><tr><td>8080</td><td>Go API</td><td>Compose内部</td><td>不映射</td></tr><tr><td>5432 / 6379</td><td>PostgreSQL / Redis</td><td>Compose内部</td><td>不映射</td></tr><tr><td>9000 / 9001</td><td>MinIO</td><td>Compose内部</td><td>控制台仅SSH隧道</td></tr><tr><td>9998 / 3310</td><td>Tika / ClamAV</td><td>Compose内部</td><td>不映射</td></tr></tbody></table></div>
+      <h3>2.4 DNS、证书与网关</h3>
+      <pre><code>nslookup &lt;公司域名&gt;
+openssl s_client -connect &lt;公司域名&gt;:443 -servername &lt;公司域名&gt; &lt;/dev/null 2&gt;/dev/null \
+  | openssl x509 -noout -subject -issuer -dates
+curl -I http://&lt;应用服务器IP&gt;:8088/</code></pre>
+      <pre><code>upstream shimmer_web {
+    server &lt;应用服务器IP&gt;:8088 max_fails=3 fail_timeout=10s;
+    keepalive 32;
+}
+server {
+    listen 443 ssl http2;
+    server_name &lt;公司域名&gt;;
+    ssl_certificate /etc/nginx/certs/shimmer.crt;
+    ssl_certificate_key /etc/nginx/certs/shimmer.key;
+    client_max_body_size 32m;
+    location / {
+        proxy_pass http://shimmer_web;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        add_header X-Accel-Buffering no always;
+    }
+}</code></pre>
+      <div class="callout danger"><strong>同源要求</strong>页面与API必须使用同一HTTPS域名。分域部署会导致IAM Cookie、Session、图片资源和SSE跨域问题。</div>
+    </section>
+
+    <section id="harbor" class="searchable">
+      <h2><a class="anchor" href="#harbor">3. Harbor 镜像构建与发布</a></h2>
+      <p class="lead">生产只拉取固定版本，不在生产服务器编译源码。Backend镜像同时供API和Worker使用。</p>
+      <h3>3.1 构建并推送业务镜像</h3>
+      <pre><code>docker login registry.shimmer.lab
+export VERSION=v1.0.0
+export REPO=registry.shimmer.lab/middle-office/ai-office-assistant
+
+docker build --pull -f backend/Dockerfile -t ${REPO}:backend-${VERSION} backend
+docker build --pull -f frontend/Dockerfile -t ${REPO}:web-${VERSION} frontend
+docker push ${REPO}:backend-${VERSION}
+docker push ${REPO}:web-${VERSION}
+
+docker buildx imagetools inspect ${REPO}:backend-${VERSION}
+docker buildx imagetools inspect ${REPO}:web-${VERSION}</code></pre>
+      <div class="callout warn"><strong>版本规则</strong>正式环境禁止<code>latest</code>。每次发布记录Git提交、Backend/Web Tag和镜像Digest，不得覆盖已发布Tag。</div>
+      <h3>3.2 同步第三方镜像</h3>
+      <pre><code>export REPO=registry.shimmer.lab/middle-office/ai-office-assistant
+docker pull pgvector/pgvector:pg17
+docker tag pgvector/pgvector:pg17 ${REPO}:dependency-pgvector-pg17
+docker push ${REPO}:dependency-pgvector-pg17
+docker pull redis:7.4-alpine
+docker tag redis:7.4-alpine ${REPO}:dependency-redis-7.4-alpine
+docker push ${REPO}:dependency-redis-7.4-alpine
+docker pull minio/minio:RELEASE.2025-04-22T22-12-26Z
+docker tag minio/minio:RELEASE.2025-04-22T22-12-26Z ${REPO}:dependency-minio-2025-04-22
+docker push ${REPO}:dependency-minio-2025-04-22
+docker pull apache/tika:3.2.3.0-full
+docker tag apache/tika:3.2.3.0-full ${REPO}:dependency-tika-3.2.3.0-full
+docker push ${REPO}:dependency-tika-3.2.3.0-full
+docker pull clamav/clamav:1.4
+docker tag clamav/clamav:1.4 ${REPO}:dependency-clamav-1.4
+docker push ${REPO}:dependency-clamav-1.4</code></pre>
+      <h3>3.3 发布包</h3>
+      <p>镜像之外还需把生产Compose、完整<code>backend/migrations/</code>（001–029）、<code>ops/*.sh</code>、<code>.env.example</code>和版本清单交付到<code>/opt/shimmer</code>。现有备份脚本会读取<code>.env.example</code>，缺少它会导致备份脚本退出。</p>
+      <pre><code>git rev-parse HEAD &gt; RELEASE_GIT_COMMIT
+printf '%s\n' "backend-${VERSION}" "web-${VERSION}" &gt; RELEASE_IMAGES
+sha256sum backend/migrations/*.sql ops/*.sh &gt; RELEASE_FILES.sha256</code></pre>
+    </section>
+
+    <section id="compose" class="searchable">
+      <h2><a class="anchor" href="#compose">4. 生产 Compose 与环境变量</a></h2>
+      <div class="callout danger"><strong>不要直接运行开发Compose</strong>仓库当前<code>docker-compose.yml</code>包含开发默认数据库密码、MinIO凭证、本地构建和MinIO控制台端口映射。生产使用独立文件。</div>
+      <h3>4.1 可复制的生产Compose</h3>
+      <pre><code># /opt/shimmer/docker-compose.prod.yml
+name: shimmer
+
+x-logging: &amp;default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  postgres:
+    image: registry.shimmer.lab/middle-office/ai-office-assistant:dependency-pgvector-pg17
+    environment:
+      POSTGRES_DB: ai_agent
+      POSTGRES_USER: ai_agent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - /data/shimmer/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_agent -d ai_agent"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    logging: *default-logging
+
+  migrate:
+    image: registry.shimmer.lab/middle-office/ai-office-assistant:dependency-pgvector-pg17
+    entrypoint: ["/bin/sh", "/ops/migrate.sh"]
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - ./backend/migrations:/migrations:ro
+      - ./ops/migrate.sh:/ops/migrate.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    logging: *default-logging
+
+  redis:
+    image: registry.shimmer.lab/middle-office/ai-office-assistant:dependency-redis-7.4-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - /data/shimmer/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    logging: *default-logging
+
+  minio:
+    image: registry.shimmer.lab/middle-office/ai-office-assistant:dependency-minio-2025-04-22
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+    volumes:
+      - /data/shimmer/minio:/data
+    restart: unless-stopped
+    logging: *default-logging
+
+  tika:
+    image: registry.shimmer.lab/middle-office/ai-office-assistant:dependency-tika-3.2.3.0-full
+    restart: unless-stopped
+    logging: *default-logging
+
+  clamav:
+    image: registry.shimmer.lab/middle-office/ai-office-assistant:dependency-clamav-1.4
+    volumes:
+      - /data/shimmer/clamav:/var/lib/clamav
+    restart: unless-stopped
+    logging: *default-logging
+
+  api:
+    image: registry.shimmer.lab/middle-office/ai-office-assistant:backend-${SHIMMER_VERSION:?SHIMMER_VERSION is required}
+    env_file:
+      - /etc/shimmer/shimmer.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    expose: ["8080"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    logging: *default-logging
+
+  worker:
+    image: registry.shimmer.lab/middle-office/ai-office-assistant:backend-${SHIMMER_VERSION:?SHIMMER_VERSION is required}
+    entrypoint: ["/app/worker"]
+    env_file:
+      - /etc/shimmer/shimmer.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+
+  web:
+    image: registry.shimmer.lab/middle-office/ai-office-assistant:web-${SHIMMER_VERSION:?SHIMMER_VERSION is required}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_BIND_ADDRESS:-0.0.0.0}:8088:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    logging: *default-logging</code></pre>
+      <div class="callout warn"><strong>端口绑定</strong><code>WEB_BIND_ADDRESS</code>填写应用服务器固定内网IP。再由主机防火墙限制只有公司网关能访问8088；不要填127.0.0.1，否则远端网关无法连接。</div>
+      <h3>4.2 生产Secret模板</h3>
+      <pre><code># /etc/shimmer/shimmer.env（所有尖括号内容必须替换）
+SHIMMER_VERSION=v1.0.0
+WEB_BIND_ADDRESS=&lt;应用服务器内网IP&gt;
+POSTGRES_PASSWORD=&lt;十六进制强密码&gt;
+
+APP_ENV=production
+HTTP_ADDR=:8080
+PUBLIC_URL=https://&lt;公司域名&gt;
+SESSION_SECRET=&lt;至少32字符，长期保存&gt;
+AGENT_SECRET_ENCRYPTION_KEY=&lt;至少32字符，长期保存且不可随意更换&gt;
+DEV_AUTH_ENABLED=false
+
+DATABASE_URL=postgres://ai_agent:&lt;POSTGRES_PASSWORD&gt;@postgres:5432/ai_agent?sslmode=disable
+REDIS_ADDR=redis:6379
+MINIO_ENDPOINT=minio:9000
+MINIO_ACCESS_KEY=&lt;生产MinIO用户名&gt;
+MINIO_SECRET_KEY=&lt;至少32字符的MinIO密码&gt;
+MINIO_BUCKET=ai-agent-documents
+MINIO_SECURE=false
+TIKA_URL=http://tika:9998
+CLAMAV_ADDR=clamav:3310
+
+IAM_ENABLED=true
+IAM_BASE_URL=https://iam.shimmergames.com
+IAM_APP_ID=&lt;IAM应用ID&gt;
+IAM_APP_SECRET=&lt;IAM服务端密钥&gt;
+IAM_AUTH_CACHE_SECONDS=30
+IAM_HTTP_TIMEOUT_SECONDS=5
+
+FEISHU_APP_ID=&lt;飞书应用ID&gt;
+FEISHU_APP_SECRET=&lt;飞书应用Secret&gt;
+FEISHU_REDIRECT_URI=https://&lt;公司域名&gt;/
+FEISHU_APP_LINK=
+FEISHU_MEETING_CALENDAR_ID=
+BOOTSTRAP_SUPER_ADMIN_OPEN_IDS=&lt;首次管理员open_id，完成后清空&gt;
+
+DASHSCOPE_API_KEY=&lt;阿里云百炼API Key&gt;
+DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+DASHSCOPE_GENERATION_MODEL=qwen-plus
+DASHSCOPE_EMBEDDING_MODEL=text-embedding-v4
+DASHSCOPE_RERANK_MODEL=qwen3-rerank
+DASHSCOPE_CONTEXT_MODEL=qwen-flash
+DASHSCOPE_REMINDER_MODEL=qwen-flash
+
+GEMINI_API_KEY=
+GEMINI_IMAGE_MODEL=gemini-3.1-flash-image
+REMINDER_TIMEZONE=Asia/Shanghai
+REMINDER_POLL_SECONDS=5
+REMINDER_GRACE_MINUTES=30
+REMINDER_MAX_ACTIVE_PER_USER=100
+RETENTION_DAYS=90
+MASSAGE_RESPONSE_SECONDS=180
+MASSAGE_RETENTION_DAYS=365</code></pre>
+      <h3>4.3 生成与保管Secret</h3>
+      <pre><code># 十六进制不含URL保留字符，适合DATABASE_URL
+openssl rand -hex 32   # SESSION_SECRET
+openssl rand -hex 32   # AGENT_SECRET_ENCRYPTION_KEY
+openssl rand -hex 24   # POSTGRES_PASSWORD
+openssl rand -hex 24   # MINIO_SECRET_KEY
+
+sudo chown root:shimmer /etc/shimmer/shimmer.env
+sudo chmod 0640 /etc/shimmer/shimmer.env
+sudo stat /etc/shimmer/shimmer.env</code></pre>
+      <div class="callout danger"><strong>必须永久保存加密密钥</strong><code>AGENT_SECRET_ENCRYPTION_KEY</code>用于解密后台保存的中转站和Pixian凭证。恢复数据库却没有恢复这个值，原密文将不可用。Secret不能提交Git。</div>
+      <h3>4.4 配置预检</h3>
+      <pre><code>cd /opt/shimmer
+docker compose --env-file /etc/shimmer/shimmer.env \
+  -f docker-compose.prod.yml config --quiet
+
+# 仅查看镜像，避免展开的Secret进入终端审计日志
+docker compose --env-file /etc/shimmer/shimmer.env \
+  -f docker-compose.prod.yml config --images</code></pre>
+      <div class="callout"><strong>迁移约束</strong><code>ops/migrate.sh</code>固定连接服务名<code>postgres</code>、用户和数据库<code>ai_agent</code>。生产示例保持这些标识，仅更换密码。迁移目录当前已包含<code>029_xgapi_base_url.sql</code>。</div>
+    </section>
+
+    <section id="external" class="searchable">
+      <h2><a class="anchor" href="#external">5. 外部服务白名单与平台配置</a></h2>
+      <h3>5.1 出站域名清单</h3>
+      <div class="table-wrap"><table><thead><tr><th>域名</th><th>用途</th><th>说明</th></tr></thead><tbody><tr><td><code>iam.shimmergames.com</code></td><td>IAM身份与权限</td><td>HTTPS 443</td></tr><tr><td><code>open.feishu.cn</code>及飞书动态长连接端点</td><td>Token、通讯录、机器人、云文档、日历、WSS</td><td>不要固定DNS解析后的IP</td></tr><tr><td><code>dashscope.aliyuncs.com</code></td><td>生成、Embedding、Rerank、上下文</td><td>HTTPS 443</td></tr><tr><td><code>api.xgapiproxy.win</code></td><td>XGAPI调用</td><td>HTTPS 443</td></tr><tr><td><code>image.xgapiproxy.win</code><br><code>webstatic.apiproxy.vip</code></td><td>XGAPI图片结果</td><td>与应用允许域名一致</td></tr><tr><td><code>ai.comfly.org</code></td><td>Comfly调用</td><td>HTTPS 443</td></tr><tr><td><code>files.closeai.fans</code><br><code>webstatic.apiproxy.vip</code><br><code>webstatic.aiproxy.vip</code></td><td>Comfly图片结果</td><td>仅放行HTTPS</td></tr><tr><td><code>api.pixian.ai</code></td><td>透明背景抠图</td><td>启用前完成合规审批</td></tr><tr><td><code>database.clamav.net</code></td><td>病毒库更新</td><td>可替换为公司镜像源</td></tr><tr><td><code>registry.shimmer.lab</code></td><td>镜像拉取</td><td>信任公司证书链</td></tr></tbody></table></div>
+      <div class="callout warn"><strong>图片结果域名可能变化</strong>后台中转站的“允许图片响应域名”和网络白名单必须同步。服务端域名校验是SSRF防护，不能改成允许任意域名。</div>
+      <h3>5.2 IAM配置</h3>
+      <ol><li>创建“微光 AI Agent”应用。</li><li><code>page_url</code>设置为<code>https://&lt;公司域名&gt;/?app_id=&lt;IAM_APP_ID&gt;</code>。</li><li><code>api_url</code>设置为<code>https://&lt;公司域名&gt;</code>。</li><li>将域名加入IAM Cookie与微前端可信域。</li><li>给普通员工至少授予<code>agent_use</code>。</li></ol>
+      <div class="table-wrap"><table><thead><tr><th>权限键</th><th>模块</th></tr></thead><tbody><tr><td><code>agent_use</code></td><td>员工功能</td></tr><tr><td><code>knowledge_manage</code></td><td>制度知识库</td></tr><tr><td><code>agent_manage</code></td><td>Agent与模型</td></tr><tr><td><code>image_manage</code></td><td>生图及Pixian管理</td></tr><tr><td><code>notification_manage</code></td><td>通知和按摩后台</td></tr><tr><td><code>calendar_manage</code></td><td>会议室与日历</td></tr><tr><td><code>audit_view</code></td><td>质量与审计</td></tr><tr><td><code>user_manage</code></td><td>本地权限覆盖</td></tr></tbody></table></div>
+      <p>最终权限公式：<code>（IAM权限 ∪ 本地允许）− 本地拒绝</code>。IAM和飞书入口使用同一内部用户UUID。</p>
+      <h3>5.3 飞书自建应用</h3>
+      <div class="grid2"><div class="card"><h4>网页与机器人</h4><ul><li>启用网页应用和机器人。</li><li>工作台及OAuth重定向使用生产HTTPS域名。</li><li>正式版本可见范围覆盖目标员工。</li></ul></div><div class="card"><h4>长连接事件</h4><ul><li><code>im.message.receive_v1</code></li><li><code>card.action.trigger</code></li><li><code>meeting_room.meeting_room.status_changed_v1</code></li><li>需要时添加通讯录用户变更事件。</li></ul></div></div>
+      <p>核心权限包括：机器人收发消息和更新卡片；用户/部门信息读取；云空间、Docx、Wiki和文件读取；<code>vc:room:readonly</code>、<code>calendar:room:readonly</code>；日历、日程增删改查和忙闲读取。</p>
+      <div class="callout ok"><strong>无需公网回调</strong>API/Worker主动建立飞书WebSocket长连接，只需出站WSS。长连接模式不使用<code>FEISHU_VERIFICATION_TOKEN</code>和<code>FEISHU_ENCRYPT_KEY</code>。</div>
+    </section>
+
+    <section id="first-deploy" class="searchable">
+      <h2><a class="anchor" href="#first-deploy">6. 首次生产部署</a></h2>
+      <div class="callout"><strong>变更窗口</strong>首次部署建议预留2小时，由应用、网络、IAM和飞书管理员同时在线。以下命令均在<code>/opt/shimmer</code>执行。</div>
+      <div class="step"><i>1</i><div><h4>预检基础设施</h4><p>确认DNS、证书、磁盘、NTP、Harbor和出站域名。任一关键项不通过都不要继续。</p><pre><code>timedatectl status
+df -h /data/shimmer
+curl -fsS https://iam.shimmergames.com/ &gt;/dev/null
+curl -fsS https://open.feishu.cn/ &gt;/dev/null
+curl -fsS https://dashscope.aliyuncs.com/ &gt;/dev/null
+docker login registry.shimmer.lab</code></pre></div></div>
+      <div class="step"><i>2</i><div><h4>核验发布包</h4><pre><code>cd /opt/shimmer
+sha256sum -c RELEASE_FILES.sha256
+ls backend/migrations/029_xgapi_base_url.sql
+test -x ops/migrate.sh || chmod 0750 ops/migrate.sh</code></pre><p>必须看到完整001–029迁移，发布包中的迁移和镜像必须来自同一Git提交。</p></div></div>
+      <div class="step"><i>3</i><div><h4>拉取固定版本镜像</h4><pre><code>docker compose --env-file /etc/shimmer/shimmer.env \
+  -f docker-compose.prod.yml pull
+docker compose --env-file /etc/shimmer/shimmer.env \
+  -f docker-compose.prod.yml config --images</code></pre></div></div>
+      <div class="step"><i>4</i><div><h4>检查配置</h4><pre><code>docker compose --env-file /etc/shimmer/shimmer.env \
+  -f docker-compose.prod.yml config --quiet
+docker compose --env-file /etc/shimmer/shimmer.env \
+  -f docker-compose.prod.yml config --services</code></pre><p>不要把完整展开后的配置粘贴到工单或聊天，它可能包含Secret。</p></div></div>
+      <div class="step"><i>5</i><div><h4>启动基础服务</h4><pre><code>docker compose --env-file /etc/shimmer/shimmer.env \
+  -f docker-compose.prod.yml up -d postgres redis minio tika clamav
+docker compose --env-file /etc/shimmer/shimmer.env \
+  -f docker-compose.prod.yml ps
+docker compose --env-file /etc/shimmer/shimmer.env \
+  -f docker-compose.prod.yml logs --tail=100 postgres redis minio tika clamav</code></pre><p>ClamAV首次更新病毒库可能较慢；未就绪前上传扫描会失败。</p></div></div>
+      <div class="step"><i>6</i><div><h4>执行全部迁移</h4><pre><code>docker compose --env-file /etc/shimmer/shimmer.env \
+  -f docker-compose.prod.yml run --rm migrate
+
+# 命令必须以退出码0结束，并确认日志包含029迁移
+docker compose --env-file /etc/shimmer/shimmer.env \
+  -f docker-compose.prod.yml logs migrate</code></pre><div class="callout warn"><strong>不能只依赖initdb</strong>PostgreSQL的<code>docker-entrypoint-initdb.d</code>只在空数据目录首次执行；当前开发Compose逐个挂载到027。生产始终使用完整迁移目录运行<code>migrate</code>。</div></div></div>
+      <div class="step"><i>7</i><div><h4>启动应用</h4><pre><code>docker compose --env-file /etc/shimmer/shimmer.env \
+  -f docker-compose.prod.yml up -d api worker web
+docker compose --env-file /etc/shimmer/shimmer.env \
+  -f docker-compose.prod.yml ps
+docker compose --env-file /etc/shimmer/shimmer.env \
+  -f docker-compose.prod.yml logs --tail=150 api worker web</code></pre></div></div>
+      <div class="step"><i>8</i><div><h4>检查内部健康与pgvector</h4><pre><code>docker compose --env-file /etc/shimmer/shimmer.env \
+  -f docker-compose.prod.yml exec -T postgres \
+  psql -U ai_agent -d ai_agent -c \
+  "SELECT extname FROM pg_extension WHERE extname='vector';"
+
+docker compose --env-file /etc/shimmer/shimmer.env \
+  -f docker-compose.prod.yml exec -T api \
+  wget -qO- http://127.0.0.1:8080/healthz
+curl -fsSI http://&lt;应用服务器IP&gt;:8088/</code></pre><p>API首次连接MinIO时会检查并自动创建<code>MINIO_BUCKET</code>。如果API启动失败，应同时检查MinIO凭证、目录权限和Bucket创建日志。</p></div></div>
+      <div class="step"><i>9</i><div><h4>启用公司网关</h4><pre><code>curl -I https://&lt;公司域名&gt;/
+curl -sS -D - https://&lt;公司域名&gt;/api/v1/auth/iam/config -o /dev/null</code></pre><p>确认没有跳转到HTTP、证书链可信、接口与页面同域。飞书客户端所在网络也必须能解析并访问该域名。</p></div></div>
+      <div class="step"><i>10</i><div><h4>初始化管理员并收口</h4><ol><li>使用<code>BOOTSTRAP_SUPER_ADMIN_OPEN_IDS</code>中的飞书账号登录。</li><li>在“用户与权限”给至少两名管理员本地允许<code>user_manage</code>及所需权限。</li><li>验证两人均可进入后台。</li><li>清空Bootstrap变量并重建API和Worker。</li></ol><pre><code>docker compose --env-file /etc/shimmer/shimmer.env \
+  -f docker-compose.prod.yml up -d --force-recreate api worker</code></pre></div></div>
+      <div class="step"><i>11</i><div><h4>初始化业务数据</h4><ul><li>同步飞书组织架构，检查部门、职位和open_id映射。</li><li>初始化会议室共享日历并同步会议室。</li><li>连接飞书资料源，解析和命中测试后发布制度。</li><li>配置Agent模型、Prompt版本并运行评测。</li><li>配置生图中转站、同步模型、创建项目和功能按键。</li><li>Pixian先使用测试模式，测试通过和合规审批后再启用生产模式。</li></ul></div></div>
+    </section>
+
+    <section id="acceptance" class="searchable">
+      <h2><a class="anchor" href="#acceptance">7. 上线验收清单</a></h2>
+      <p class="lead">勾选状态只保存在当前浏览器。正式结果还应归档到公司变更单。</p>
+      <h3>基础与安全</h3><ul class="checklist" data-group="base"><li><input type="checkbox">HTTPS、证书链和内部DNS在浏览器及飞书客户端均正常。</li><li><input type="checkbox">只有公司网关能访问应用服务器8088。</li><li><input type="checkbox">员工网无法访问5432、6379、9000、9001、9998和3310。</li><li><input type="checkbox"><code>APP_ENV=production</code>且<code>DEV_AUTH_ENABLED=false</code>。</li><li><input type="checkbox">配置、日志和前端产物中无明文App Secret或API Key。</li><li><input type="checkbox">重启整机后容器恢复且PostgreSQL、MinIO数据仍存在。</li></ul>
+      <h3>身份与权限</h3><ul class="checklist" data-group="auth"><li><input type="checkbox">IAM登录与飞书免登命中同一内部用户UUID。</li><li><input type="checkbox">普通员工菜单、管理员菜单和API权限一致。</li><li><input type="checkbox">IAM授予、本地允许和本地拒绝规则实测通过。</li><li><input type="checkbox">至少两名用户具备<code>user_manage</code>，Bootstrap配置已清空。</li><li><input type="checkbox">受限制度和生图项目不能越权读取。</li></ul>
+      <h3>知识、Agent与飞书</h3><ul class="checklist" data-group="agent"><li><input type="checkbox">DOCX/PDF上传后安全扫描、Tika解析、切片和发布成功。</li><li><input type="checkbox">飞书云空间/Wiki资料源可同步新增、更新、删除和失权。</li><li><input type="checkbox">制度回答流式显示且引用含版本、章节或页码。</li><li><input type="checkbox">无证据问题拒绝编造，越权问题不泄露标题或引用。</li><li><input type="checkbox">机器人私聊、群内@、卡片和AppLink正常。</li><li><input type="checkbox">部门、职位和员工搜索数据正确。</li></ul>
+      <h3>行政业务</h3><ul class="checklist" data-group="business"><li><input type="checkbox">一次性与重复提醒准时发送且不重复投递。</li><li><input type="checkbox">富文本通知可向个人和群聊发送，审核、定时和结果正确。</li><li><input type="checkbox">会议室忙闲、主题、参会人、确认、取消和会后提醒通过。</li><li><input type="checkbox">按摩报名、排号、三分钟超时跳号、统计和CSV导出正确。</li></ul>
+      <h3>AI生图</h3><ul class="checklist" data-group="image"><li><input type="checkbox">XGAPI和Comfly各完成一次低成本1K单图。</li><li><input type="checkbox">参考图、原图比例、多画布、多选、批量删除和位置保存正常。</li><li><input type="checkbox">图片来源显示中转站、模型和真实分辨率。</li><li><input type="checkbox">未知图片结果域名被安全拒绝。</li><li><input type="checkbox">Pixian测试连接和测试模式抠图成功，透明PNG正确。</li></ul>
+      <h3>性能与恢复</h3><ul class="checklist" data-group="ops"><li><input type="checkbox">30路问答压测记录首字和完整回答P95。</li><li><input type="checkbox">日志轮转、磁盘和MinIO容量告警生效。</li><li><input type="checkbox">完成PostgreSQL与MinIO备份并校验。</li><li><input type="checkbox">在隔离环境完成实际恢复演练并记录RTO/RPO。</li></ul>
+    </section>
+
+    <section id="backup" class="searchable">
+      <h2><a class="anchor" href="#backup">8. 备份、恢复与灾难演练</a></h2>
+      <h3>8.1 备份范围</h3>
+      <div class="table-wrap"><table><thead><tr><th>对象</th><th>重要性</th><th>建议</th></tr></thead><tbody><tr><td>PostgreSQL</td><td>最高：业务、向量、任务、权限、审计</td><td><code>pg_dump -Fc</code>每日及升级前</td></tr><tr><td>MinIO</td><td>最高：制度、生成图、预览和抠图</td><td>文件快照或tar，与数据库时间点接近</td></tr><tr><td>生产Secret</td><td>最高：会话和后台凭证解密</td><td>公司密钥系统或加密离线副本</td></tr><tr><td>Compose/迁移/镜像清单</td><td>高：重建同版本环境</td><td>Git Tag、发布包、Harbor Digest</td></tr><tr><td>Redis</td><td>低：缓存和短期状态</td><td>通常不作为灾备真源</td></tr><tr><td>ClamAV病毒库</td><td>低</td><td>恢复后重新更新</td></tr></tbody></table></div>
+      <h3>8.2 使用现有脚本</h3>
+      <pre><code>cd /opt/shimmer
+export COMPOSE_FILE=/opt/shimmer/docker-compose.prod.yml
+export COMPOSE_ENV_FILES=/etc/shimmer/shimmer.env
+
+sh ops/backup.sh /backup/shimmer/$(date +%Y%m%d-%H%M%S)
+find /backup/shimmer -type f -mtime -1 -exec sha256sum {} \; \
+  &gt; /backup/shimmer/latest.sha256</code></pre>
+      <div class="callout danger"><strong>脚本限制</strong>当前<code>ops/backup.sh</code>只导出PostgreSQL、MinIO并复制<code>.env.example</code>，不会备份<code>/etc/shimmer/shimmer.env</code>。真实Secret必须走独立的公司密钥备份流程，不能复制到公共NAS。</div>
+      <h3>8.3 建议周期</h3>
+      <ul><li>每日：PostgreSQL逻辑备份，保留14天。</li><li>每周：PostgreSQL + MinIO一致性全量，保留8周。</li><li>每月：加密归档到异机或NAS，保留12个月或依合规策略。</li><li>每次发布前：额外创建带版本号的即时备份。</li><li>每季度：在隔离主机完成一次真实恢复演练。</li></ul>
+      <h3>8.4 隔离恢复演练</h3>
+      <ol><li>准备与生产隔离的主机和空数据目录，禁止连接正式飞书/IAM应用。</li><li>部署备份记录中的镜像和Compose。</li><li>恢复同一份<code>AGENT_SECRET_ENCRYPTION_KEY</code>，其他外部密钥使用测试值。</li><li>停止API和Worker，只保留PostgreSQL、MinIO。</li><li>执行恢复，再运行完整迁移。</li><li>启动应用，验证用户、文档版本、引用、画布、加密凭证状态和审计。</li><li>记录实际RTO和可恢复到的时间点RPO。</li></ol>
+      <pre><code># 仅限隔离恢复环境
+export COMPOSE_FILE=/opt/shimmer/docker-compose.prod.yml
+export COMPOSE_ENV_FILES=/etc/shimmer/shimmer.env
+docker compose stop api worker web
+sh ops/restore.sh /backup/shimmer/&lt;备份目录&gt;
+docker compose run --rm migrate
+docker compose up -d api worker web</code></pre>
+      <div class="callout danger"><strong>恢复具有破坏性</strong><code>restore.sh</code>会清理目标数据库对象并执行<code>rm -rf /data/*</code>清空MinIO容器数据。没有确认服务器、Compose项目、备份目录和维护窗口时绝对不要执行。</div>
+    </section>
+
+    <section id="upgrade" class="searchable">
+      <h2><a class="anchor" href="#upgrade">9. 升级、回滚与日常运维</a></h2>
+      <h3>9.1 标准升级</h3>
+      <div class="flow"><span>发布镜像</span><i>→</i><span>审批</span><i>→</i><span>备份</span><i>→</i><span>拉取</span><i>→</i><span>迁移</span><i>→</i><span>更新容器</span><i>→</i><span>验收</span></div>
+      <pre><code>cd /opt/shimmer
+export COMPOSE_FILE=/opt/shimmer/docker-compose.prod.yml
+export COMPOSE_ENV_FILES=/etc/shimmer/shimmer.env
+
+# 1. 升级前备份
+sh ops/backup.sh /backup/shimmer/pre-upgrade-v1.1.0-$(date +%Y%m%d-%H%M%S)
+
+# 2. 将 /etc/shimmer/shimmer.env 中 SHIMMER_VERSION 改为 v1.1.0
+sudoedit /etc/shimmer/shimmer.env
+
+# 3. 拉取、迁移、更新
+docker compose pull api worker web
+docker compose config --quiet
+docker compose run --rm migrate
+docker compose up -d --no-deps api worker
+docker compose up -d --no-deps web
+docker compose ps
+docker compose logs --since=10m api worker web</code></pre>
+      <h3>9.2 回滚原则</h3>
+      <ul><li>只有应用问题且迁移向后兼容：把<code>SHIMMER_VERSION</code>改回旧版本并重建API、Worker、Web。</li><li>迁移导致结构不兼容：停止写入，恢复升级前PostgreSQL和MinIO，再启动旧镜像。</li><li>数据库没有降级脚本，禁止倒序执行SQL。</li><li>回滚后重点核验Worker是否重复发送通知、提醒、按摩叫号或会议消息。</li></ul>
+      <h3>9.3 日常检查</h3>
+      <pre><code>cd /opt/shimmer
+export COMPOSE_FILE=/opt/shimmer/docker-compose.prod.yml
+export COMPOSE_ENV_FILES=/etc/shimmer/shimmer.env
+
+docker compose ps
+docker compose logs --since=30m --tail=300 api worker web
+docker stats --no-stream
+docker system df
+df -h /data/shimmer /backup/shimmer
+du -sh /data/shimmer/*
+
+docker compose exec -T postgres psql -U ai_agent -d ai_agent -c \
+  "SELECT now(), pg_size_pretty(pg_database_size('ai_agent'));"
+docker compose exec -T redis redis-cli ping</code></pre>
+      <h3>9.4 告警建议</h3>
+      <div class="table-wrap"><table><thead><tr><th>指标</th><th>预警</th><th>严重</th><th>处理</th></tr></thead><tbody><tr><td>数据盘</td><td>70%</td><td>85%</td><td>清理可重建镜像/日志并扩容，不手删MinIO文件</td></tr><tr><td>容器重启</td><td>1小时≥2次</td><td>持续重启</td><td>检查配置、依赖和OOM</td></tr><tr><td>API 5xx</td><td>5分钟&gt;1%</td><td>&gt;5%</td><td>按路径检查数据库和外部平台</td></tr><tr><td>Worker积压</td><td>10分钟持续增长</td><td>业务超时</td><td>检查飞书限流、模型和Worker</td></tr><tr><td>备份</td><td>24小时无成功</td><td>48小时无成功</td><td>立即补备份并检查异机复制</td></tr><tr><td>MinIO增长</td><td>超过月均30%</td><td>预计30天耗尽</td><td>扩盘或经审批归档</td></tr></tbody></table></div>
+    </section>
+
+    <section id="limits" class="searchable">
+      <h2><a class="anchor" href="#limits">10. 当前项目部署边界</a></h2>
+      <div class="grid2"><div class="callout warn"><strong>健康检查</strong><code>/healthz</code>主要证明Go进程存活，不会完整检查PostgreSQL、Redis、MinIO、Tika、ClamAV、IAM、飞书和模型。</div><div class="callout warn"><strong>OCR</strong>配置保留<code>OCR_URL</code>，但当前Compose没有PaddleOCR。扫描PDF或纯图片制度可能无法提取文字。</div><div class="callout warn"><strong>单机</strong>Compose能重启进程，不能抵御主机、数据盘或机房故障。恢复能力取决于异机备份。</div><div class="callout warn"><strong>外部服务</strong>飞书、IAM、百炼、中转站或Pixian不可用时对应功能失败或降级，但本地已有数据不会自动丢失。</div></div>
+      <h3>何时升级架构</h3><ul><li>业务要求RTO小于30分钟、RPO接近0。</li><li>API和Worker需要跨主机滚动发布或独立扩容。</li><li>单机磁盘无法承载图片，需要MinIO集群或公司对象存储。</li><li>PostgreSQL需要主备、连接池和独立运维。</li><li>并发持续超过当前30路基线，后台任务开始影响问答。</li></ul>
+      <p>达到这些条件时，优先外置PostgreSQL和MinIO并拆分应用与数据，再评估Kubernetes。</p>
+    </section>
+
+    <section id="troubleshooting" class="searchable">
+      <h2><a class="anchor" href="#troubleshooting">11. 常见故障排查</a></h2>
+      <div class="table-wrap"><table><thead><tr><th>现象</th><th>优先检查</th><th>处理方向</th></tr></thead><tbody><tr><td>页面502</td><td>Web/API状态及日志</td><td>确认迁移完成、API健康、Docker内部DNS正常</td></tr><tr><td>登录401或510000</td><td>IAM Cookie、HTTPS、Session Secret</td><td>检查同源可信域，确认Secret未变化</td></tr><tr><td>519003</td><td>IAM飞书user_id与通讯录可见范围</td><td>扩大可见范围并同步，禁止按姓名合并</td></tr><tr><td>飞书免登失败</td><td>网页URL、重定向、应用版本</td><td>完全匹配生产HTTPS域名并发布应用</td></tr><tr><td>机器人不回复</td><td>Worker长连接、事件、权限</td><td>验证出站WSS和<code>im.message.receive_v1</code></td></tr><tr><td>提醒/按摩不发送</td><td>Worker、时区、任务状态</td><td>确认Asia/Shanghai与机器人发送权限</td></tr><tr><td>迁移失败</td><td>第一条SQL错误、文件、PG密码</td><td>停止应用，修复后重跑幂等迁移，不跳过</td></tr><tr><td>MinIO失败</td><td>两端凭证、目录权限</td><td>容器内使用HTTP，宿主机不开放9000</td></tr><tr><td>资料解析失败</td><td>Tika、ClamAV、文件类型</td><td>确认服务就绪，扫描件属于OCR边界</td></tr><tr><td>模型超时</td><td>出网、DNS、余额、限流</td><td>记录请求ID，不盲目重试昂贵请求</td></tr><tr><td>image URL host not allowed</td><td>实际域名和两层白名单</td><td>确认可信后同步应用白名单与防火墙</td></tr><tr><td>磁盘满</td><td>数据目录、日志和镜像</td><td>先清理可重建内容并扩盘，禁止手删PG/MinIO内部文件</td></tr></tbody></table></div>
+      <h3>统一排查顺序</h3><div class="flow"><span>用户现象和时间</span><i>→</i><span>网关状态码</span><i>→</i><span>Web日志</span><i>→</i><span>API/Worker</span><i>→</i><span>数据组件</span><i>→</i><span>外部平台</span></div>
+      <pre><code>docker compose logs --since="2026-08-20T10:00:00+08:00" api worker web
+docker compose logs --since=1h api worker 2&gt;&amp;1 \
+  | grep -Ei 'warn|error|timeout|permission|denied'
+docker compose ps --format json
+docker inspect --format '{{.Name}} {{.Config.Image}} {{.Image}}' \
+  $(docker compose ps -q)</code></pre>
+    </section>
+
+    <section id="appendix" class="searchable">
+      <h2><a class="anchor" href="#appendix">附录：上线与回滚速查</a></h2>
+      <h3>上线前十项</h3><ol><li>域名和HTTPS证书通过。</li><li>8088只向网关开放。</li><li>Harbor Tag和Digest已归档。</li><li>生产Secret已生成、限权和备份。</li><li>001–029迁移全部在发布包。</li><li>出站HTTPS/WSS白名单通过。</li><li>IAM八个权限键和可信域配置完成。</li><li>飞书权限、长连接事件和可见范围已发布。</li><li>备份目标可写并完成测试。</li><li>应用、网络、IAM、飞书和业务人员在窗口在线。</li></ol>
+      <h3>紧急回滚</h3><ul class="checklist" data-group="rollback"><li><input type="checkbox">停止继续发布并记录版本、时间和影响。</li><li><input type="checkbox">判断是否执行过数据库迁移。</li><li><input type="checkbox">仅镜像问题时恢复旧版本并重建三个应用容器。</li><li><input type="checkbox">数据库不兼容时停止写入并按审批恢复备份。</li><li><input type="checkbox">回滚后验证登录、问答、Worker幂等任务、飞书消息和数据。</li></ul>
+      <h3>关键文件</h3>
+      <div class="table-wrap"><table><thead><tr><th>文件</th><th>用途</th><th>注意</th></tr></thead><tbody><tr><td><code>backend/Dockerfile</code></td><td>API/Worker镜像</td><td>同一镜像两个入口</td></tr><tr><td><code>frontend/Dockerfile</code></td><td>Vue + Nginx镜像</td><td>唯一应用入口</td></tr><tr><td><code>frontend/nginx.conf</code></td><td>SPA和API反代</td><td>SSE关闭缓冲</td></tr><tr><td><code>backend/migrations/</code></td><td>001–029结构演进</td><td>必须完整有序</td></tr><tr><td><code>ops/migrate.sh</code></td><td>执行幂等迁移</td><td>固定连接postgres/ai_agent</td></tr><tr><td><code>ops/backup.sh</code></td><td>导出PG和MinIO</td><td>不备份真实Secret</td></tr><tr><td><code>ops/restore.sh</code></td><td>恢复PG和MinIO</td><td>会清理目标数据</td></tr><tr><td><code>.env.example</code></td><td>字段参考</td><td>不能直接用于生产</td></tr></tbody></table></div>
+      <div class="callout ok"><strong>完成定义</strong>不是容器全部Up就算上线。身份、权限、知识、飞书、行政业务、生图、备份和恢复全部验收，且开发登录与内部端口关闭后，才算完成。</div>
+    </section>
+    <footer style="padding:28px 6px;color:#7b8498;font-size:13px">《微光 Shimmer 公司内网生产部署与运维手册》 · 基于当前工作区代码、Compose与迁移001–029整理 · 所有凭证均为脱敏占位符。</footer>
+  </div></main>
+  <button id="backTop" class="back" aria-label="返回顶部">↑</button>
+  <script>
+    (()=>{const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];const progress=$('#progressBar'),back=$('#backTop');const onScroll=()=>{const h=document.documentElement,max=h.scrollHeight-h.clientHeight;progress.style.width=(max?100*h.scrollTop/max:0)+'%';back.classList.toggle('show',h.scrollTop>500)};addEventListener('scroll',onScroll,{passive:true});onScroll();back.onclick=()=>scrollTo({top:0,behavior:'smooth'});$$('pre').forEach(pre=>{const b=document.createElement('button');b.className='copy';b.textContent='复制';b.onclick=async()=>{try{await navigator.clipboard.writeText($('code',pre)?.innerText||pre.innerText);b.textContent='已复制';setTimeout(()=>b.textContent='复制',1200)}catch{b.textContent='复制失败'}};pre.appendChild(b)});const search=$('#docSearch'),sections=$$('.searchable'),empty=$('#searchEmpty');search.oninput=()=>{const q=search.value.trim().toLowerCase();let n=0;sections.forEach(s=>{const hit=!q||s.innerText.toLowerCase().includes(q);s.classList.toggle('filtered',!hit);if(hit)n++});empty.classList.toggle('show',!n)};$('#collapseToc').onclick=e=>{const nav=$('#tocNav');nav.hidden=!nav.hidden;e.currentTarget.textContent=nav.hidden?'展开目录':'折叠目录'};const links=$$('#tocNav a');const io=new IntersectionObserver(es=>{const x=es.filter(e=>e.isIntersecting).sort((a,b)=>b.intersectionRatio-a.intersectionRatio)[0];if(x)links.forEach(a=>a.classList.toggle('active',a.hash==='#'+x.target.id))},{rootMargin:'-15% 0px -70%',threshold:[0,.2,.6]});sections.forEach(s=>io.observe(s));$$('.checklist').forEach((list,g)=>$$('input',list).forEach((box,i)=>{const k='shimmer-deploy-'+(list.dataset.group||g)+'-'+i;box.checked=localStorage.getItem(k)==='1';box.onchange=()=>localStorage.setItem(k,box.checked?'1':'0')}))})();
+  </script>
+</body>
+</html>

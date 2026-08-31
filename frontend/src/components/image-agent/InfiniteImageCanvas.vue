@@ -27,15 +27,19 @@ const props = defineProps<{
   importing?: boolean
   importProgress?: string
   deletingNodeId?: string
+  backgroundRemovalEnabled?: boolean
+  backgroundRemoving?: boolean
 }>()
 const emit = defineEmits<{
   change: [value: { viewport: ImageViewport; nodes: DomainNode[] }]
   'delete-node': [nodeId: string]
+  'delete-selected': [nodeIds: string[]]
+  'remove-background': [nodeIds: string[]]
   'import-images': [value: { files: File[]; point: { x: number; y: number }; origin: CanvasImportOrigin }]
   'import-blocked': []
   'unsupported-drop': []
 }>()
-type CanvasNodeData = { assetId?: string; status: 'pending' | 'ready' | 'failed'; error?: string; width: number; height: number }
+type CanvasNodeData = { assetId?: string; status: 'pending' | 'ready' | 'failed'; error?: string; width: number; height: number; backgroundRemoval?: boolean; requestedSize?: string; actualWidth?: number; actualHeight?: number; resolutionWarning?: string; generationRelayName?: string; generationModelName?: string; generationModelKey?: string }
 type CanvasFlowNode = Node<CanvasNodeData>
 const flowNodes = shallowRef<CanvasFlowNode[]>([])
 const viewport = ref<ImageViewport>({ x: 0, y: 0, zoom: 1 })
@@ -49,9 +53,18 @@ const nodeDragging = ref(false)
 const spacePressed = ref(false)
 let lastDragPositions = new Map<string, { x: number; y: number }>()
 const {
-  setViewport, getViewport, setCenter, screenToFlowCoordinate, getSelectedNodes, updateNode,
+  setViewport, getViewport, setCenter, screenToFlowCoordinate, getSelectedNodes, updateNode, removeSelectedElements,
 } = useVueFlow({ id: 'image-agent-canvas' })
 const selectedCount = computed(() => getSelectedNodes.value.length)
+const selectedNodeIDs = computed(() => getSelectedNodes.value.map((node) => node.id))
+const selectedReadyForRemoval = computed(() => selectedCount.value > 0 && selectedCount.value <= 20
+  && getSelectedNodes.value.every((node) => node.data?.status === 'ready' && Boolean(node.data?.assetId)))
+const removalDisabledReason = computed(() => {
+  if (!props.backgroundRemovalEnabled) return '智能抠图服务尚未由管理员启用'
+  if (selectedCount.value > 20) return '每次最多处理 20 张图片'
+  if (!selectedReadyForRemoval.value) return '请等待所选图片全部生成完成'
+  return ''
+})
 
 function toFlowNode(node: DomainNode): CanvasFlowNode {
   return {
@@ -59,7 +72,7 @@ function toFlowNode(node: DomainNode): CanvasFlowNode {
     type: 'imageNode',
     position: { x: node.x, y: node.y },
     style: { width: `${node.width}px`, height: `${node.height}px`, zIndex: node.z_index },
-    data: { assetId: node.asset_id, status: node.status, error: node.error, width: node.width, height: node.height },
+	data: { assetId: node.asset_id, status: node.status, error: node.error, width: node.width, height: node.height, backgroundRemoval: Boolean(node.background_removal_job_id), requestedSize: node.requested_size, actualWidth: node.actual_width, actualHeight: node.actual_height, resolutionWarning: node.resolution_warning, generationRelayName: node.generation_relay_name, generationModelName: node.generation_model_name, generationModelKey: node.generation_model_key },
     draggable: !props.readonly,
     selectable: true,
   }
@@ -99,6 +112,14 @@ function sameFlowNode(left: CanvasFlowNode, right: CanvasFlowNode) {
     && left.data?.error === right.data?.error
     && left.data?.width === right.data?.width
     && left.data?.height === right.data?.height
+		&& left.data?.backgroundRemoval === right.data?.backgroundRemoval
+		&& left.data?.requestedSize === right.data?.requestedSize
+		&& left.data?.actualWidth === right.data?.actualWidth
+		&& left.data?.actualHeight === right.data?.actualHeight
+		&& left.data?.resolutionWarning === right.data?.resolutionWarning
+		&& left.data?.generationRelayName === right.data?.generationRelayName
+		&& left.data?.generationModelName === right.data?.generationModelName
+		&& left.data?.generationModelKey === right.data?.generationModelKey
     && leftStyle.width === rightStyle.width
     && leftStyle.height === rightStyle.height
     && leftStyle.zIndex === rightStyle.zIndex
@@ -236,6 +257,11 @@ function generationContext() {
   return { ...center, anchorNodeId }
 }
 
+function clearSelection() {
+  removeSelectedElements()
+  primarySelectedNodeID.value = ''
+}
+
 function canImport() {
   return Boolean(props.canvas && !props.loading && !props.readonly && !props.importing && !props.deletingNodeId)
 }
@@ -293,7 +319,7 @@ function onDrop(event: DragEvent) {
   emitImport(files, point, 'drop')
 }
 
-defineExpose({ contentCenter, generationContext })
+defineExpose({ contentCenter, generationContext, clearSelection })
 watch(
   [() => props.canvas?.nodes, () => props.readonly],
   syncNodesFromCanvas,
@@ -339,7 +365,7 @@ onBeforeUnmount(() => {
       :max-zoom="2"
       :nodes-draggable="!readonly && !importing && !deletingNodeId && !spacePressed"
       :nodes-connectable="false"
-      :elements-selectable="!importing"
+      :elements-selectable="!importing && !deletingNodeId"
       :pan-on-drag="importing ? false : (spacePressed ? true : [1])"
       :selection-key-code="true"
       :selection-mode="SelectionMode.Full"
@@ -383,7 +409,26 @@ onBeforeUnmount(() => {
       <div v-if="readonly" class="readonly-badge">项目已停用 · 历史画布只读</div>
     </VueFlow>
     <CanvasAlignmentGuides :guides="snapGuides" :viewport="viewport" />
-    <div v-if="selectedCount > 0" class="selection-count">已选择 {{ selectedCount }} 张图片</div>
+    <div v-if="selectedCount > 0" class="selection-actions">
+      <span>已选择 {{ selectedCount }} 张图片</span>
+      <el-tooltip :content="removalDisabledReason || '移除图片背景并生成透明 PNG'" placement="bottom">
+        <span>
+          <el-button
+            type="primary"
+            size="small"
+            :loading="backgroundRemoving"
+            :disabled="readonly || importing || Boolean(deletingNodeId) || backgroundRemoving || Boolean(removalDisabledReason)"
+            @click="emit('remove-background', selectedNodeIDs)"
+          >{{ backgroundRemoving ? `正在抠图 ${selectedCount} 张` : '橡皮擦' }}</el-button>
+        </span>
+      </el-tooltip>
+      <el-button
+        type="danger"
+        size="small"
+        :disabled="readonly || importing || Boolean(deletingNodeId) || backgroundRemoving"
+        @click="emit('delete-selected', selectedNodeIDs)"
+      >一键删除</el-button>
+    </div>
     <div v-if="!readonly && !importing" class="snap-hint">智能吸附已开启 · 按住 Alt 临时关闭</div>
     <div v-if="!readonly && !importing" class="interaction-hint">左键框选 · 中键或 Space + 左键平移</div>
     <div v-if="dragActive" class="canvas-drop-overlay">
@@ -405,7 +450,7 @@ onBeforeUnmount(() => {
 .infinite-canvas :deep(.vue-flow__selectionpane) { cursor: crosshair; }
 .infinite-canvas.space-pan-active :deep(.vue-flow__pane) { cursor: grab; }
 .infinite-canvas.space-pan-active :deep(.vue-flow__pane.dragging) { cursor: grabbing; }
-.selection-count { position: absolute; z-index: 7; top: 13px; right: 14px; padding: 7px 11px; border: 1px solid rgba(126, 84, 166, .22); border-radius: 9px; color: #694488; background: rgba(255, 255, 255, .9); box-shadow: 0 7px 20px rgba(74, 49, 99, .12); backdrop-filter: blur(8px); font-size: 11px; font-weight: 700; pointer-events: none; }
+.selection-actions { position: absolute; z-index: 7; top: 13px; right: 14px; padding: 6px 7px 6px 11px; border: 1px solid rgba(126, 84, 166, .22); border-radius: 10px; color: #694488; background: rgba(255, 255, 255, .94); box-shadow: 0 7px 20px rgba(74, 49, 99, .12); backdrop-filter: blur(8px); display: flex; align-items: center; gap: 10px; font-size: 11px; font-weight: 700; }
 .infinite-canvas :deep(.vue-flow__controls) { overflow: hidden; border: 1px solid #e1dde7; border-radius: 10px; box-shadow: 0 7px 22px rgba(31, 25, 43, .1); }
 .infinite-canvas :deep(.vue-flow__controls button) { width: 32px; height: 32px; border: 0; color: #675778; background: white; display: grid; place-items: center; cursor: pointer; }
 .infinite-canvas :deep(.vue-flow__minimap) { width: 150px; height: 100px; overflow: hidden; border: 1px solid rgba(99, 80, 123, .18); border-radius: 11px; background: rgba(255,255,255,.92); box-shadow: 0 8px 24px rgba(36, 29, 48, .12); cursor: crosshair; transition: border-color .18s ease, box-shadow .18s ease; }

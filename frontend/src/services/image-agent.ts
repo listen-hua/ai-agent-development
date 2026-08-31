@@ -3,6 +3,7 @@ import type {
   ImageAgentOptions, ImageAsset, ImageCanvas, ImageCanvasNode, ImageJob, ImageProjectInput,
   ImagePromptAction, ImagePromptActionInput, ImageRelay, ImageRelayInput, ImageModel, ImageModelInput,
   ImageProject, ImageRatio, ImageSize, ImageCount, ImageViewport,
+  BackgroundRemovalJob, PixianBackgroundRemovalConfig, BackgroundRemovalStatistics,
 } from '@/types/image-agent'
 
 export const imageAssetURL = (id: string) => resolveApiURL(`/api/v1/image-agent/assets/${id}/content`)
@@ -24,6 +25,13 @@ export const imageAgentService = {
   restoreCanvas: (canvasId: string) => api.post<ImageCanvas>(`/api/v1/image-agent/canvases/${encodeURIComponent(canvasId)}/restore`).then(normalizeImageCanvas),
   deleteCanvasNodeById: (canvasId: string, nodeId: string, version: number) =>
     api.delete<ImageCanvas>(`/api/v1/image-agent/canvases/${encodeURIComponent(canvasId)}/nodes/${encodeURIComponent(nodeId)}?version=${version}`).then(normalizeImageCanvas),
+  deleteCanvasNodesById: (canvasId: string, nodeIds: string[], version: number) =>
+    api.post<ImageCanvas>(`/api/v1/image-agent/canvases/${encodeURIComponent(canvasId)}/nodes/batch-delete`, {
+      node_ids: nodeIds, version,
+    }).then(normalizeImageCanvas),
+  createBackgroundRemovalJob: (canvasId: string, input: { node_ids: string[]; version: number; idempotency_key: string }) =>
+    api.post<BackgroundRemovalJob>(`/api/v1/image-agent/canvases/${encodeURIComponent(canvasId)}/background-removal-jobs`, input),
+  backgroundRemovalJob: (id: string) => api.get<BackgroundRemovalJob>(`/api/v1/image-agent/background-removal-jobs/${encodeURIComponent(id)}`),
   importCanvasAssetById(canvasId: string, projectId: string, file: File, input: { x: number; y: number; version: number; origin: 'paste' | 'drop' }) {
     const body = new FormData()
     body.set('file', file)
@@ -78,10 +86,13 @@ export function normalizeImageAgentOptions(value?: Partial<ImageAgentOptions> | 
     relays: Array.isArray(value?.relays) ? value.relays : [],
     models: Array.isArray(value?.models) ? value.models.map((model) => ({
       ...model,
+      request_model_id: model.request_model_id || model.model_id,
+      remote_endpoint_types: Array.isArray(model.remote_endpoint_types) ? model.remote_endpoint_types : [],
       supported_sizes: Array.isArray(model.supported_sizes) ? model.supported_sizes : [],
     })) : [],
     projects: Array.isArray(value?.projects) ? value.projects : [],
     prompt_actions: Array.isArray(value?.prompt_actions) ? value.prompt_actions : [],
+    background_removal_enabled: Boolean(value?.background_removal_enabled),
   }
 }
 
@@ -104,6 +115,7 @@ export const imageAgentAdminService = {
   projects: () => api.get<ImageProject[]>('/api/v1/admin/image-agent/projects'),
   createProject: (input: ImageProjectInput) => api.post<ImageProject>('/api/v1/admin/image-agent/projects', input),
   updateProject: (id: string, input: ImageProjectInput) => api.put<ImageProject>(`/api/v1/admin/image-agent/projects/${id}`, input),
+  deleteProject: (id: string) => api.delete<void>(`/api/v1/admin/image-agent/projects/${encodeURIComponent(id)}`),
   promptActions: (projectId?: string) => api.get<ImagePromptAction[]>(`/api/v1/admin/image-agent/prompt-actions${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''}`),
   createPromptAction: (input: ImagePromptActionInput) => api.post<ImagePromptAction>('/api/v1/admin/image-agent/prompt-actions', input),
   updatePromptAction: (id: string, input: ImagePromptActionInput) => api.put<ImagePromptAction>(`/api/v1/admin/image-agent/prompt-actions/${id}`, input),
@@ -114,4 +126,11 @@ export const imageAgentAdminService = {
   },
   deletePromptActionPreview: (id: string) => api.delete<ImagePromptAction>(`/api/v1/admin/image-agent/prompt-actions/${encodeURIComponent(id)}/preview`),
   deletePromptAction: (id: string) => api.delete(`/api/v1/admin/image-agent/prompt-actions/${id}`),
+  backgroundRemovalConfig: () => api.get<PixianBackgroundRemovalConfig>('/api/v1/admin/image-agent/background-removal/config'),
+  updateBackgroundRemovalConfig: (input: { enabled: boolean; test_mode: boolean; api_id?: string; api_secret?: string; timeout_seconds: number; concurrency: number; max_pixels: number }) =>
+    api.put<PixianBackgroundRemovalConfig>('/api/v1/admin/image-agent/background-removal/config', input),
+  testBackgroundRemoval: () => api.post<PixianBackgroundRemovalConfig>('/api/v1/admin/image-agent/background-removal/test'),
+  refreshBackgroundRemovalAccount: () => api.post<PixianBackgroundRemovalConfig>('/api/v1/admin/image-agent/background-removal/account/refresh'),
+  backgroundRemovalStatistics: () => api.get<BackgroundRemovalStatistics>('/api/v1/admin/image-agent/background-removal/statistics'),
+  backgroundRemovalJobs: () => api.get<BackgroundRemovalJob[]>('/api/v1/admin/image-agent/background-removal/jobs?limit=100'),
 }

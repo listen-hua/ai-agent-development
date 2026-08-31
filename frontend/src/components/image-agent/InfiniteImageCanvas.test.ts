@@ -10,7 +10,8 @@ const flow = vi.hoisted(() => ({
   setCenter: vi.fn(),
   screenToFlowCoordinate: vi.fn(({ x, y }: { x: number; y: number }) => ({ x, y })),
   updateNode: vi.fn(),
-  selectedNodes: { value: [] as Array<{ id: string }> },
+  removeSelectedElements: vi.fn(),
+  selectedNodes: { value: [] as Array<{ id: string; data?: { status: string; assetId?: string } }> },
 }))
 
 vi.mock('@vue-flow/core', async () => {
@@ -29,6 +30,7 @@ vi.mock('@vue-flow/core', async () => {
       screenToFlowCoordinate: flow.screenToFlowCoordinate,
       getSelectedNodes: flow.selectedNodes,
       updateNode: flow.updateNode,
+      removeSelectedElements: flow.removeSelectedElements,
     }),
   }
 })
@@ -122,7 +124,7 @@ describe('InfiniteImageCanvas viewport synchronization', () => {
     wrapper.unmount()
   })
 
-  it('shows the current selected image count', () => {
+  it('shows the selected image count and emits one batch delete command', async () => {
     flow.selectedNodes.value = [{ id: 'node-1' }, { id: 'node-2' }]
     const wrapper = mount(InfiniteImageCanvas, {
       props: { canvas: canvas('one', 10) },
@@ -131,7 +133,28 @@ describe('InfiniteImageCanvas viewport synchronization', () => {
         directives: { loading: () => undefined },
       },
     })
-    expect(wrapper.get('.selection-count').text()).toBe('已选择 2 张图片')
+    expect(wrapper.get('.selection-actions').text()).toContain('已选择 2 张图片')
+    const buttons = wrapper.findAll('.selection-actions el-button')
+    await buttons[buttons.length - 1].trigger('click')
+    expect(wrapper.emitted('delete-selected')).toEqual([[['node-1', 'node-2']]])
     wrapper.unmount()
+  })
+
+  it('emits background removal for ready selected images', async () => {
+    flow.selectedNodes.value = [
+      { id: 'node-1', data: { status: 'ready', assetId: 'asset-1' } },
+      { id: 'node-2', data: { status: 'ready', assetId: 'asset-2' } },
+    ]
+    const wrapper = mount(InfiniteImageCanvas, {
+      props: { canvas: canvas('one', 10), backgroundRemovalEnabled: true },
+      global: {
+        stubs: { Background: true, Controls: true, MiniMap: true, ImageCanvasNode: true, CanvasAlignmentGuides: true },
+        directives: { loading: () => undefined },
+      },
+    })
+    const buttons = wrapper.findAll('.selection-actions el-button')
+    expect(buttons[0].text()).toContain('橡皮擦')
+    await buttons[0].trigger('click')
+    expect(wrapper.emitted('remove-background')).toEqual([[['node-1', 'node-2']]])
   })
 })

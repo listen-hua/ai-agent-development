@@ -130,6 +130,7 @@ type ImageRepository interface {
 	ListImageProjects(context.Context) ([]domain.ImageProject, error)
 	GetImageProject(context.Context, string) (domain.ImageProject, error)
 	UpsertImageProject(context.Context, domain.ImageProject) error
+	DeleteImageProject(context.Context, string) error
 	ListImagePromptActions(context.Context, string) ([]domain.ImagePromptAction, error)
 	GetImagePromptAction(context.Context, string) (domain.ImagePromptAction, error)
 	UpsertImagePromptAction(context.Context, domain.ImagePromptAction) error
@@ -145,6 +146,7 @@ type ImageRepository interface {
 	UpdateImageCanvas(context.Context, domain.ImageCanvas, int64) (domain.ImageCanvas, error)
 	ImportImageCanvasAsset(context.Context, domain.ImageCanvas, int64, domain.ImageAsset, domain.ImageCanvasNode) (domain.ImageCanvas, error)
 	DeleteImageCanvasNode(context.Context, domain.ImageCanvas, string, int64) (domain.ImageCanvas, error)
+	DeleteImageCanvasNodes(context.Context, domain.ImageCanvas, []string, int64) (domain.ImageCanvas, error)
 	CreateImageAsset(context.Context, domain.ImageAsset) error
 	GetImageAsset(context.Context, string) (domain.ImageAsset, error)
 	CreateImageJob(context.Context, domain.ImageJob, []domain.ImageCanvasNode, int64) (domain.ImageJob, error)
@@ -155,6 +157,16 @@ type ImageRepository interface {
 	SaveImageJobOutput(context.Context, domain.ImageJobOutput, domain.ImageAsset, domain.ImageCanvasNode) error
 	UpdateImageJobOutputFailure(context.Context, domain.ImageJobOutput, domain.ImageCanvasNode) error
 	CleanupImageJobLogs(context.Context, time.Time) error
+	GetPixianBackgroundRemovalConfig(context.Context) (domain.PixianBackgroundRemovalConfig, error)
+	SavePixianBackgroundRemovalConfig(context.Context, domain.PixianBackgroundRemovalConfig) error
+	CreateBackgroundRemovalJob(context.Context, domain.BackgroundRemovalJob, []domain.BackgroundRemovalItem, []domain.ImageCanvasNode, int64) (domain.BackgroundRemovalJob, error)
+	GetBackgroundRemovalJob(context.Context, string) (domain.BackgroundRemovalJob, error)
+	ListBackgroundRemovalJobs(context.Context, int) ([]domain.BackgroundRemovalJob, error)
+	ClaimBackgroundRemovalJobs(context.Context, time.Time, time.Duration, int) ([]domain.BackgroundRemovalJob, error)
+	UpdateBackgroundRemovalItem(context.Context, domain.BackgroundRemovalItem, domain.ImageCanvasNode) error
+	SaveBackgroundRemovalResult(context.Context, domain.BackgroundRemovalItem, domain.ImageAsset, domain.ImageCanvasNode) error
+	UpdateBackgroundRemovalJob(context.Context, domain.BackgroundRemovalJob) error
+	BackgroundRemovalStatistics(context.Context, time.Time) (domain.BackgroundRemovalStatistics, error)
 }
 
 // MassageRepository keeps the operational queue optional while allowing its

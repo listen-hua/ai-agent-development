@@ -75,7 +75,8 @@ func (m *Memory) UpsertImageModels(_ context.Context, values []domain.ImageModel
 		}
 		if existingID != "" {
 			existing := m.imageModels[existingID]
-			existing.DisplayName = value.DisplayName
+			existing.RequestModelID = value.RequestModelID
+			existing.RemoteEndpointTypes = append([]string(nil), value.RemoteEndpointTypes...)
 			existing.UpdatedAt = value.UpdatedAt
 			m.imageModels[existingID] = existing
 		} else {
@@ -123,17 +124,77 @@ func (m *Memory) UpsertImageProject(_ context.Context, value domain.ImageProject
 	return nil
 }
 
+func (m *Memory) DeleteImageProject(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.imageProjects[id]; !ok {
+		return ErrNotFound
+	}
+	for _, value := range m.imageAssets {
+		if value.ProjectID == id {
+			return ErrConflict
+		}
+	}
+	for _, value := range m.imageJobs {
+		if value.ProjectID == id {
+			return ErrConflict
+		}
+	}
+	for _, value := range m.imageCanvases {
+		if value.ProjectID == id {
+			return ErrConflict
+		}
+	}
+	for actionID, value := range m.imagePromptActions {
+		projectIDs := value.ProjectIDs
+		if len(projectIDs) == 0 && value.ProjectID != "" {
+			projectIDs = []string{value.ProjectID}
+		}
+		if !containsStringValue(projectIDs, id) {
+			continue
+		}
+		remaining := make([]string, 0, len(projectIDs)-1)
+		for _, projectID := range projectIDs {
+			if projectID != id {
+				remaining = append(remaining, projectID)
+			}
+		}
+		if len(remaining) == 0 {
+			delete(m.imagePromptActions, actionID)
+			continue
+		}
+		value.ProjectIDs = remaining
+		value.ProjectID = remaining[0]
+		m.imagePromptActions[actionID] = value
+	}
+	delete(m.imageProjects, id)
+	return nil
+}
+
 func (m *Memory) ListImagePromptActions(_ context.Context, projectID string) ([]domain.ImagePromptAction, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := []domain.ImagePromptAction{}
 	for _, value := range m.imagePromptActions {
-		if projectID == "" || value.ProjectID == "" || value.ProjectID == projectID {
+		projectIDs := value.ProjectIDs
+		if len(projectIDs) == 0 && value.ProjectID != "" {
+			projectIDs = []string{value.ProjectID}
+		}
+		if projectID == "" || len(projectIDs) == 0 || containsStringValue(projectIDs, projectID) {
 			out = append(out, value)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].SortOrder < out[j].SortOrder })
 	return out, nil
+}
+
+func containsStringValue(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Memory) GetImagePromptAction(_ context.Context, id string) (domain.ImagePromptAction, error) {
@@ -389,7 +450,11 @@ func (m *Memory) ImportImageCanvasAsset(_ context.Context, canvas domain.ImageCa
 	return existing, nil
 }
 
-func (m *Memory) DeleteImageCanvasNode(_ context.Context, canvas domain.ImageCanvas, nodeID string, expectedVersion int64) (domain.ImageCanvas, error) {
+func (m *Memory) DeleteImageCanvasNode(ctx context.Context, canvas domain.ImageCanvas, nodeID string, expectedVersion int64) (domain.ImageCanvas, error) {
+	return m.DeleteImageCanvasNodes(ctx, canvas, []string{nodeID}, expectedVersion)
+}
+
+func (m *Memory) DeleteImageCanvasNodes(_ context.Context, canvas domain.ImageCanvas, nodeIDs []string, expectedVersion int64) (domain.ImageCanvas, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	existing, ok := m.imageCanvases[canvas.ID]
@@ -399,17 +464,23 @@ func (m *Memory) DeleteImageCanvasNode(_ context.Context, canvas domain.ImageCan
 	if existing.Version != expectedVersion || existing.DeletedAt != nil {
 		return canvas, ErrConflict
 	}
-	nodeIndex := -1
-	for index, node := range existing.Nodes {
-		if node.ID == nodeID {
-			nodeIndex = index
-			break
-		}
+	deleting := make(map[string]bool, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		deleting[nodeID] = true
 	}
-	if nodeIndex < 0 {
+	found := 0
+	remaining := make([]domain.ImageCanvasNode, 0, len(existing.Nodes))
+	for _, node := range existing.Nodes {
+		if deleting[node.ID] {
+			found++
+			continue
+		}
+		remaining = append(remaining, node)
+	}
+	if found != len(deleting) {
 		return canvas, ErrNotFound
 	}
-	existing.Nodes = append(existing.Nodes[:nodeIndex], existing.Nodes[nodeIndex+1:]...)
+	existing.Nodes = remaining
 	existing.Version++
 	existing.UpdatedAt = time.Now()
 	m.imageCanvases[canvas.ID] = existing
@@ -452,7 +523,7 @@ func (m *Memory) CreateImageJob(_ context.Context, value domain.ImageJob, nodes 
 	value.Outputs = make([]domain.ImageJobOutput, value.Count)
 	for index := range value.Outputs {
 		value.Outputs[index] = domain.ImageJobOutput{ID: ids.New("output"), JobID: value.ID, OutputIndex: index,
-			Status: "pending", CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt}
+			Status: "pending", RequestedSize: value.ImageSize, CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt}
 	}
 	m.imageJobs[value.ID] = value
 	canvas.Nodes = append(canvas.Nodes, nodes...)
@@ -532,6 +603,9 @@ func (m *Memory) SaveImageJobOutput(_ context.Context, output domain.ImageJobOut
 		if canvas.Nodes[index].JobID == output.JobID && canvas.Nodes[index].OutputIndex == output.OutputIndex {
 			canvas.Nodes[index].AssetID, canvas.Nodes[index].Status = asset.ID, "ready"
 			canvas.Nodes[index].Width, canvas.Nodes[index].Height = node.Width, node.Height
+			canvas.Nodes[index].RequestedSize = output.RequestedSize
+			canvas.Nodes[index].ActualWidth, canvas.Nodes[index].ActualHeight = output.ActualWidth, output.ActualHeight
+			canvas.Nodes[index].ResolutionWarning = output.ResolutionWarning
 		}
 	}
 	m.imageCanvases[job.CanvasID] = canvas

@@ -15,7 +15,11 @@ const form = reactive<ImageModelInput>({
   supports_reverse: true, supported_sizes: ['1K'], max_count: 1,
 })
 const visible = computed(() => filterImageModels(props.models, props.relays, filterRelay.value, searchQuery.value))
+const editingModel = computed(() => props.models.find((item) => item.id === editingId.value))
+const editingGPTImage2 = computed(() => ['gpt-image-2', 'openai/gpt-image-2'].includes((editingModel.value?.model_id || '').toLowerCase()))
+const editingGPTImage2Native = computed(() => editingGPTImage2.value && editingModel.value?.remote_endpoint_types?.includes('image-generation'))
 const relayName = (id: string) => props.relays.find((item) => item.id === id)?.name || id
+const protocolName = (value: ImageModel['protocol']) => value === 'gpt_image_2' ? 'GPT Image 2' : value === 'chat_completions' ? 'Chat Completions' : 'Images Generations'
 
 function open(model: ImageModel) {
   editingId.value = model.id
@@ -39,9 +43,13 @@ function save() { emit('save', editingId.value, { ...form }); dialog.value = fal
     </header>
     <div v-if="searchQuery || filterRelay" class="model-result-count">找到 {{ visible.length }} 个模型，共 {{ models.length }} 个</div>
     <el-table v-loading="loading" :data="visible" empty-text="没有找到匹配的模型" border>
-      <el-table-column prop="display_name" label="模型" min-width="220" show-overflow-tooltip />
+      <el-table-column label="模型" min-width="260"><template #default="{ row }">
+        <div class="model-name">{{ row.display_name }}</div>
+        <div class="model-id">配置：{{ row.model_id }}</div>
+        <div v-if="row.request_model_id && row.request_model_id !== row.model_id" class="model-id actual">调用：{{ row.request_model_id }}</div>
+      </template></el-table-column>
       <el-table-column label="中转站" width="130"><template #default="{ row }">{{ relayName(row.relay_id) }}</template></el-table-column>
-      <el-table-column label="协议" width="150"><template #default="{ row }">{{ row.protocol === 'chat_completions' ? 'Chat Completions' : 'Images Generations' }}</template></el-table-column>
+	  <el-table-column label="协议" width="150"><template #default="{ row }">{{ protocolName(row.protocol) }}</template></el-table-column>
       <el-table-column label="能力" min-width="190"><template #default="{ row }"><el-tag v-if="row.supports_reference" size="small">参考图</el-tag><el-tag v-if="row.supports_reverse" size="small" type="info">图片反推</el-tag><span class="cell-note">{{ row.supported_sizes.join('/') }} · 最多 {{ row.max_count }} 张</span></template></el-table-column>
       <el-table-column label="开放" width="80"><template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '是' : '否' }}</el-tag></template></el-table-column>
       <el-table-column label="操作" width="90"><template #default="{ row }"><el-button text :icon="Edit" @click="open(row)">配置</el-button></template></el-table-column>
@@ -49,10 +57,12 @@ function save() { emit('save', editingId.value, { ...form }); dialog.value = fal
     <el-dialog v-model="dialog" title="配置生图模型" width="min(600px, 94vw)">
       <el-form label-position="top">
         <el-form-item label="员工端显示名称"><el-input v-model="form.display_name" /></el-form-item>
-        <el-form-item label="生图协议"><el-radio-group v-model="form.protocol"><el-radio-button value="chat_completions">Chat Completions</el-radio-button><el-radio-button value="images_generations">Images Generations</el-radio-button></el-radio-group></el-form-item>
+		<el-form-item label="生图协议"><el-radio-group v-model="form.protocol"><el-radio-button value="chat_completions" :disabled="editingGPTImage2Native">Chat Completions</el-radio-button><el-radio-button value="images_generations" :disabled="editingGPTImage2">Images Generations</el-radio-button><el-radio-button value="gpt_image_2" :disabled="!editingGPTImage2Native">GPT Image 2</el-radio-button></el-radio-group></el-form-item>
         <div class="form-grid"><el-form-item label="开放给员工"><el-switch v-model="form.enabled" /></el-form-item><el-form-item label="最大生成数量"><el-select v-model="form.max_count"><el-option v-for="count in ([1,2,4,8] as ImageCount[])" :key="count" :label="`${count} 张`" :value="count" /></el-select></el-form-item></div>
         <el-form-item label="分辨率档位"><el-checkbox-group v-model="form.supported_sizes"><el-checkbox v-for="size in (['1K','2K','4K'] as ImageSize[])" :key="size" :value="size">{{ size }}</el-checkbox></el-checkbox-group></el-form-item>
-        <div class="form-grid"><el-form-item label="支持参考图"><el-switch v-model="form.supports_reference" /></el-form-item><el-form-item label="支持图片反推"><el-switch v-model="form.supports_reverse" /></el-form-item></div>
+		<div class="form-grid"><el-form-item label="支持参考图"><el-switch v-model="form.supports_reference" :disabled="editingGPTImage2" /></el-form-item><el-form-item label="支持图片反推"><el-switch v-model="form.supports_reverse" :disabled="editingGPTImage2" /></el-form-item></div>
+		<el-alert v-if="editingGPTImage2Native" title="该中转站声明支持图像生成端点，GPT Image 2使用专用Images协议。" type="info" :closable="false" />
+		<el-alert v-else-if="editingGPTImage2" title="该中转站只声明支持OpenAI兼容端点，GPT Image 2使用Chat Completions协议。" type="info" :closable="false" />
         <el-alert v-if="form.protocol === 'images_generations' && form.supports_reference" title="首期 Images 协议不开放参考图编辑；需要参考图时请选择 Chat 协议。" type="warning" :closable="false" />
       </el-form>
       <template #footer><el-button @click="dialog=false">取消</el-button><el-button type="primary" :loading="saving" @click="save">保存</el-button></template>
@@ -65,6 +75,9 @@ function save() { emit('save', editingId.value, { ...form }); dialog.value = fal
 .model-search { width: 300px; }
 .relay-filter { width: 180px; }
 .model-result-count { margin: -4px 0 10px; color: #8d95a3; font-size: 11px; text-align: right; }
+.model-name { color: #20242b; font-weight: 600; }
+.model-id { margin-top: 3px; color: #8d95a3; font-size: 11px; overflow-wrap: anywhere; }
+.model-id.actual { color: #7357d9; }
 @media (max-width: 820px) {
   .model-filters { width: 100%; align-items: stretch; flex-direction: column; }
   .model-search, .relay-filter { width: 100%; }

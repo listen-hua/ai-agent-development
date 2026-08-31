@@ -1,5 +1,7 @@
 const cartoonPattern = /("cartoonization_strength"\s*:\s*)(-?(?:\d+(?:\.\d*)?|\.\d+))/g
 
+export const IMAGE_PROMPT_MAX_LENGTH = 15_000
+
 export const cartoonStrengthLabels: Record<number, string> = {
   0: 'Very weak stylization.',
   0.25: 'Light stylization.',

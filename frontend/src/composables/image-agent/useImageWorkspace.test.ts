@@ -30,6 +30,7 @@ const options: ImageAgentOptions = {
     created_at: '2026-08-04T00:00:00Z', updated_at: '2026-08-04T00:00:00Z',
   }],
   prompt_actions: [],
+  background_removal_enabled: false,
 }
 
 const initialCanvas = (): ImageCanvas => ({

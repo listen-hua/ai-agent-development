@@ -6,6 +6,7 @@ import ImageRelayAdminPanel from '@/components/image-agent-admin/ImageRelayAdmin
 import ImageModelAdminPanel from '@/components/image-agent-admin/ImageModelAdminPanel.vue'
 import ImageProjectAdminPanel from '@/components/image-agent-admin/ImageProjectAdminPanel.vue'
 import ImagePromptActionAdminPanel from '@/components/image-agent-admin/ImagePromptActionAdminPanel.vue'
+import ImageBackgroundRemovalAdminPanel from '@/components/image-agent-admin/ImageBackgroundRemovalAdminPanel.vue'
 import { useImageAgentAdmin } from '@/composables/image-agent/useImageAgentAdmin'
 
 const tab = ref('relays')
@@ -29,10 +30,13 @@ onMounted(admin.load)
         <ImageModelAdminPanel :relays="admin.relays.value" :models="admin.models.value" :loading="admin.loading.value" :saving="admin.saving.value" @save="admin.saveModel" />
       </el-tab-pane>
       <el-tab-pane label="项目" name="projects">
-        <ImageProjectAdminPanel :projects="admin.projects.value" :directory="admin.directory.value" :loading="admin.loading.value" :saving="admin.saving.value" :save-project="admin.saveProject" />
+        <ImageProjectAdminPanel :projects="admin.projects.value" :directory="admin.directory.value" :loading="admin.loading.value" :saving="admin.saving.value" :save-project="admin.saveProject" @remove="admin.deleteProject" />
       </el-tab-pane>
       <el-tab-pane label="功能按键" name="actions">
         <ImagePromptActionAdminPanel :actions="admin.promptActions.value" :projects="admin.projects.value" :loading="admin.loading.value" :saving="admin.saving.value" :save-action="admin.savePromptAction" @remove="admin.deletePromptAction" />
+      </el-tab-pane>
+      <el-tab-pane label="抠图服务" name="background-removal">
+        <ImageBackgroundRemovalAdminPanel />
       </el-tab-pane>
     </el-tabs>
   </section>

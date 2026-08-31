@@ -1,8 +1,8 @@
 import type { ACL } from './domain'
 
-export type ImageProtocol = 'chat_completions' | 'images_generations'
+export type ImageProtocol = 'chat_completions' | 'images_generations' | 'gpt_image_2'
 export type ImageSize = '1K' | '2K' | '4K'
-export type ImageRatio = '1:1' | '16:9' | '9:16' | '4:3' | '3:4'
+export type ImageRatio = 'original' | '1:1' | '16:9' | '9:16' | '4:3' | '3:4'
 export type ImageCount = 1 | 2 | 4 | 8
 
 export interface ImageRelay {
@@ -23,6 +23,8 @@ export interface ImageModel {
   id: string
   relay_id: string
   model_id: string
+  request_model_id?: string
+  remote_endpoint_types?: string[]
   display_name: string
   protocol: ImageProtocol
   enabled: boolean
@@ -51,6 +53,7 @@ export interface ImagePromptAction {
   name: string
   prompt_template: string
   project_id?: string
+  project_ids?: string[]
   enabled: boolean
   sort_order: number
   has_preview: boolean
@@ -69,6 +72,8 @@ export interface ImageCanvasNode {
   canvas_id: string
   asset_id?: string
   job_id?: string
+  background_removal_job_id?: string
+  source_node_id?: string
   output_index: number
   status: 'pending' | 'ready' | 'failed'
   x: number
@@ -77,6 +82,13 @@ export interface ImageCanvasNode {
   height: number
   z_index: number
   error?: string
+  requested_size?: ImageSize
+  actual_width?: number
+  actual_height?: number
+  resolution_warning?: string
+  generation_relay_name?: string
+  generation_model_name?: string
+  generation_model_key?: string
   created_at: string
   updated_at: string
 }
@@ -105,7 +117,8 @@ export interface ImageAsset {
   width: number
   height: number
   size_bytes: number
-  source: 'upload' | 'generated'
+  source: 'upload' | 'generated' | 'background_removed'
+  source_asset_id?: string
   created_at: string
 }
 
@@ -117,6 +130,10 @@ export interface ImageJobOutput {
   status: 'pending' | 'running' | 'succeeded' | 'failed'
   error?: string
   attempts: number
+  requested_size?: ImageSize
+  actual_width?: number
+  actual_height?: number
+  resolution_warning?: string
 }
 
 export interface ImageJob {
@@ -147,6 +164,64 @@ export interface ImageAgentOptions {
   models: ImageModel[]
   projects: ImageProject[]
   prompt_actions: ImagePromptAction[]
+  background_removal_enabled: boolean
+}
+
+export interface BackgroundRemovalItem {
+  id: string
+  source_node_id: string
+  source_asset_id: string
+  project_id: string
+  placeholder_node_id: string
+  result_asset_id?: string
+  status: 'pending' | 'running' | 'succeeded' | 'failed'
+  attempts: number
+  credits_charged: number
+  credits_calculated: number
+  input_size?: string
+  result_size?: string
+  error?: string
+}
+
+export interface BackgroundRemovalJob {
+  id: string
+  canvas_id: string
+  status: 'pending' | 'running' | 'retry' | 'partial' | 'succeeded' | 'failed' | 'cancelled'
+  test_mode: boolean
+  attempts: number
+  completed_count: number
+  failed_count: number
+  credits_charged: number
+  credits_calculated: number
+  error?: string
+  items: BackgroundRemovalItem[]
+  created_at: string
+  updated_at: string
+}
+
+export interface PixianBackgroundRemovalConfig {
+  enabled: boolean
+  test_mode: boolean
+  api_id_hint: string
+  api_secret_hint: string
+  has_api_id: boolean
+  has_api_secret: boolean
+  timeout_seconds: number
+  concurrency: number
+  max_pixels: number
+  account_state?: string
+  account_credits: number
+  account_checked_at?: string
+  updated_at: string
+}
+
+export interface BackgroundRemovalStatistics {
+  today_calls: number
+  thirty_day_succeeded: number
+  thirty_day_failed: number
+  thirty_day_images: number
+  credits_charged: number
+  credits_calculated: number
 }
 
 export interface ImageFormState {
@@ -193,6 +268,7 @@ export interface ImagePromptActionInput {
   name?: string
   prompt_template: string
   project_id?: string
+  project_ids: string[]
   enabled: boolean
   sort_order: number
 }

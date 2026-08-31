@@ -3,16 +3,41 @@ package service
 import (
 	"bytes"
 	"context"
-	"errors"
 	"image"
 	"image/png"
 	"testing"
+	"time"
 
 	"internal-ai-agent/backend/internal/domain"
 	"internal-ai-agent/backend/internal/integration/imageproxy"
 	"internal-ai-agent/backend/internal/security"
 	"internal-ai-agent/backend/internal/store"
 )
+
+var errGenerationStopped = context.Canceled
+
+type recordingImageGenerator struct {
+	method string
+	model  string
+}
+
+func (g *recordingImageGenerator) record(method, model string) (imageproxy.Image, error) {
+	g.method, g.model = method, model
+	return imageproxy.Image{}, errGenerationStopped
+}
+
+func (g *recordingImageGenerator) GenerateChat(_ context.Context, model, _, _, _ string, _ []string) (imageproxy.Image, error) {
+	return g.record("chat", model)
+}
+func (g *recordingImageGenerator) GenerateImage(_ context.Context, model, _, _, _ string) (imageproxy.Image, error) {
+	return g.record("images", model)
+}
+func (g *recordingImageGenerator) GenerateGPTImage2(_ context.Context, model, _, _, _ string, _ []imageproxy.ReferenceImage) (imageproxy.Image, error) {
+	return g.record("gpt_image_2", model)
+}
+func (g *recordingImageGenerator) GenerateUniversalEdit(_ context.Context, model, _, _, _ string, _ []imageproxy.ReferenceImage) (imageproxy.Image, error) {
+	return g.record("universal_edit", model)
+}
 
 type fixedImageGenerator struct {
 	image imageproxy.Image
@@ -24,6 +49,14 @@ func (g fixedImageGenerator) GenerateChat(context.Context, string, string, strin
 }
 
 func (g fixedImageGenerator) GenerateImage(context.Context, string, string, string, string) (imageproxy.Image, error) {
+	return g.image, g.err
+}
+
+func (g fixedImageGenerator) GenerateGPTImage2(context.Context, string, string, string, string, []imageproxy.ReferenceImage) (imageproxy.Image, error) {
+	return g.image, g.err
+}
+
+func (g fixedImageGenerator) GenerateUniversalEdit(context.Context, string, string, string, string, []imageproxy.ReferenceImage) (imageproxy.Image, error) {
 	return g.image, g.err
 }
 
@@ -55,35 +88,13 @@ func TestImageModelResolutionCapabilities(t *testing.T) {
 	}
 }
 
-func TestImageResolutionAcceptedAllowsTenPercentTolerance(t *testing.T) {
-	if !imageResolutionAccepted(1844, 1844, 2048, 2048) {
-		t.Fatal("dimensions within the ten percent tolerance should pass")
-	}
-	if imageResolutionAccepted(1843, 1843, 2048, 2048) {
-		t.Fatal("dimensions below the ten percent tolerance should fail")
-	}
-	if imageResolutionAccepted(1344, 768, 2688, 1536) {
-		t.Fatal("a 1K landscape must not satisfy a 2K request")
-	}
-	if imageResolutionAccepted(768, 1344, 3072, 5376) {
-		t.Fatal("a 1K portrait must not satisfy a 4K request")
-	}
-}
-
-func TestLowResolutionRetriesExactlyOnce(t *testing.T) {
-	err := &imageResolutionError{RequestedTier: "4K", AspectRatio: "1:1", ActualWidth: 1024, ActualHeight: 1024}
-	if !shouldRetryImageError(err, 1) {
-		t.Fatal("the first low-resolution response should be retried")
-	}
-	if shouldRetryImageError(err, 2) {
-		t.Fatal("a low-resolution response must not be retried more than once")
-	}
+func TestTransientImageErrorsRetryAtMostThreeAttempts(t *testing.T) {
 	if !shouldRetryImageError(context.DeadlineExceeded, 2) || shouldRetryImageError(context.DeadlineExceeded, 3) {
-		t.Fatal("existing transient-error retry limit should remain three attempts")
+		t.Fatal("transient errors should retry at most three attempts")
 	}
 }
 
-func TestGenerateOneDoesNotPersistLowResolutionImage(t *testing.T) {
+func TestGenerateOnePersistsImageBelowRequestedResolution(t *testing.T) {
 	data := testPNG(t, 1024, 1024)
 	repo := store.NewMemory(domain.AgentConfig{})
 	blobs := newImageTestBlob()
@@ -96,14 +107,85 @@ func TestGenerateOneDoesNotPersistLowResolutionImage(t *testing.T) {
 		ID: "job-resolution", UserID: "user", ProjectID: "project", Prompt: "cat",
 		AspectRatio: "1:1", ImageSize: "2K", Attempts: 1,
 	}, domain.ImageModel{ModelID: "gemini-3.1-flash-image", Protocol: "chat_completions"},
-		fixedImageGenerator{image: imageproxy.Image{Data: data, MIME: "image/png"}}, nil,
+		"comfly", fixedImageGenerator{image: imageproxy.Image{Data: data, MIME: "image/png"}}, nil, nil,
 		domain.ImageJobOutput{ID: "output-resolution", JobID: "job-resolution"})
-	var resolutionErr *imageResolutionError
-	if !errors.As(err, &resolutionErr) {
-		t.Fatalf("expected imageResolutionError, got %v", err)
+	if err != nil {
+		t.Fatalf("a valid image should be persisted regardless of requested resolution: %v", err)
 	}
-	if len(blobs.objects) != 0 {
-		t.Fatalf("low-resolution image must not be persisted: %#v", blobs.objects)
+	if len(blobs.objects) != 1 {
+		t.Fatalf("generated image was not persisted: %#v", blobs.objects)
+	}
+}
+
+func TestGPTImage2ResolutionWarningKeepsDowngradedResult(t *testing.T) {
+	if warning := gptImageResolutionWarning("gpt-image-2", "1:1", "2K", 1254, 1254); warning == "" {
+		t.Fatal("a 2K request returning the native 1K result must be reported")
+	}
+	if warning := gptImageResolutionWarning("gpt-image-2", "1:1", "2K", 2048, 2048); warning != "" {
+		t.Fatalf("a real 2K result must not be warned: %s", warning)
+	}
+	if warning := gptImageResolutionWarning("gpt-image-2", "1:1", "1K", 1254, 1254); warning != "" {
+		t.Fatalf("1254 square is a valid GPT Image 2 1K result: %s", warning)
+	}
+}
+
+func TestGPTImage2ModelDetectionIsExact(t *testing.T) {
+	if !isGPTImage2Model("gpt-image-2") || !isGPTImage2Model("openai/gpt-image-2") {
+		t.Fatal("GPT Image 2 aliases must be detected")
+	}
+	if isGPTImage2Model("gpt-image-2-all") {
+		t.Fatal("the web-backed gpt-image-2-all model must not use the official Images protocol")
+	}
+}
+
+func TestSyncedModelsChooseRelayCompatibleRequests(t *testing.T) {
+	now := time.Now()
+	comfly := syncedImageModels(domain.ImageRelay{ID: "comfly", RelayKey: "comfly"}, []imageproxy.RemoteModel{{
+		ID: "gpt-image-2", SupportedEndpointTypes: []string{"openai"},
+	}}, now)
+	if len(comfly) != 1 || comfly[0].Protocol != "gpt_image_2" || !comfly[0].SupportsReference || comfly[0].RequestModelID != "gpt-image-2" {
+		t.Fatalf("Comfly GPT Image 2 must use the concrete-size Images contract: %+v", comfly)
+	}
+
+	xgapi := syncedImageModels(domain.ImageRelay{ID: "xgapi", RelayKey: "xgapi"}, []imageproxy.RemoteModel{
+		{ID: "gemini-3.1-flash-image-preview", SupportedEndpointTypes: []string{"openai", "image-generation"}},
+		{ID: "gemini-3.1-flash-image-preview-2k", SupportedEndpointTypes: []string{"openai", "gemini"}},
+	}, now)
+	if len(xgapi) != 2 || xgapi[1].RequestModelID != "gemini-3.1-flash-image-preview" || !xgapi[1].SupportsReference {
+		t.Fatalf("XGAPI resolution alias must call the base image-generation model: %+v", xgapi)
+	}
+}
+
+func TestGenerateOneRoutesComflyGPTToImagesProtocol(t *testing.T) {
+	dispatcher := &ImageDispatcher{}
+	generator := &recordingImageGenerator{}
+	model := domain.ImageModel{ModelID: "gpt-image-2", RequestModelID: "gpt-image-2", Protocol: "gpt_image_2"}
+	_ = dispatcher.generateOne(context.Background(), domain.ImageJob{Prompt: "poster", ImageSize: "2K", AspectRatio: "1:1"},
+		model, "comfly", generator, []string{"data:image/png;base64,eA=="}, []imageproxy.ReferenceImage{{Data: []byte("image"), Width: 1024, Height: 1024}}, domain.ImageJobOutput{})
+	if generator.method != "gpt_image_2" || generator.model != "gpt-image-2" {
+		t.Fatalf("unexpected Comfly route: method=%s model=%s", generator.method, generator.model)
+	}
+}
+
+func TestGenerateOneRoutesXGAPIGPTBeforeUniversalEdit(t *testing.T) {
+	dispatcher := &ImageDispatcher{}
+	generator := &recordingImageGenerator{}
+	model := domain.ImageModel{ModelID: "gpt-image-2", RequestModelID: "gpt-image-2", Protocol: "gpt_image_2"}
+	_ = dispatcher.generateOne(context.Background(), domain.ImageJob{Prompt: "poster", ImageSize: "2K", AspectRatio: "1:1"},
+		model, "xgapi", generator, nil, []imageproxy.ReferenceImage{{Data: []byte("image"), Width: 1024, Height: 1024}}, domain.ImageJobOutput{})
+	if generator.method != "gpt_image_2" {
+		t.Fatalf("XGAPI GPT Image 2 must not use the Gemini universal edit route: %s", generator.method)
+	}
+}
+
+func TestGenerateOneRoutesXGAPIAliasToBaseEditModel(t *testing.T) {
+	dispatcher := &ImageDispatcher{}
+	generator := &recordingImageGenerator{}
+	model := domain.ImageModel{ModelID: "gemini-3.1-flash-image-preview-2k", RequestModelID: "gemini-3.1-flash-image-preview", Protocol: "chat_completions"}
+	_ = dispatcher.generateOne(context.Background(), domain.ImageJob{Prompt: "poster", ImageSize: "2K", AspectRatio: "1:1"},
+		model, "xgapi", generator, nil, []imageproxy.ReferenceImage{{Data: []byte("image")}}, domain.ImageJobOutput{})
+	if generator.method != "universal_edit" || generator.model != "gemini-3.1-flash-image-preview" {
+		t.Fatalf("unexpected XGAPI route: method=%s model=%s", generator.method, generator.model)
 	}
 }
 

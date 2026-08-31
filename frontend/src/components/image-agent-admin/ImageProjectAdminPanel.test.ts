@@ -2,10 +2,11 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import ImageProjectAdminPanel from './ImageProjectAdminPanel.vue'
 
-const messages = vi.hoisted(() => ({ warning: vi.fn() }))
+const messages = vi.hoisted(() => ({ warning: vi.fn(), confirm: vi.fn() }))
 vi.mock('element-plus', async (importOriginal) => ({
   ...await importOriginal<typeof import('element-plus')>(),
-  ElMessage: messages,
+  ElMessage: { warning: messages.warning },
+  ElMessageBox: { confirm: messages.confirm },
 }))
 
 function mountPanel(saveProject = vi.fn()) {
@@ -69,5 +70,20 @@ describe('ImageProjectAdminPanel', () => {
     await wrapper.setProps({ saveProject: vi.fn().mockResolvedValue({ id: 'project-1' }) })
     await vm.save()
     expect(vm.dialog).toBe(false)
+  })
+
+  it('confirms and emits a project deletion', async () => {
+    messages.confirm.mockResolvedValueOnce('confirm')
+    const wrapper = mountPanel()
+    const project = {
+      id: 'project-delete', project_key: 'delete', name: '待删除项目', description: '',
+      acl: { scope: 'all' as const }, enabled: true, created_at: '', updated_at: '',
+    }
+    const vm = wrapper.vm as unknown as { remove: (value: typeof project) => Promise<void> }
+
+    await vm.remove(project)
+
+    expect(messages.confirm).toHaveBeenCalledOnce()
+    expect(wrapper.emitted('remove')).toEqual([['project-delete']])
   })
 })

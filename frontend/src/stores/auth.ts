@@ -29,6 +29,11 @@ export const useAuthStore = defineStore('auth', () => {
   function acceptResolvedUser(value: User) {
     applyUser(value, (authSource.value || value.auth_source || 'feishu') as AuthSource)
   }
+  function clearResolvedUser() {
+    user.value = null
+    authSource.value = ''
+    permissions.value = []
+  }
 
   async function signInWithFeishu(authConfig?: FeishuAuthConfig) {
     isAuthenticating.value = true
@@ -122,11 +127,33 @@ export const useAuthStore = defineStore('auth', () => {
     initialized.value = true
   }
 
+  async function recoverSession() {
+    authError.value = ''
+    try {
+      if (isFeishuClient()) {
+        await signInWithFeishu()
+      } else {
+        const config = await authService.iamConfig()
+        iamConfigured.value = config.enabled
+        if (!config.enabled || !config.app_id) {
+          throw new Error('登录已过期，请重新登录')
+        }
+        await initializeIAMBrowser(config.app_id)
+      }
+      initialized.value = true
+    } catch (error) {
+      clearResolvedUser()
+      initialized.value = false
+      authError.value = isFeishuClient()
+        ? (error instanceof Error ? error.message : '飞书登录已过期，请重新登录')
+        : formatIAMError(error)
+      throw error
+    }
+  }
+
   async function logout() {
     await authService.logout()
-    user.value = null
-    authSource.value = ''
-    permissions.value = []
+    clearResolvedUser()
   }
 
   return {
@@ -145,6 +172,7 @@ export const useAuthStore = defineStore('auth', () => {
     can,
     acceptResolvedUser,
     initialize,
+    recoverSession,
     devLogin,
     feishuLogin,
     logout,

@@ -55,6 +55,8 @@ type Memory struct {
 	imageCanvases           map[string]domain.ImageCanvas
 	imageAssets             map[string]domain.ImageAsset
 	imageJobs               map[string]domain.ImageJob
+	pixianConfig            domain.PixianBackgroundRemovalConfig
+	backgroundRemovalJobs   map[string]domain.BackgroundRemovalJob
 	audits                  []domain.AuditEvent
 	events                  map[string]struct{}
 }
@@ -91,7 +93,9 @@ func NewMemory(defaultConfig domain.AgentConfig) *Memory {
 		imageRelays: map[string]domain.ImageRelay{}, imageModels: map[string]domain.ImageModel{}, imageProjects: map[string]domain.ImageProject{},
 		imagePromptActions: map[string]domain.ImagePromptAction{}, imageCanvases: map[string]domain.ImageCanvas{},
 		imageAssets: map[string]domain.ImageAsset{}, imageJobs: map[string]domain.ImageJob{},
-		audits: []domain.AuditEvent{}, events: map[string]struct{}{},
+		pixianConfig:          domain.PixianBackgroundRemovalConfig{TestMode: true, TimeoutSeconds: 180, Concurrency: 2, MaxPixels: 25_000_000, UpdatedAt: now},
+		backgroundRemovalJobs: map[string]domain.BackgroundRemovalJob{},
+		audits:                []domain.AuditEvent{}, events: map[string]struct{}{},
 	}
 }
 

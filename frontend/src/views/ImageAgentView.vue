@@ -12,11 +12,13 @@ const route = useRoute()
 const router = useRouter()
 const canvasId = computed(() => String(route.params.canvasId || ''))
 const {
-  options, canvas, references, form, loading, uploading, importing, importProgress, deletingNodeId, generating, currentJob, selectedProject,
-  initialize, upload, importToCanvas, addCanvasReference, removeReference, deleteCanvasNode, scheduleCanvasSave, submit, applyAction,
+  options, canvas, references, form, loading, uploading, importing, importProgress, deletingNodeId, batchDeletingCount, generating, currentJob, backgroundRemovingCount, selectedProject,
+  initialize, upload, importToCanvas, addCanvasReference, removeReference, deleteCanvasNode, deleteCanvasNodes, removeBackground, scheduleCanvasSave, submit, applyAction,
 } = useImageWorkspace(canvasId)
 const canvasRef = ref<InstanceType<typeof InfiniteImageCanvas>>()
 const statusText = computed(() => {
+  if (batchDeletingCount.value) return `正在删除 ${batchDeletingCount.value} 张图片`
+  if (backgroundRemovingCount.value) return `正在抠图 ${backgroundRemovingCount.value} 张图片`
   if (deletingNodeId.value) return '正在删除图片'
   if (importing.value) return importProgress.value || '正在导入图片'
   if (!currentJob.value) return '画布已同步'
@@ -53,6 +55,22 @@ async function confirmDeleteNode(nodeId: string) {
     await deleteCanvasNode(nodeId)
   } catch { /* 用户取消 */ }
 }
+async function confirmDeleteSelected(nodeIds: string[]) {
+  const selected = canvas.value?.nodes.filter((node) => nodeIds.includes(node.id)) || []
+  if (!selected.length) return
+  const pendingCount = selected.filter((node) => node.status === 'pending').length
+  const pendingNotice = pendingCount
+    ? `\n其中 ${pendingCount} 张仍在生成，删除后生成任务会继续，但结果不会再显示在画布中。`
+    : ''
+  try {
+    await ElMessageBox.confirm(
+      `确定从当前画布删除选中的 ${selected.length} 张图片吗？${pendingNotice}`,
+      '批量删除图片',
+      { type: 'warning', confirmButtonText: '全部删除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' },
+    )
+    if (await deleteCanvasNodes(selected.map((node) => node.id))) canvasRef.value?.clearSelection()
+  } catch { /* 用户取消 */ }
+}
 async function loadCanvas() {
   if (!canvasId.value) return router.replace('/image-agent')
   await initialize()
@@ -87,8 +105,12 @@ watch(canvasId, (value, previous) => { if (value && value !== previous) void loa
         :importing="importing"
         :import-progress="importProgress"
         :deleting-node-id="deletingNodeId"
+        :background-removal-enabled="options.background_removal_enabled"
+        :background-removing="Boolean(backgroundRemovingCount)"
         @change="scheduleCanvasSave"
         @delete-node="confirmDeleteNode"
+        @delete-selected="confirmDeleteSelected"
+        @remove-background="removeBackground"
         @import-images="({ files, point, origin }) => importToCanvas(files, point, origin)"
         @import-blocked="notifyImportBlocked"
         @unsupported-drop="notifyUnsupportedDrop"
@@ -100,8 +122,8 @@ watch(canvasId, (value, previous) => { if (value && value !== previous) void loa
         :projects="options.projects"
         :actions="options.prompt_actions"
         :references="references"
-        :busy="generating || importing || Boolean(deletingNodeId)"
-        :locked="importing || Boolean(deletingNodeId)"
+        :busy="generating || importing || Boolean(deletingNodeId) || Boolean(backgroundRemovingCount)"
+        :locked="importing || Boolean(deletingNodeId) || Boolean(backgroundRemovingCount)"
         :uploading="uploading"
         @upload="upload"
         @remove-reference="removeReference"
