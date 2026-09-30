@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
+import { reactive, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import type { DirectoryOptions, MassageCycle } from '@/types/domain'
 import type { MassageCycleInput } from '@/services/massage'
+import { validateMassageCycleInput } from '@/utils/massageCycle'
 
 const props = defineProps<{ modelValue: boolean; cycle?: MassageCycle; directory: DirectoryOptions; saving: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; save: [value: MassageCycleInput] }>()
@@ -17,9 +19,11 @@ const fresh = (): MassageCycleInput => ({
   ],
 })
 const form = reactive<MassageCycleInput>(fresh())
+const validationError = ref('')
 
 watch(() => props.modelValue, (open) => {
   if (!open) return
+  validationError.value = ''
   Object.assign(form, fresh())
   if (!props.cycle) return
   form.service_month = props.cycle.service_month
@@ -42,7 +46,7 @@ watch(() => props.modelValue, (open) => {
 })
 
 function submit() {
-  emit('save', {
+  const result = validateMassageCycleInput({
     ...form,
     audience: {
       ...form.audience,
@@ -52,12 +56,20 @@ function submit() {
     },
     sessions: form.sessions.map(session => ({ ...session })),
   })
+  if (!result.payload) {
+    validationError.value = result.error || '请检查批次信息'
+    ElMessage.error(validationError.value)
+    return
+  }
+  validationError.value = ''
+  emit('save', result.payload)
 }
 </script>
 
 <template>
   <el-dialog :model-value="modelValue" :title="cycle ? '编辑按摩批次' : '新建按摩批次'" width="760px" @update:model-value="emit('update:modelValue', $event)">
-    <el-form label-position="top">
+    <el-alert v-if="validationError" class="validation-alert" :title="validationError" type="error" :closable="false" show-icon />
+    <el-form label-position="top" @change="validationError = ''">
       <div class="form-grid">
         <el-form-item label="服务月份"><el-date-picker v-model="form.service_month" type="month" value-format="YYYY-MM" /></el-form-item>
         <el-form-item label="批次名称"><el-input v-model="form.title" maxlength="100" /></el-form-item>
@@ -89,5 +101,5 @@ function submit() {
 </template>
 
 <style scoped>
-.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}.form-grid.three{grid-template-columns:2fr 1fr 1fr}.el-select,.el-date-editor{width:100%}.session-form{margin-top:12px;padding:14px 16px 0;border:1px solid #ebe7f2;border-radius:14px;background:#faf8fd}.session-form h4{margin:0 0 10px;color:#4f4078}@media(max-width:700px){.form-grid,.form-grid.three{grid-template-columns:1fr}}
+.validation-alert{margin-bottom:16px}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}.form-grid.three{grid-template-columns:2fr 1fr 1fr}.el-select,.el-date-editor{width:100%}.session-form{margin-top:12px;padding:14px 16px 0;border:1px solid #ebe7f2;border-radius:14px;background:#faf8fd}.session-form h4{margin:0 0 10px;color:#4f4078}@media(max-width:700px){.form-grid,.form-grid.three{grid-template-columns:1fr}}
 </style>

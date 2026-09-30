@@ -83,3 +83,34 @@ func TestAgentRegistryRepairsEncodingDamagedDefaultLabels(t *testing.T) {
 		t.Fatalf("repair overwrote administrator configuration: %#v", repaired)
 	}
 }
+
+func TestAgentRegistryHidesImageProfilesWhenFeatureDisabled(t *testing.T) {
+	ctx := context.Background()
+	repo := store.NewMemory(domain.AgentConfig{})
+	enabled, err := NewAgentRegistry(repo, "a-long-enough-session-secret", "aliyun-key", "gemini-key", "qwen-plus", "gemini-image", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = enabled.EnsureDefaults(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	disabled, err := NewAgentRegistry(repo, "a-long-enough-session-secret", "aliyun-key", "gemini-key", "qwen-plus", "gemini-image", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := disabled.List(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, profile := range profiles {
+		if profile.Kind == "image" || profile.AgentKey == "image_generator" {
+			t.Fatalf("disabled image profile was exposed: %#v", profile)
+		}
+	}
+	admin, _ := repo.GetUser(ctx, store.DemoAdminID)
+	_, err = disabled.Save(ctx, admin, "", AgentProfileInput{AgentKey: "another_image", Name: "图片", Kind: "image", Provider: "custom", Model: "image-model", Enabled: true})
+	if err == nil {
+		t.Fatal("expected image profile creation to be rejected while feature is disabled")
+	}
+}

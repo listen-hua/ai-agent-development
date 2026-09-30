@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Delete, Plus } from '@element-plus/icons-vue'
 import type { ACL, ACLRule, DirectoryOptions, PermissionKey } from '@/types/domain'
 import { cloneACL, normalizeACL } from '@/utils/acl'
+import { imageAgentEnabled } from '@/config/features'
 
 const props = defineProps<{ modelValue: ACL; options: DirectoryOptions }>()
 const emit = defineEmits<{ 'update:modelValue': [value: ACL] }>()
@@ -16,7 +17,15 @@ const permissionOptions: Array<{ value: PermissionKey; label: string }> = [
   { value: 'calendar_manage', label: '日历与会议室管理' },
   { value: 'audit_view', label: '质量与审计' },
   { value: 'user_manage', label: '用户与权限管理' },
-]
+].filter((permission) => imageAgentEnabled || permission.value !== 'image_manage') as Array<{ value: PermissionKey; label: string }>
+const visiblePermissionKeys = computed<PermissionKey[]>({
+  get: () => (draft.value.permission_keys || []).filter((permission) => imageAgentEnabled || permission !== 'image_manage'),
+  set: (permissions) => {
+    const hidden = (draft.value.permission_keys || []).filter((permission) => !imageAgentEnabled && permission === 'image_manage')
+    draft.value.permission_keys = [...hidden, ...permissions]
+    commit()
+  },
+})
 
 watch(() => props.modelValue, (value) => { draft.value = cloneACL(value) }, { deep: true })
 
@@ -50,7 +59,7 @@ function commit() { emit('update:modelValue', normalizeACL(draft.value)) }
       <div class="acl-rule-help">同一规则内的条件需同时满足；多条规则之间满足任意一条即可查看。</div>
       <el-form label-position="top">
         <el-form-item label="系统权限（可选）">
-          <el-select v-model="draft.permission_keys" multiple collapse-tags placeholder="不按系统权限开放" style="width: 100%" @change="commit">
+          <el-select v-model="visiblePermissionKeys" multiple collapse-tags placeholder="不按系统权限开放" style="width: 100%">
             <el-option v-for="permission in permissionOptions" :key="permission.value" :label="permission.label" :value="permission.value" />
           </el-select>
         </el-form-item>

@@ -83,7 +83,7 @@ func run() error {
 	)
 	defer iamClient.Close()
 	directory := service.NewDirectory(repo, feishuClient)
-	agents, err := service.NewAgentRegistry(repo, cfg.AgentSecretEncryptionKey, cfg.DashScopeAPIKey, cfg.GeminiAPIKey, cfg.GenerationModel, cfg.GeminiImageModel)
+	agents, err := service.NewAgentRegistry(repo, cfg.AgentSecretEncryptionKey, cfg.DashScopeAPIKey, cfg.GeminiAPIKey, cfg.GenerationModel, cfg.GeminiImageModel, cfg.ImageAgentEnabled)
 	if err != nil {
 		return err
 	}
@@ -108,16 +108,21 @@ func run() error {
 	if cfg.ClamAVAddr != "" {
 		scanner = security.ClamAV{Addr: cfg.ClamAVAddr}
 	}
-	imageRepository, ok := repo.(store.ImageRepository)
-	if !ok {
-		return fmt.Errorf("configured repository does not support the image agent")
-	}
-	imageAgent, err := service.NewImageAgent(imageRepository, repo, blobStore, scanner, cfg.AgentSecretEncryptionKey, agents)
-	if err != nil {
-		return err
-	}
-	if err = imageAgent.EnsureDefaults(rootCtx); err != nil {
-		return err
+	var imageAgent *service.ImageAgent
+	if cfg.ImageAgentEnabled {
+		imageRepository, ok := repo.(store.ImageRepository)
+		if !ok {
+			return fmt.Errorf("configured repository does not support the image agent")
+		}
+		imageAgent, err = service.NewImageAgent(imageRepository, repo, blobStore, scanner, cfg.AgentSecretEncryptionKey, agents)
+		if err != nil {
+			return err
+		}
+		if err = imageAgent.EnsureDefaults(rootCtx); err != nil {
+			return err
+		}
+	} else {
+		slog.Info("image agent disabled by configuration")
 	}
 	knowledge := service.NewKnowledge(repo, provider, tika, cfg.EmbeddingModel, blobStore, scanner, feishuClient)
 	hub := service.NewRunHub()

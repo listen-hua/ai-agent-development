@@ -53,10 +53,10 @@ onMounted(() => Promise.all([loadProfiles(), loadVersions()]))
 
 <template>
   <section class="admin-page">
-    <PageHeader eyebrow="MULTI-AGENT REGISTRY" title="Agent 配置" description="每个小 Agent 独立绑定一个模型和 API Key；密钥加密保存且不会在页面回显明文。">
+    <PageHeader eyebrow="ADMINISTRATIVE AGENT" title="Agent 配置" description="为行政场景绑定模型和 API Key；密钥加密保存且不会在页面回显明文。">
       <el-button type="primary" :icon="Plus" @click="createProfile">新增 Agent</el-button>
     </PageHeader>
-    <div class="section-heading agent-section-heading"><div><h2>小 Agent 与模型路由</h2><p>行政助手使用阿里云，AI 生图使用 Gemini；后续可以继续添加其他业务 Agent。</p></div><el-tag type="success" effect="plain" round>{{ profiles.filter(item => item.enabled).length }} 个已启用</el-tag></div>
+    <div class="section-heading agent-section-heading"><div><h2>行政 Agent 与模型路由</h2><p>为行政助手及后续行政场景配置独立模型和安全凭证。</p></div><el-tag type="success" effect="plain" round>{{ profiles.filter(item => item.enabled).length }} 个已启用</el-tag></div>
     <AgentProfileGrid :agents="profiles" :loading="loadingProfiles" @edit="editProfile" />
 
     <div class="section-heading advanced-config-heading"><div><h2>行政助手高级参数</h2><p>保留原有生成、Embedding、Rerank、检索和 Prompt 版本配置。</p></div></div>

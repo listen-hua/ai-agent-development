@@ -230,6 +230,8 @@ element-plus
 
 ## 4. 数据库与迁移清单
 
+字段级结构、实体关系、状态说明和交接查询示例见 [`IMAGE_AGENT_DATABASE_SCHEMA.md`](./IMAGE_AGENT_DATABASE_SCHEMA.md)。
+
 ### 4.1 生图拥有的表
 
 基础迁移 `backend/migrations/011_image_agent.sql` 创建：

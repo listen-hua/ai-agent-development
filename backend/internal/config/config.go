@@ -43,6 +43,7 @@ type Config struct {
 	ContextModel               string
 	GeminiAPIKey               string
 	GeminiImageModel           string
+	ImageAgentEnabled          bool
 	ReminderModel              string
 	ReminderTimezone           string
 	ReminderPollSeconds        int
@@ -90,6 +91,7 @@ func Load() Config {
 		ContextModel:               env("DASHSCOPE_CONTEXT_MODEL", "qwen-flash"),
 		GeminiAPIKey:               os.Getenv("GEMINI_API_KEY"),
 		GeminiImageModel:           env("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image"),
+		ImageAgentEnabled:          envBool("IMAGE_AGENT_ENABLED", false),
 		ReminderModel:              env("DASHSCOPE_REMINDER_MODEL", "qwen-flash"),
 		ReminderTimezone:           env("REMINDER_TIMEZONE", "Asia/Shanghai"),
 		ReminderPollSeconds:        envInt("REMINDER_POLL_SECONDS", 5),

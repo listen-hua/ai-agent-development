@@ -31,13 +31,13 @@ function retryIAM() {
 <template>
   <main class="login-page">
     <section class="login-story">
-      <div class="story-inner"><div class="story-badge"><span />SHIMMER · 企业可信 AI</div><h1>让每一个 AI Agent，<br />照亮具体工作。</h1><p>从制度问答、行政执行到创意生图，在飞书内连接公司知识、工具与多个专业 AI Agent。</p><div class="trust-list"><div><Lock /><span><strong>统一身份与权限</strong>每个 Agent 都遵守公司数据边界</span></div><div><Connection /><span><strong>一个入口，多种能力</strong>按业务场景持续接入新的 AI Agent</span></div></div></div>
+      <div class="story-inner"><div class="story-badge"><span />SHIMMER · 企业可信 AI</div><h1>让行政服务，<br />更简单、更及时。</h1><p>在飞书内连接公司制度、提醒、通知、会议室和行政服务。</p><div class="trust-list"><div><Lock /><span><strong>统一身份与权限</strong>每项行政能力都遵守公司数据边界</span></div><div><Connection /><span><strong>一个入口，行政协同</strong>让员工和行政团队更高效地完成日常工作</span></div></div></div>
     </section>
     <section class="login-panel">
       <div class="login-card">
         <div class="login-logo"><Sunny /></div>
         <h2>欢迎使用微光</h2>
-        <p>Shimmer · 公司内部 AI Agent 平台</p>
+        <p>Shimmer · 公司内部行政助手</p>
         <el-alert v-if="auth.authError" :title="auth.authError" type="error" show-icon :closable="false" />
         <template v-if="auth.iamConfigured">
           <el-button class="feishu-login" type="primary" size="large" :loading="auth.isIAMInitializing" @click="retryIAM">重新连接公司 IAM</el-button>

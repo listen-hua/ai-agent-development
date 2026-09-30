@@ -53,14 +53,19 @@ func main() {
 	if cfg.ClamAVAddr != "" {
 		scanner = security.ClamAV{Addr: cfg.ClamAVAddr}
 	}
-	imageAgent, err := service.NewImageAgent(repo, repo, blobStore, scanner, cfg.AgentSecretEncryptionKey)
-	if err != nil {
-		log.Fatal(err)
+	var imageDispatcher *service.ImageDispatcher
+	if cfg.ImageAgentEnabled {
+		imageAgent, imageErr := service.NewImageAgent(repo, repo, blobStore, scanner, cfg.AgentSecretEncryptionKey)
+		if imageErr != nil {
+			log.Fatal(imageErr)
+		}
+		if imageErr = imageAgent.EnsureDefaults(ctx); imageErr != nil {
+			log.Fatal(imageErr)
+		}
+		imageDispatcher = service.NewImageDispatcher(imageAgent, time.Duration(cfg.RetentionDays)*24*time.Hour)
+	} else {
+		logger.Info("image agent worker disabled by configuration")
 	}
-	if err = imageAgent.EnsureDefaults(ctx); err != nil {
-		log.Fatal(err)
-	}
-	imageDispatcher := service.NewImageDispatcher(imageAgent, time.Duration(cfg.RetentionDays)*24*time.Hour)
 	reminders := service.NewReminder(repo, provider, cfg.ReminderModel, cfg.ReminderTimezone, cfg.ReminderMaxActive)
 	dispatcher := service.NewReminderDispatcher(repo, reminders, feishuClient, cfg.FeishuAppLink, time.Duration(cfg.ReminderGraceMinutes)*time.Minute, time.Duration(cfg.RetentionDays)*24*time.Hour)
 	meetingLocker := service.NewRedisSlotLocker(cfg.RedisAddr)
@@ -87,8 +92,10 @@ func main() {
 	if err = meetingDispatcher.Tick(ctx); err != nil {
 		logger.Error("initial meeting tick failed", "error", err)
 	}
-	if err = imageDispatcher.Tick(ctx); err != nil {
-		logger.Error("initial image job tick failed", "error", err)
+	if imageDispatcher != nil {
+		if err = imageDispatcher.Tick(ctx); err != nil {
+			logger.Error("initial image job tick failed", "error", err)
+		}
 	}
 	if err = massageDispatcher.Tick(ctx); err != nil {
 		logger.Error("initial massage tick failed", "error", err)
@@ -105,8 +112,10 @@ func main() {
 			if err = meetingDispatcher.Tick(ctx); err != nil {
 				logger.Error("meeting tick failed", "error", err)
 			}
-			if err = imageDispatcher.Tick(ctx); err != nil {
-				logger.Error("image job tick failed", "error", err)
+			if imageDispatcher != nil {
+				if err = imageDispatcher.Tick(ctx); err != nil {
+					logger.Error("image job tick failed", "error", err)
+				}
 			}
 			if err = massageDispatcher.Tick(ctx); err != nil {
 				logger.Error("massage tick failed", "error", err)

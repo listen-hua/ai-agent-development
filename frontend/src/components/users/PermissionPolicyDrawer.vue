@@ -3,6 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import type { PermissionKey, User } from '@/types/domain'
 import type { PermissionPolicyInput } from '@/composables/users/useUserAdmin'
+import { imageAgentEnabled } from '@/config/features'
 
 type LocalState = 'inherit' | 'allow' | 'deny'
 
@@ -19,7 +20,7 @@ const emit = defineEmits<{
 }>()
 
 const permissionRows: Array<{ key: PermissionKey; label: string; description: string }> = [
-  { key: 'agent_use', label: '使用微光', description: '聊天、生图、提醒、会议室和个人历史' },
+  { key: 'agent_use', label: '使用微光', description: '行政问答、提醒、会议室和个人历史' },
   { key: 'knowledge_manage', label: '制度知识库', description: '资料源、文档版本、发布与权限范围' },
   { key: 'agent_manage', label: 'Agent 配置', description: '模型、Prompt、评测、发布与回滚' },
   { key: 'image_manage', label: '生图管理', description: '中转站、模型、项目和快捷提示词' },
@@ -28,15 +29,16 @@ const permissionRows: Array<{ key: PermissionKey; label: string; description: st
   { key: 'audit_view', label: '质量与审计', description: '运行指标、问答审计和操作日志' },
   { key: 'user_manage', label: '用户与权限', description: '维护本地允许和拒绝策略' },
 ]
+const visiblePermissionRows = computed(() => permissionRows.filter((row) => imageAgentEnabled || row.key !== 'image_manage'))
 
-const templates: Array<{ label: string; keys: PermissionKey[] }> = [
+const templates = computed<Array<{ label: string; keys: PermissionKey[] }>>(() => [
   { label: '员工', keys: ['agent_use'] },
   { label: '知识管理员', keys: ['agent_use', 'knowledge_manage', 'agent_manage', 'audit_view'] },
   { label: '通知管理员', keys: ['agent_use', 'notification_manage', 'calendar_manage', 'audit_view'] },
-  { label: '生图管理员', keys: ['agent_use', 'image_manage'] },
+	...(imageAgentEnabled ? [{ label: '生图管理员', keys: ['agent_use', 'image_manage'] as PermissionKey[] }] : []),
   { label: '审计员', keys: ['agent_use', 'audit_view'] },
-  { label: '超级管理员', keys: permissionRows.map((row) => row.key) },
-]
+  { label: '超级管理员', keys: permissionRows.filter((row) => imageAgentEnabled || row.key !== 'image_manage').map((row) => row.key) },
+])
 
 const states = reactive<Record<PermissionKey, LocalState>>(emptyStates())
 const reason = ref('')
@@ -60,7 +62,7 @@ function emptyStates(): Record<PermissionKey, LocalState> {
 
 function applyTemplate(keys: PermissionKey[]) {
   const allowed = new Set(keys)
-  for (const row of permissionRows) states[row.key] = allowed.has(row.key) ? 'allow' : 'inherit'
+  for (const row of visiblePermissionRows.value) states[row.key] = allowed.has(row.key) ? 'allow' : 'inherit'
 }
 
 function submit() {
@@ -131,7 +133,7 @@ function date(value?: string) {
         <div class="matrix-head">
           <span>权限</span><span>IAM 状态</span><span>本地覆盖</span><span>最终结果</span>
         </div>
-        <div v-for="row in permissionRows" :key="row.key" class="matrix-row">
+        <div v-for="row in visiblePermissionRows" :key="row.key" class="matrix-row">
           <div class="permission-copy"><strong>{{ row.label }}</strong><small>{{ row.description }}</small></div>
           <el-tag :type="user.permission_sources.iam.includes(row.key) ? 'success' : 'info'" effect="plain">
             {{ user.permission_sources.iam.includes(row.key) ? '已授予' : '未授予' }}

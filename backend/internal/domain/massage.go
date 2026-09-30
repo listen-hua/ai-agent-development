@@ -168,30 +168,30 @@ func ValidateMassageCycle(value MassageCycle) error {
 	value.ServiceMonth = strings.TrimSpace(value.ServiceMonth)
 	value.Title = strings.TrimSpace(value.Title)
 	if _, err := time.Parse("2006-01", value.ServiceMonth); err != nil {
-		return fmt.Errorf("service_month must use YYYY-MM")
+		return fmt.Errorf("服务月份格式无效，请使用 YYYY-MM")
 	}
 	if value.Title == "" || len([]rune(value.Title)) > 100 {
-		return fmt.Errorf("title is required and must not exceed 100 characters")
+		return fmt.Errorf("批次名称不能为空且不能超过 100 个字符")
 	}
 	if !value.SignupNoticeAt.Before(value.SignupDeadline) {
-		return fmt.Errorf("signup notice must be before deadline")
+		return fmt.Errorf("报名通知时间必须早于报名截止时间")
 	}
 	if len(value.Sessions) != 2 {
-		return fmt.Errorf("exactly two massage sessions are required")
+		return fmt.Errorf("每个按摩批次必须包含两场按摩")
 	}
 	if value.Sessions[0].Sequence != 1 || value.Sessions[1].Sequence != 2 || !value.Sessions[0].StartsAt.Before(value.Sessions[1].StartsAt) {
-		return fmt.Errorf("massage sessions must be ordered as sequence 1 and 2")
+		return fmt.Errorf("第二场按摩时间必须晚于第一场")
 	}
 	if value.SignupDeadline.After(value.Sessions[0].StartsAt) {
-		return fmt.Errorf("signup deadline must not be after the first session")
+		return fmt.Errorf("报名截止时间不能晚于第一场按摩时间")
 	}
 	for _, session := range value.Sessions {
 		if session.Quota < 1 || session.Quota > 10000 || session.ConcurrentSlots < 1 || session.ConcurrentSlots > 20 {
-			return fmt.Errorf("session quota or concurrent slots is invalid")
+			return fmt.Errorf("本场人数或并行服务人数超出允许范围")
 		}
 	}
 	if value.Audience.Scope != "" && value.Audience.Scope != "all" && value.Audience.Scope != "restricted" {
-		return fmt.Errorf("audience scope is invalid")
+		return fmt.Errorf("参与范围设置无效")
 	}
 	return nil
 }

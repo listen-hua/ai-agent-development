@@ -2,15 +2,16 @@
 import { computed, reactive, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { AgentKind, AgentProfile, AgentProfileInput } from '@/types/domain'
+import { imageAgentEnabled } from '@/config/features'
 
 const props = defineProps<{ modelValue: boolean; profile?: AgentProfile; saving: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; save: [value: AgentProfileInput] }>()
 const form = reactive({ agentKey: '', name: '', description: '', kind: 'chat' as AgentKind, provider: 'aliyun', model: 'qwen-plus', apiKey: '', enabled: true })
 const editing = computed(() => Boolean(props.profile))
 const modelOptions = computed(() => {
-  if (form.provider === 'gemini') return ['gemini-3.1-flash-image', 'gemini-3-pro-image', 'gemini-3.1-flash-lite-image']
-  if (form.provider === 'aliyun') return ['qwen-plus', 'qwen-max', 'qwen-flash']
-  if (form.provider === 'openai') return ['gpt-5', 'gpt-image-1']
+	if (form.provider === 'gemini') return imageAgentEnabled ? ['gemini-3.1-flash-image', 'gemini-3-pro-image', 'gemini-3.1-flash-lite-image'] : []
+	if (form.provider === 'aliyun') return ['qwen-plus', 'qwen-max', 'qwen-flash']
+	if (form.provider === 'openai') return imageAgentEnabled ? ['gpt-5', 'gpt-image-1'] : ['gpt-5']
   return []
 })
 
@@ -54,7 +55,7 @@ function submit() {
     <el-form class="agent-profile-form" label-position="top">
       <div class="agent-form-row">
         <el-form-item label="Agent 名称" required><el-input v-model="form.name" maxlength="50" placeholder="例如：合同审查助手" /></el-form-item>
-        <el-form-item label="功能形态" required><el-select v-model="form.kind"><el-option label="对话 Agent" value="chat" /><el-option label="画布 Agent" value="image" /></el-select></el-form-item>
+        <el-form-item label="功能形态" required><el-select v-model="form.kind"><el-option label="对话 Agent" value="chat" /><el-option v-if="imageAgentEnabled" label="画布 Agent" value="image" /></el-select></el-form-item>
       </div>
       <el-form-item label="Agent 唯一标识" required>
         <el-input v-model="form.agentKey" :disabled="editing" placeholder="例如：contract_reviewer" />

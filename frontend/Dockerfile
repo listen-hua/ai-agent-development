@@ -1,5 +1,7 @@
 FROM node:22-alpine AS build
 WORKDIR /app
+ARG VITE_IMAGE_AGENT_ENABLED=false
+ENV VITE_IMAGE_AGENT_ENABLED=$VITE_IMAGE_AGENT_ENABLED
 COPY package.json package-lock.json* .npmrc ./
 RUN npm ci
 COPY . .

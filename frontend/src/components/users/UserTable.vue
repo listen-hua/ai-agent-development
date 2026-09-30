@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { EditPen, UserFilled, Warning } from '@element-plus/icons-vue'
 import type { PermissionKey, User } from '@/types/domain'
+import { imageAgentEnabled } from '@/config/features'
 
 defineProps<{ users: User[]; loading: boolean }>()
 const emit = defineEmits<{ edit: [user: User] }>()
@@ -20,6 +21,10 @@ function date(value?: string) {
   return value
     ? new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value))
     : '尚未同步'
+}
+
+function visiblePermissions(user: User): PermissionKey[] {
+  return user.permissions.filter((permission) => imageAgentEnabled || permission !== 'image_manage')
 }
 </script>
 
@@ -45,11 +50,11 @@ function date(value?: string) {
       <el-table-column label="最终有效权限" min-width="320">
         <template #default="{ row }">
           <div class="role-tags">
-            <el-tag v-for="permission in row.permissions.slice(0, 4)" :key="permission" :type="permission === 'user_manage' ? 'danger' : 'primary'" effect="light" round>
+            <el-tag v-for="permission in visiblePermissions(row).slice(0, 4)" :key="permission" :type="permission === 'user_manage' ? 'danger' : 'primary'" effect="light" round>
               {{ permissionLabels[permission as PermissionKey] }}
             </el-tag>
-            <el-tag v-if="row.permissions.length > 4" type="info" effect="plain" round>+{{ row.permissions.length - 4 }}</el-tag>
-            <span v-if="!row.permissions.length" class="empty-permissions">无权限</span>
+            <el-tag v-if="visiblePermissions(row).length > 4" type="info" effect="plain" round>+{{ visiblePermissions(row).length - 4 }}</el-tag>
+            <span v-if="!visiblePermissions(row).length" class="empty-permissions">无权限</span>
           </div>
         </template>
       </el-table-column>

@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { AlarmClock, Calendar, ChatDotRound, Collection, DataAnalysis, Fold, MagicStick, Message, OfficeBuilding, Picture, Setting, Sunny, SwitchButton, Tickets, User, UserFilled } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
+import { imageAgentEnabled } from '@/config/features'
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -10,13 +11,13 @@ const router = useRouter()
 const collapsed = ref(false)
 const navItems = computed(() => [
   { path: '/chat', label: '行政助手', icon: ChatDotRound, show: true },
-	{ path: '/image-agent', label: 'AI 画图', icon: Picture, show: true },
+	{ path: '/image-agent', label: 'AI 画图', icon: Picture, show: imageAgentEnabled },
 	{ path: '/reminders', label: '我的提醒', icon: AlarmClock, show: true },
 	{ path: '/meetings', label: '我的会议', icon: Calendar, show: true },
   { path: '/massages', label: '我的按摩', icon: Tickets, show: true },
   { path: '/admin/knowledge', label: '制度知识库', icon: Collection, show: auth.can('knowledge_manage') },
   { path: '/admin/agent', label: 'Agent 配置', icon: MagicStick, show: auth.can('agent_manage') },
-  { path: '/admin/image-agent', label: '生图管理', icon: Setting, show: auth.can('image_manage') },
+  { path: '/admin/image-agent', label: '生图管理', icon: Setting, show: imageAgentEnabled && auth.can('image_manage') },
   { path: '/admin/notifications', label: '通知中心', icon: Message, show: auth.can('notification_manage') },
   { path: '/admin/massage', label: '按摩排号', icon: Tickets, show: auth.can('notification_manage') },
 	{ path: '/admin/work-calendar', label: '工作日历', icon: Calendar, show: auth.can('calendar_manage') },
@@ -31,7 +32,7 @@ const topbarCopy = computed(() => {
   if (route.path === '/meetings') return '个人服务 · 会议室预约'
   if (route.path === '/massages') return '个人服务 · 按摩排号'
   if (route.path === '/admin/massage') return '行政管理 · 按摩叫号'
-  return 'Shimmer · AI Agent 管理控制台'
+  return '微光 · 行政助手管理控制台'
 })
 
 async function logout() { await auth.logout(); await router.push('/login') }
@@ -45,7 +46,7 @@ function isNavActive(path: string) {
     <aside class="app-sidebar">
       <div class="brand">
         <div class="brand-mark"><Sunny /></div>
-        <div v-if="!collapsed" class="brand-copy"><strong>微光</strong><span>SHIMMER · AI AGENTS</span></div>
+        <div v-if="!collapsed" class="brand-copy"><strong>微光</strong><span>SHIMMER · 行政助手</span></div>
       </div>
       <nav class="main-nav">
         <RouterLink v-for="item in navItems" :key="item.path" :to="item.path" :class="{ active: isNavActive(item.path) }" :aria-label="item.label" :title="item.label">

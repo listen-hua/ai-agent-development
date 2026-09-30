@@ -35,12 +35,17 @@ type AgentRegistry struct {
 	environmentAPIKeys map[string]string
 	defaultAliyunModel string
 	defaultGeminiModel string
+	imageAgentEnabled  bool
 }
 
-func NewAgentRegistry(repo store.Repository, encryptionSecret, aliyunAPIKey, geminiAPIKey, aliyunModel, geminiModel string) (*AgentRegistry, error) {
+func NewAgentRegistry(repo store.Repository, encryptionSecret, aliyunAPIKey, geminiAPIKey, aliyunModel, geminiModel string, imageAgentEnabled ...bool) (*AgentRegistry, error) {
 	secrets, err := security.NewSecretBox(encryptionSecret)
 	if err != nil {
 		return nil, err
+	}
+	imageEnabled := true
+	if len(imageAgentEnabled) > 0 {
+		imageEnabled = imageAgentEnabled[0]
 	}
 	return &AgentRegistry{
 		repo:               repo,
@@ -48,6 +53,7 @@ func NewAgentRegistry(repo store.Repository, encryptionSecret, aliyunAPIKey, gem
 		environmentAPIKeys: map[string]string{"aliyun": aliyunAPIKey, "gemini": geminiAPIKey},
 		defaultAliyunModel: aliyunModel,
 		defaultGeminiModel: geminiModel,
+		imageAgentEnabled:  imageEnabled,
 	}, nil
 }
 
@@ -55,7 +61,9 @@ func (a *AgentRegistry) EnsureDefaults(ctx context.Context) error {
 	now := time.Now()
 	defaults := []domain.AgentProfile{
 		{ID: "00000000-0000-4000-8000-000000000101", AgentKey: "administrative_assistant", Name: "行政助手", Description: "基于公司制度知识库回答行政问题", Kind: "chat", Provider: "aliyun", Model: a.defaultAliyunModel, Enabled: true, CredentialSource: "environment", Settings: map[string]any{}, CreatedAt: now, UpdatedAt: now},
-		{ID: "00000000-0000-4000-8000-000000000102", AgentKey: "image_generator", Name: "AI 生图", Description: "在画布中使用 Gemini 生成和编辑图片", Kind: "image", Provider: "gemini", Model: a.defaultGeminiModel, Enabled: true, CredentialSource: "environment", Settings: map[string]any{"aspect_ratio": "1:1", "image_size": "1K"}, CreatedAt: now, UpdatedAt: now},
+	}
+	if a.imageAgentEnabled {
+		defaults = append(defaults, domain.AgentProfile{ID: "00000000-0000-4000-8000-000000000102", AgentKey: "image_generator", Name: "AI 生图", Description: "在画布中使用 Gemini 生成和编辑图片", Kind: "image", Provider: "gemini", Model: a.defaultGeminiModel, Enabled: true, CredentialSource: "environment", Settings: map[string]any{"aspect_ratio": "1:1", "image_size": "1K"}, CreatedAt: now, UpdatedAt: now})
 	}
 	for _, value := range defaults {
 		existing, err := a.repo.GetAgentProfileByKey(ctx, value.AgentKey)
@@ -111,6 +119,9 @@ func (a *AgentRegistry) List(ctx context.Context, includeDisabled bool) ([]domai
 	}
 	result := make([]domain.AgentProfile, 0, len(values))
 	for _, value := range values {
+		if !a.imageAgentEnabled && (value.Kind == "image" || value.AgentKey == "image_generator") {
+			continue
+		}
 		if !includeDisabled && !value.Enabled {
 			continue
 		}
@@ -131,6 +142,9 @@ func (a *AgentRegistry) Save(ctx context.Context, actor domain.User, id string, 
 	input.Provider = strings.TrimSpace(strings.ToLower(input.Provider))
 	input.Model = strings.TrimSpace(input.Model)
 	input.APIKey = strings.TrimSpace(input.APIKey)
+	if !a.imageAgentEnabled && (input.Kind == "image" || input.AgentKey == "image_generator") {
+		return domain.AgentProfile{}, errors.New("image agents are disabled")
+	}
 	if err := validateAgentProfile(input); err != nil {
 		return domain.AgentProfile{}, err
 	}
@@ -176,6 +190,9 @@ func (a *AgentRegistry) Save(ctx context.Context, actor domain.User, id string, 
 }
 
 func (a *AgentRegistry) Credential(ctx context.Context, agentKey string) (domain.AgentProfile, string, error) {
+	if !a.imageAgentEnabled && agentKey == "image_generator" {
+		return domain.AgentProfile{}, "", errors.New("image agent is disabled")
+	}
 	value, err := a.repo.GetAgentProfileByKey(ctx, agentKey)
 	if err != nil {
 		return value, "", err

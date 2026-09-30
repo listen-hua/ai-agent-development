@@ -14,6 +14,17 @@ func TestLoadBuildsDefaultFeishuAppLink(t *testing.T) {
 	}
 }
 
+func TestImageAgentDefaultsToDisabledAndCanBeEnabled(t *testing.T) {
+	t.Setenv("IMAGE_AGENT_ENABLED", "")
+	if Load().ImageAgentEnabled {
+		t.Fatal("image agent must be disabled by default")
+	}
+	t.Setenv("IMAGE_AGENT_ENABLED", "true")
+	if !Load().ImageAgentEnabled {
+		t.Fatal("expected IMAGE_AGENT_ENABLED=true to enable the image agent")
+	}
+}
+
 func TestProductionDefaultsAreRejected(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("DEV_AUTH_ENABLED", "")

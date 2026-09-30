@@ -1,6 +1,7 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { directoryService } from '@/services/admin'
+import { ApiError } from '@/services/api'
 import { massageService, type MassageCycleInput } from '@/services/massage'
 import type { DirectoryOptions, MassageCycle, MassageStatistic } from '@/types/domain'
 
@@ -35,7 +36,7 @@ export function useMassageAdmin() {
       selectedId.value = result.id
       return true
     } catch (error) {
-      ElMessage.error(error instanceof Error ? error.message : '保存失败')
+      ElMessage.error(error instanceof ApiError ? (error.detail || error.message) : error instanceof Error ? error.message : '保存失败')
       return false
     } finally { saving.value = false }
   }
